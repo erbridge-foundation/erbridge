@@ -1,0 +1,13 @@
+# Environment — never commit secrets
+.env
+**/.env
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+*Zone.Identifier
+
+zz-ref/
