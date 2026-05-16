@@ -1,13 +1,11 @@
 schema: spec-driven
 
-# Project context (optional)
-# This is shown to AI when creating artifacts.
-# Add your tech stack, conventions, style guides, domain knowledge, etc.
-# Example:
-#   context: |
-#     Tech stack: TypeScript, React, Node.js
-#     We use conventional commits
-#     Domain: e-commerce platform
+context: |
+  frontend tech stack: TypeScript, SvelteKit, svelte-flow, Node.js
+  frontend package manager: pnpm
+  backend tech stack: Rust, axum, tokio
+  We use conventional commits
+  Domain: eve online wormhole mapper
 
 # Per-artifact rules (optional)
 # Add custom rules for specific artifacts.

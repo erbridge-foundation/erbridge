@@ -11,12 +11,34 @@ The system SHALL redirect the browser to the EVE ESI authorization endpoint when
 - **WHEN** the backend starts up
 - **THEN** it fetches `https://login.eveonline.com/.well-known/oauth-authorization-server` and uses `authorization_endpoint` from the response for all login redirects
 
-### Requirement: OAuth2 callback exchanges code and sets session
-The system SHALL handle `GET /auth/callback` by exchanging the authorization code for access and refresh tokens via the ESI token endpoint. On success, the backend SHALL create a new session (or update an existing one in add-character mode), store the tokens server-side keyed by session ID, set an `httpOnly` `SameSite=Lax` session cookie on the response, and redirect to `/`.
+### Requirement: OAuth2 callback exchanges code and persists character
+The system SHALL handle `GET /auth/callback` by exchanging the authorization code for access and refresh tokens via the ESI token endpoint, parsing the JWT access token to extract `eve_character_id` and `name`, and fetching `corporation_id` / `alliance_id` from ESI public-info endpoints.
+
+On success the backend SHALL:
+
+1. Look up `eve_character` by `eve_character_id`:
+   - **If no row exists**: create a new `account` row (when not in add-character mode) or use the current session's `account_id` (add-character mode); insert a new `eve_character` row with `account_id` set, encrypted access and refresh tokens, `esi_token_expires_at`, `esi_client_id`, and the public-info fields.
+   - **If an orphan row exists** (`account_id IS NULL`): claim it by setting `account_id` to the resolved account, writing the encrypted tokens, `esi_token_expires_at`, `esi_client_id`, and refreshing the public-info fields.
+   - **If a row exists with `account_id` set**: overwrite `encrypted_access_token`, `encrypted_refresh_token`, `esi_token_expires_at`, `esi_client_id`, refresh public-info fields, bump `updated_at`. The row's `account_id` is the session's account.
+2. If the resolved `account.status` is `'soft_deleted'`, atomically reactivate it: `status = 'active'`, `delete_requested_at = NULL`.
+3. Establish or update a session: an in-memory entry keyed by session ID, pointing to the resolved `account_id`. The session entry does NOT hold token material; tokens live only in Postgres.
+4. Set the session cookie (`httpOnly`, `SameSite=Lax`) and redirect to `/`.
 
 #### Scenario: Valid callback creates session and redirects home
 - **WHEN** EVE SSO redirects to `/auth/callback` with a valid `code` and matching `state`
-- **THEN** the backend exchanges the code for tokens, stores them in-memory, sets a session cookie, and redirects the browser to `/`
+- **THEN** the backend exchanges the code for tokens, persists them encrypted in `eve_character`, creates an in-memory session pointing to the resolved account, sets a session cookie, and redirects the browser to `/`
+
+#### Scenario: Orphan character is claimed on first login
+- **WHEN** the callback resolves an `eve_character_id` that exists with `account_id = NULL`
+- **THEN** the existing row's `account_id` is set to the (possibly newly-created) account; no duplicate row is created
+
+#### Scenario: Login reactivates a soft-deleted account
+- **WHEN** the callback resolves to an account with `status = 'soft_deleted'`
+- **THEN** the same transaction that writes the tokens also sets `status = 'active'` and `delete_requested_at = NULL`
+
+#### Scenario: Session entry holds no token material
+- **WHEN** any session is inspected in the in-memory session store
+- **THEN** the entry holds only `account_id` and CSRF / routing state; it does NOT hold the access or refresh token
 
 #### Scenario: Invalid or missing state parameter
 - **WHEN** `/auth/callback` is called with a missing or mismatched `state` parameter
