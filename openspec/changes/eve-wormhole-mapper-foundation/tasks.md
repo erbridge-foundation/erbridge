@@ -113,7 +113,7 @@ _tmp_flaky_test_output.txt
   - `GET /api/v1/keys` — calls `list_for_account` for the caller's account
   - `DELETE /api/v1/keys/:id` — calls `delete_for_account`; `204` on success, `404` otherwise (row not found OR belongs to another account OR `scope = 'server'`)
 - [x] 2b.6 Mount the `/api/v1/keys` routes behind the `AuthenticatedAccount` middleware in `backend/src/main.rs`
-- [ ] 2b.7 Verify with `curl`: create a key via session cookie; use the returned plaintext as `Authorization: Bearer …` to list keys; delete it; subsequent requests with that key return 401
+- [x] 2b.7 Verify with `curl`: create a key via session cookie; use the returned plaintext as `Authorization: Bearer …` to list keys; delete it; subsequent requests with that key return 401
 
 
 ## 2c. Backend: Account-management endpoints
