@@ -9,9 +9,9 @@ use uuid::Uuid;
 
 use crate::{
     app_state::AppState,
-    handlers::{cookie, crypto},
     db::{accounts, characters},
     error::AppError,
+    handlers::{cookie, crypto},
     session::Session,
 };
 
@@ -97,16 +97,13 @@ pub async fn callback(
 ) -> Result<Response, AppError> {
     // Find in-flight session by state value.
     let inflight_id = format!("inflight_{}", query.state);
-    let inflight = state
-        .session_store
-        .get(&inflight_id)
-        .await
-        .ok_or_else(|| AppError::BadRequest("invalid or missing state parameter".to_string()))?;
+    let inflight =
+        state.session_store.get(&inflight_id).await.ok_or_else(|| {
+            AppError::BadRequest("invalid or missing state parameter".to_string())
+        })?;
 
     if inflight.csrf_state.as_deref() != Some(query.state.as_str()) {
-        return Err(AppError::BadRequest(
-            "state parameter mismatch".to_string(),
-        ));
+        return Err(AppError::BadRequest("state parameter mismatch".to_string()));
     }
 
     state.session_store.remove(&inflight_id).await;
@@ -122,7 +119,10 @@ pub async fn callback(
         .form(&[
             ("grant_type", "authorization_code"),
             ("code", &query.code),
-            ("redirect_uri", &format!("{}/auth/callback", state.config.app_url)),
+            (
+                "redirect_uri",
+                &format!("{}/auth/callback", state.config.app_url),
+            ),
         ])
         .send()
         .await
@@ -157,11 +157,7 @@ pub async fn callback(
     let expires_at = Utc::now() + Duration::seconds(token_resp.expires_in);
 
     // Single Postgres transaction composing the DB steps.
-    let mut tx = state
-        .db
-        .begin()
-        .await
-        .map_err(anyhow::Error::from)?;
+    let mut tx = state.db.begin().await.map_err(anyhow::Error::from)?;
 
     let add_character_account_id = if inflight.add_character_mode {
         Some(inflight.account_id)
@@ -170,8 +166,7 @@ pub async fn callback(
     };
 
     let account_id =
-        accounts::resolve_or_create(&mut tx, add_character_account_id, eve_character_id)
-            .await?;
+        accounts::resolve_or_create(&mut tx, add_character_account_id, eve_character_id).await?;
 
     accounts::reactivate_if_soft_deleted(&mut tx, account_id).await?;
 
@@ -205,8 +200,8 @@ pub async fn callback(
     };
     state.session_store.add(new_session).await;
 
-    let jwt_key = crypto::jwt_signing_key(&state.config.encryption_secret)
-        .map_err(anyhow::Error::from)?;
+    let jwt_key =
+        crypto::jwt_signing_key(&state.config.encryption_secret).map_err(anyhow::Error::from)?;
     let jwt = crypto::sign_session_jwt(&session_id, &jwt_key).map_err(anyhow::Error::from)?;
 
     let redirect_path = inflight.return_to.as_deref().unwrap_or("/");
@@ -231,11 +226,11 @@ fn parse_esi_jwt_claims(token: &str) -> anyhow::Result<EsiJwtClaims> {
         3 => format!("{payload}="),
         _ => return Err(anyhow::anyhow!("invalid base64url padding")),
     };
-    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+    use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
     let decoded = URL_SAFE_NO_PAD
         .decode(payload)
         .or_else(|_| {
-            use base64::{engine::general_purpose::URL_SAFE, Engine};
+            use base64::{Engine, engine::general_purpose::URL_SAFE};
             URL_SAFE.decode(&padded)
         })
         .map_err(|e| anyhow::anyhow!("base64 decode error: {e}"))?;
@@ -252,9 +247,7 @@ async fn fetch_character_public_info(
         alliance_id: Option<i64>,
     }
 
-    let url = format!(
-        "https://esi.evetech.net/latest/characters/{eve_character_id}/"
-    );
+    let url = format!("https://esi.evetech.net/latest/characters/{eve_character_id}/");
     let info: PublicInfo = client
         .get(&url)
         .send()
@@ -266,15 +259,11 @@ async fn fetch_character_public_info(
     Ok((info.corporation_id, info.alliance_id))
 }
 
-pub async fn logout(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Response {
-    let session_id = cookie::extract_session_jwt(&headers)
-        .and_then(|jwt| {
-            let key = crypto::jwt_signing_key(&state.config.encryption_secret).ok()?;
-            crypto::verify_session_jwt(&jwt, &key).ok()
-        });
+pub async fn logout(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    let session_id = cookie::extract_session_jwt(&headers).and_then(|jwt| {
+        let key = crypto::jwt_signing_key(&state.config.encryption_secret).ok()?;
+        crypto::verify_session_jwt(&jwt, &key).ok()
+    });
 
     if let Some(sid) = session_id {
         state.session_store.remove(&sid).await;

@@ -1,7 +1,7 @@
 use axum::{
+    Json,
     http::StatusCode,
     response::{IntoResponse, Response},
-    Json,
 };
 use serde::Serialize;
 use utoipa::ToSchema;
@@ -81,15 +81,9 @@ impl IntoResponse for AppError {
                 "not_found",
                 "Resource not found".to_string(),
             ),
-            AppError::Conflict(msg) => {
-                (StatusCode::CONFLICT, "conflict", msg.clone())
-            }
-            AppError::BadRequest(msg) => {
-                (StatusCode::BAD_REQUEST, "bad_request", msg.clone())
-            }
-            AppError::BadGateway(msg) => {
-                (StatusCode::BAD_GATEWAY, "bad_gateway", msg.clone())
-            }
+            AppError::Conflict(msg) => (StatusCode::CONFLICT, "conflict", msg.clone()),
+            AppError::BadRequest(msg) => (StatusCode::BAD_REQUEST, "bad_request", msg.clone()),
+            AppError::BadGateway(msg) => (StatusCode::BAD_GATEWAY, "bad_gateway", msg.clone()),
             AppError::Internal(e) => {
                 tracing::error!("internal error: {e:#}");
                 (
@@ -121,7 +115,10 @@ mod tests {
 
     #[test]
     fn account_soft_deleted_maps_to_401() {
-        assert_eq!(status(AppError::AccountSoftDeleted), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            status(AppError::AccountSoftDeleted),
+            StatusCode::UNAUTHORIZED
+        );
     }
 
     #[test]

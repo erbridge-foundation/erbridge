@@ -3,8 +3,7 @@ pub mod public_info;
 use anyhow::{Context, Result};
 use serde::Deserialize;
 
-const WELL_KNOWN_URL: &str =
-    "https://login.eveonline.com/.well-known/oauth-authorization-server";
+const WELL_KNOWN_URL: &str = "https://login.eveonline.com/.well-known/oauth-authorization-server";
 
 /// Metadata returned by the EVE SSO `/.well-known/oauth-authorization-server` endpoint.
 #[derive(Clone, Debug, Deserialize)]

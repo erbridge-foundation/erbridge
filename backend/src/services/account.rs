@@ -168,7 +168,9 @@ pub async fn delete_character(
         .map_err(AppError::Internal)?;
 
     if count <= 1 {
-        return Err(AppError::Conflict("cannot_remove_last_character".to_string()));
+        return Err(AppError::Conflict(
+            "cannot_remove_last_character".to_string(),
+        ));
     }
 
     if is_main {

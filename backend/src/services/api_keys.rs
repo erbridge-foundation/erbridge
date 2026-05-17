@@ -3,7 +3,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
-    db::{api_keys as db, DbError},
+    db::{DbError, api_keys as db},
     error::AppError,
     handlers::api_key,
 };
@@ -66,11 +66,7 @@ pub async fn list_keys(
         .map_err(AppError::Internal)
 }
 
-pub async fn delete_key(
-    pool: &PgPool,
-    id: Uuid,
-    account_id: Uuid,
-) -> Result<bool, AppError> {
+pub async fn delete_key(pool: &PgPool, id: Uuid, account_id: Uuid) -> Result<bool, AppError> {
     db::delete_for_account(pool, id, account_id)
         .await
         .map_err(AppError::Internal)

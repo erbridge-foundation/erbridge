@@ -138,10 +138,9 @@ mod tests {
     #[sqlx::test]
     async fn insert_and_list_key(pool: PgPool) {
         let account_id = accounts::create_account(&pool).await.unwrap();
-        let (id, created_at) =
-            insert_key(&pool, account_id, "ci", &fake_hash("ci"), None)
-                .await
-                .unwrap();
+        let (id, created_at) = insert_key(&pool, account_id, "ci", &fake_hash("ci"), None)
+            .await
+            .unwrap();
 
         assert!(!id.is_nil());
         assert!(created_at <= Utc::now());
@@ -158,7 +157,9 @@ mod tests {
     async fn find_by_hash_returns_row(pool: PgPool) {
         let account_id = accounts::create_account(&pool).await.unwrap();
         let hash = fake_hash("find_me");
-        insert_key(&pool, account_id, "test", &hash, None).await.unwrap();
+        insert_key(&pool, account_id, "test", &hash, None)
+            .await
+            .unwrap();
 
         let row = find_by_hash(&pool, &hash).await.unwrap().unwrap();
         assert_eq!(row.account_id, Some(account_id));
@@ -193,7 +194,9 @@ mod tests {
     async fn delete_removes_own_key(pool: PgPool) {
         let account_id = accounts::create_account(&pool).await.unwrap();
         let hash = fake_hash("delete_me");
-        let (id, _) = insert_key(&pool, account_id, "to-delete", &hash, None).await.unwrap();
+        let (id, _) = insert_key(&pool, account_id, "to-delete", &hash, None)
+            .await
+            .unwrap();
 
         let deleted = delete_for_account(&pool, id, account_id).await.unwrap();
         assert!(deleted);
@@ -205,7 +208,9 @@ mod tests {
         let account_a = accounts::create_account(&pool).await.unwrap();
         let account_b = accounts::create_account(&pool).await.unwrap();
         let hash = fake_hash("not_yours");
-        let (id, _) = insert_key(&pool, account_a, "key", &hash, None).await.unwrap();
+        let (id, _) = insert_key(&pool, account_a, "key", &hash, None)
+            .await
+            .unwrap();
 
         let deleted = delete_for_account(&pool, id, account_b).await.unwrap();
         assert!(!deleted);
@@ -216,8 +221,12 @@ mod tests {
     async fn list_returns_only_own_keys(pool: PgPool) {
         let account_a = accounts::create_account(&pool).await.unwrap();
         let account_b = accounts::create_account(&pool).await.unwrap();
-        insert_key(&pool, account_a, "a-key", &fake_hash("a"), None).await.unwrap();
-        insert_key(&pool, account_b, "b-key", &fake_hash("b"), None).await.unwrap();
+        insert_key(&pool, account_a, "a-key", &fake_hash("a"), None)
+            .await
+            .unwrap();
+        insert_key(&pool, account_b, "b-key", &fake_hash("b"), None)
+            .await
+            .unwrap();
 
         let keys_a = list_for_account(&pool, account_a).await.unwrap();
         assert_eq!(keys_a.len(), 1);

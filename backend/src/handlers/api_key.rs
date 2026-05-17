@@ -1,4 +1,4 @@
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use rand::RngCore;
 use sha2::{Digest, Sha256};
 
@@ -30,7 +30,11 @@ mod tests {
     #[test]
     fn generate_has_correct_length() {
         let key = generate();
-        assert_eq!(key.len(), 47, "key should be 4 (prefix) + 43 (body) = 47 chars");
+        assert_eq!(
+            key.len(),
+            47,
+            "key should be 4 (prefix) + 43 (body) = 47 chars"
+        );
     }
 
     #[test]
@@ -39,7 +43,8 @@ mod tests {
         let body = &key[PREFIX.len()..];
         assert_eq!(body.len(), 43);
         assert!(
-            body.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-'),
+            body.chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-'),
             "body must be unpadded base64url"
         );
     }

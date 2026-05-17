@@ -430,6 +430,7 @@ Two HURL requests in the same file are separated by a blank line — the file re
 - [ ] DB function was extended rather than duplicated where possible
 - [ ] Response uses a DTO, not a DB model
 - [ ] Response is wrapped in `ApiResponse` envelope (except `/api/healthz`)
+- [ ] `cargo fmt` must be executed
 - [ ] Unit test for every non-trivial function — handlers, services, DB functions, helpers, and any non-trivial DTO mappings or error→response conversions
 - [ ] Integration test for every handler (happy + key error paths)
 - [ ] HURL test for every endpoint

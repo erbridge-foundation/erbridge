@@ -119,7 +119,12 @@ fn compile_schema(doc_json: &Value, path: &str, method: &str, status: &str) -> J
 
 fn assert_schema(doc_json: &Value, path: &str, method: &str, status: &str, body: &Value) {
     let compiled = compile_schema(doc_json, path, method, status);
-    let errors: Vec<_> = compiled.validate(body).err().into_iter().flatten().collect();
+    let errors: Vec<_> = compiled
+        .validate(body)
+        .err()
+        .into_iter()
+        .flatten()
+        .collect();
     assert!(
         errors.is_empty(),
         "OpenAPI drift on {method} {path} -> {status}: {errors:?}\nbody: {body}"
@@ -213,7 +218,9 @@ async fn post_keys_201_matches_schema(pool: PgPool) {
                 .uri("/api/v1/keys")
                 .header(header::COOKIE, &cookie)
                 .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(json!({"name": "test", "expires_at": null}).to_string()))
+                .body(Body::from(
+                    json!({"name": "test", "expires_at": null}).to_string(),
+                ))
                 .unwrap(),
         )
         .await
@@ -265,7 +272,13 @@ async fn delete_key_404_when_not_found(pool: PgPool) {
         .unwrap();
 
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
-    assert_schema(&doc, "/api/v1/keys/{id}", "delete", "404", &json_body(resp).await);
+    assert_schema(
+        &doc,
+        "/api/v1/keys/{id}",
+        "delete",
+        "404",
+        &json_body(resp).await,
+    );
 }
 
 #[sqlx::test]

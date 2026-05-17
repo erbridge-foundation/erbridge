@@ -350,7 +350,9 @@ mod tests {
         )
         .await
         .unwrap();
-        promote_if_no_main(&mut tx, account_id, char1).await.unwrap();
+        promote_if_no_main(&mut tx, account_id, char1)
+            .await
+            .unwrap();
         let char2 = upsert_tokens(
             &mut tx,
             account_id,

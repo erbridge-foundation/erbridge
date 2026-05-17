@@ -4,7 +4,13 @@ use axum::{
 };
 use uuid::Uuid;
 
-use crate::{app_state::AppState, db::accounts, error::AppError, handlers::{cookie, crypto}, services::api_keys as svc};
+use crate::{
+    app_state::AppState,
+    db::accounts,
+    error::AppError,
+    handlers::{cookie, crypto},
+    services::api_keys as svc,
+};
 
 /// Axum extractor that resolves the authenticated account ID from either:
 /// 1. `Authorization: Bearer erb_…` (API key, account-scoped only)
@@ -20,10 +26,7 @@ where
 {
     type Rejection = AppError;
 
-    async fn from_request_parts(
-        parts: &mut Parts,
-        state: &S,
-    ) -> Result<Self, Self::Rejection> {
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         let state = AppState::from_ref(state);
 
         // 1. Try Bearer token.
@@ -55,10 +58,10 @@ where
 
         // 2. Try session cookie.
         let jwt = cookie::extract_session_jwt(&parts.headers).ok_or(AppError::Unauthorized)?;
-        let key_bytes = crypto::jwt_signing_key(&state.config.encryption_secret)
-            .map_err(AppError::Internal)?;
-        let session_id = crypto::verify_session_jwt(&jwt, &key_bytes)
-            .map_err(|_| AppError::Unauthorized)?;
+        let key_bytes =
+            crypto::jwt_signing_key(&state.config.encryption_secret).map_err(AppError::Internal)?;
+        let session_id =
+            crypto::verify_session_jwt(&jwt, &key_bytes).map_err(|_| AppError::Unauthorized)?;
         let session = state
             .session_store
             .get(&session_id)
@@ -116,6 +119,9 @@ mod tests {
             axum::http::header::AUTHORIZATION,
             axum::http::HeaderValue::from_static("Bearer some_other_token"),
         );
-        assert_eq!(extract_bearer(&headers), Some("some_other_token".to_string()));
+        assert_eq!(
+            extract_bearer(&headers),
+            Some("some_other_token".to_string())
+        );
     }
 }

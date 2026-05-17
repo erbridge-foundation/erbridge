@@ -1,9 +1,9 @@
 use aes_gcm::{
-    aead::{Aead, AeadCore, KeyInit, OsRng},
     Aes256Gcm, Key, Nonce,
+    aead::{Aead, AeadCore, KeyInit, OsRng},
 };
-use anyhow::{anyhow, Context, Result};
-use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
+use anyhow::{Context, Result, anyhow};
+use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use serde::{Deserialize, Serialize};
 
 /// Derives the 32-byte AES-256-GCM key for token encryption from the root secret.
@@ -85,12 +85,8 @@ pub fn verify_session_jwt(token: &str, key_bytes: &[u8]) -> Result<String> {
     let mut validation = Validation::new(Algorithm::HS256);
     validation.required_spec_claims.clear();
 
-    let data = decode::<SessionClaims>(
-        token,
-        &DecodingKey::from_secret(key_bytes),
-        &validation,
-    )
-    .context("invalid session JWT")?;
+    let data = decode::<SessionClaims>(token, &DecodingKey::from_secret(key_bytes), &validation)
+        .context("invalid session JWT")?;
 
     Ok(data.claims.sub)
 }

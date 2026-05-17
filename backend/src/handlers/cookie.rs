@@ -3,9 +3,7 @@ use axum::http::{HeaderMap, HeaderValue};
 const COOKIE_NAME: &str = "session";
 
 pub fn set_session_cookie(headers: &mut HeaderMap, jwt: &str) {
-    let value = format!(
-        "{COOKIE_NAME}={jwt}; HttpOnly; SameSite=Lax; Path=/"
-    );
+    let value = format!("{COOKIE_NAME}={jwt}; HttpOnly; SameSite=Lax; Path=/");
     headers.insert(
         axum::http::header::SET_COOKIE,
         HeaderValue::from_str(&value).expect("cookie value is valid header"),
@@ -13,9 +11,7 @@ pub fn set_session_cookie(headers: &mut HeaderMap, jwt: &str) {
 }
 
 pub fn clear_session_cookie(headers: &mut HeaderMap) {
-    let value = format!(
-        "{COOKIE_NAME}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0"
-    );
+    let value = format!("{COOKIE_NAME}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0");
     headers.insert(
         axum::http::header::SET_COOKIE,
         HeaderValue::from_str(&value).expect("cookie clear value is valid header"),
@@ -71,7 +67,10 @@ mod tests {
             axum::http::header::COOKIE,
             axum::http::HeaderValue::from_static("session=abc.def.ghi; other=val"),
         );
-        assert_eq!(extract_session_jwt(&headers), Some("abc.def.ghi".to_string()));
+        assert_eq!(
+            extract_session_jwt(&headers),
+            Some("abc.def.ghi".to_string())
+        );
     }
 
     #[test]

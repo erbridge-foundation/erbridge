@@ -19,10 +19,7 @@ impl From<sqlx::Error> for DbError {
     fn from(err: sqlx::Error) -> Self {
         if let sqlx::Error::Database(ref db_err) = err {
             if db_err.is_unique_violation() {
-                let constraint = db_err
-                    .constraint()
-                    .unwrap_or("<unknown>")
-                    .to_string();
+                let constraint = db_err.constraint().unwrap_or("<unknown>").to_string();
                 return DbError::UniqueViolation { constraint };
             }
         }

@@ -47,9 +47,7 @@ async fn main() -> anyhow::Result<()> {
         .context("failed to bind port 3000")?;
 
     tracing::info!("listening on port 3000");
-    axum::serve(listener, app)
-        .await
-        .context("server error")?;
+    axum::serve(listener, app).await.context("server error")?;
 
     Ok(())
 }

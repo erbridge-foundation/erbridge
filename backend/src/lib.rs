@@ -10,7 +10,10 @@ pub mod response;
 pub mod services;
 pub mod session;
 
-use axum::{routing::{delete, get, post}, Router};
+use axum::{
+    Router,
+    routing::{delete, get, post},
+};
 use tower_http::trace::TraceLayer;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
@@ -23,9 +26,18 @@ pub fn build_router(state: AppState) -> Router {
         .route("/keys", post(handlers::api::v1::keys::create_key))
         .route("/keys", get(handlers::api::v1::keys::list_keys))
         .route("/keys/{id}", delete(handlers::api::v1::keys::delete_key))
-        .route("/characters/{id}/set-main", post(handlers::api::v1::characters::set_main))
-        .route("/characters/{id}", delete(handlers::api::v1::characters::delete_character))
-        .route("/account", delete(handlers::api::v1::account::delete_account));
+        .route(
+            "/characters/{id}/set-main",
+            post(handlers::api::v1::characters::set_main),
+        )
+        .route(
+            "/characters/{id}",
+            delete(handlers::api::v1::characters::delete_character),
+        )
+        .route(
+            "/account",
+            delete(handlers::api::v1::account::delete_account),
+        );
 
     Router::new()
         .route("/auth/login", get(handlers::auth::login))
@@ -46,7 +58,10 @@ pub fn registered_api_v1_routes() -> Vec<(String, String)> {
         ("/api/v1/keys".to_string(), "post".to_string()),
         ("/api/v1/keys".to_string(), "get".to_string()),
         ("/api/v1/keys/{id}".to_string(), "delete".to_string()),
-        ("/api/v1/characters/{id}/set-main".to_string(), "post".to_string()),
+        (
+            "/api/v1/characters/{id}/set-main".to_string(),
+            "post".to_string(),
+        ),
         ("/api/v1/characters/{id}".to_string(), "delete".to_string()),
         ("/api/v1/account".to_string(), "delete".to_string()),
     ]
