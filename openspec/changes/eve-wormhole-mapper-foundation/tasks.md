@@ -139,18 +139,18 @@ _tmp_flaky_test_output.txt
 
 These tasks discharge the api-contract spec's "Machine-readable API description" requirement. They depend on §2b and §2c being implemented first (the handlers and DTOs are what get annotated).
 
-- [ ] 2d.1 Add `utoipa` and `utoipa-swagger-ui` (with the `axum` feature on `utoipa-swagger-ui`) to `backend/Cargo.toml`. Pin to the latest stable major.
-- [ ] 2d.2 Derive `utoipa::ToSchema` on every request/response DTO in `backend/src/dto/` and on the success-envelope (`ApiResponse<T>`) and error-envelope (`ApiError`) types. The envelope types SHALL be declared once and referenced from every annotated response, not inlined per-route.
-- [ ] 2d.3 Annotate every `/api/v1/*` handler with `#[utoipa::path(...)]`:
+- [x] 2d.1 Add `utoipa` and `utoipa-swagger-ui` (with the `axum` feature on `utoipa-swagger-ui`) to `backend/Cargo.toml`. Pin to the latest stable major.
+- [x] 2d.2 Derive `utoipa::ToSchema` on every request/response DTO in `backend/src/dto/` and on the success-envelope (`ApiResponse<T>`) and error-envelope (`ApiError`) types. The envelope types SHALL be declared once and referenced from every annotated response, not inlined per-route.
+- [x] 2d.3 Annotate every `/api/v1/*` handler with `#[utoipa::path(...)]`:
   - `POST /api/v1/keys`, `GET /api/v1/keys`, `DELETE /api/v1/keys/:id` (from §2b)
   - `GET /api/v1/me`, `POST /api/v1/characters/:id/set-main`, `DELETE /api/v1/characters/:id`, `DELETE /api/v1/account` (from §2c)
   - Each annotation SHALL declare: HTTP method, path, request body schema (where applicable), one response per status code returned (including 2xx, 4xx, and 5xx envelopes), `security` requirements (session cookie or bearer), and the canonical `error.code` values it may return as part of the 4xx response descriptions.
-- [ ] 2d.4 Create `backend/src/openapi.rs`: a struct with `#[derive(utoipa::OpenApi)]` listing every annotated path and every component schema (DTOs + envelopes). Set `info.title = "E-R Bridge API"`, `info.version` from `CARGO_PKG_VERSION`.
-- [ ] 2d.5 Mount routes in `backend/src/main.rs`:
+- [x] 2d.4 Create `backend/src/openapi.rs`: a struct with `#[derive(utoipa::OpenApi)]` listing every annotated path and every component schema (DTOs + envelopes). Set `info.title = "E-R Bridge API"`, `info.version` from `CARGO_PKG_VERSION`.
+- [x] 2d.5 Mount routes in `backend/src/main.rs`:
   - `GET /api/openapi.json` — returns `ApiDoc::openapi().to_json()?` with `Content-Type: application/json`.
   - `GET /api/docs` — Swagger UI bound to `/api/openapi.json`, via `utoipa_swagger_ui::SwaggerUi`.
   - Both routes SHALL be public (no auth) so external clients and the Swagger UI can fetch them. They live outside the `AuthenticatedAccount` middleware tree.
-- [ ] 2d.6 Write `backend/tests/openapi_strict.rs`: an integration test that asserts every documented route's actual response validates against its declared schema. Concrete implementation:
+- [x] 2d.6 Write `backend/tests/openapi_strict.rs`: an integration test that asserts every documented route's actual response validates against its declared schema. Concrete implementation:
 
   **Dependencies** (dev-dependencies in `Cargo.toml`): `jsonschema = "0.17"` (pin major; widen later if needed), `serde_json = "1"`, `tower = { version = "0.4", features = ["util"] }` for `oneshot` on the Axum router.
 
@@ -201,7 +201,7 @@ These tasks discharge the api-contract spec's "Machine-readable API description"
 
   **Failure mode**: this is the "strict drift" check. A handler whose response diverges from its annotation fails CI. To prove it bites, §7.27 temporarily perturbs one handler and confirms this test fails.
 
-- [ ] 2d.7 Add a doc-coverage test in the same file:
+- [x] 2d.7 Add a doc-coverage test in the same file:
 
   ```rust
   let documented: HashSet<(String, String)> = doc_json
@@ -221,7 +221,7 @@ These tasks discharge the api-contract spec's "Machine-readable API description"
   ```
 
   A handler with no `#[utoipa::path]` annotation SHALL fail this test. `registered_api_v1_routes` lives in `backend/src/main.rs` and is built from the same route table the router is built from, so it cannot drift from the router itself.
-- [ ] 2d.8 Verify with `curl`: `curl $APP_URL/api/openapi.json | jq .openapi` returns `"3.1.0"` (or the version `utoipa` emits — note in the test if it's `3.0.x`); `curl $APP_URL/api/docs` returns HTML with `<title>Swagger UI</title>`.
+- [x] 2d.8 Verify with `curl`: `curl $APP_URL/api/openapi.json | jq .openapi` returns `"3.1.0"` (or the version `utoipa` emits — note in the test if it's `3.0.x`); `curl $APP_URL/api/docs` returns HTML with `<title>Swagger UI</title>`.
 
 ## 3. Backend: Dockerfile
 

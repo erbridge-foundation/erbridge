@@ -4,8 +4,9 @@ use axum::{
     Json,
 };
 use serde::Serialize;
+use utoipa::ToSchema;
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct ErrorDetail {
     pub code: String,
     pub message: String,
@@ -13,7 +14,7 @@ pub struct ErrorDetail {
     pub details: Option<serde_json::Value>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct ErrorEnvelope {
     pub error: ErrorDetail,
 }

@@ -5,12 +5,15 @@ pub mod dto;
 pub mod error;
 pub mod esi;
 pub mod handlers;
+pub mod openapi;
 pub mod response;
 pub mod services;
 pub mod session;
 
 use axum::{routing::{delete, get, post}, Router};
 use tower_http::trace::TraceLayer;
+use utoipa::OpenApi;
+use utoipa_swagger_ui::SwaggerUi;
 
 use app_state::AppState;
 
@@ -30,6 +33,21 @@ pub fn build_router(state: AppState) -> Router {
         .route("/auth/logout", get(handlers::auth::logout))
         .route("/auth/characters/add", get(handlers::auth::add_character))
         .nest("/api/v1", api_v1_routes)
+        // SwaggerUi registers GET /api/openapi.json and GET /api/docs (+ /api/docs/*rest)
+        .merge(SwaggerUi::new("/api/docs").url("/api/openapi.json", openapi::ApiDoc::openapi()))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
+}
+
+/// Returns all `/api/v1/*` routes as `(path, method)` pairs for doc-coverage tests.
+pub fn registered_api_v1_routes() -> Vec<(String, String)> {
+    vec![
+        ("/api/v1/me".to_string(), "get".to_string()),
+        ("/api/v1/keys".to_string(), "post".to_string()),
+        ("/api/v1/keys".to_string(), "get".to_string()),
+        ("/api/v1/keys/{id}".to_string(), "delete".to_string()),
+        ("/api/v1/characters/{id}/set-main".to_string(), "post".to_string()),
+        ("/api/v1/characters/{id}".to_string(), "delete".to_string()),
+        ("/api/v1/account".to_string(), "delete".to_string()),
+    ]
 }

@@ -1,10 +1,11 @@
 use chrono::{DateTime, Utc};
 use serde::Serialize;
+use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::{db::accounts::Account, services::account::CharacterInfo};
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct AccountDto {
     pub id: Uuid,
     pub status: String,
@@ -23,7 +24,7 @@ impl From<Account> for AccountDto {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct CharacterDto {
     pub id: Uuid,
     pub eve_character_id: i64,
@@ -52,7 +53,7 @@ impl From<CharacterInfo> for CharacterDto {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct MeDto {
     pub account: AccountDto,
     pub characters: Vec<CharacterDto>,

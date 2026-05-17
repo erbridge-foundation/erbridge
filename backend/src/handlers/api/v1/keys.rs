@@ -8,12 +8,23 @@ use uuid::Uuid;
 use crate::{
     app_state::AppState,
     dto::keys::{CreateKeyRequest, CreatedKeyDto, KeyMetadataDto},
-    error::AppError,
+    error::{AppError, ErrorEnvelope},
     handlers::middleware::AuthenticatedAccount,
-    response::ApiResponse,
+    response::{ApiResponse, CreatedKeyResponse, KeyListResponse},
     services::api_keys as svc,
 };
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/keys",
+    request_body = CreateKeyRequest,
+    responses(
+        (status = 201, description = "Key created", body = CreatedKeyResponse),
+        (status = 401, description = "Unauthenticated", body = ErrorEnvelope),
+    ),
+    security(("session_cookie" = []), ("bearer_token" = [])),
+    tag = "keys",
+)]
 pub async fn create_key(
     State(state): State<AppState>,
     AuthenticatedAccount(account_id): AuthenticatedAccount,
@@ -32,6 +43,16 @@ pub async fn create_key(
     Ok((StatusCode::CREATED, Json(ApiResponse::data(dto))))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/keys",
+    responses(
+        (status = 200, description = "List of API keys", body = KeyListResponse),
+        (status = 401, description = "Unauthenticated", body = ErrorEnvelope),
+    ),
+    security(("session_cookie" = []), ("bearer_token" = [])),
+    tag = "keys",
+)]
 pub async fn list_keys(
     State(state): State<AppState>,
     AuthenticatedAccount(account_id): AuthenticatedAccount,
@@ -41,6 +62,18 @@ pub async fn list_keys(
     Ok(Json(ApiResponse::data(dtos)))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/v1/keys/{id}",
+    params(("id" = Uuid, Path, description = "API key ID")),
+    responses(
+        (status = 204, description = "Key deleted"),
+        (status = 401, description = "Unauthenticated", body = ErrorEnvelope),
+        (status = 404, description = "Key not found", body = ErrorEnvelope),
+    ),
+    security(("session_cookie" = []), ("bearer_token" = [])),
+    tag = "keys",
+)]
 pub async fn delete_key(
     State(state): State<AppState>,
     AuthenticatedAccount(account_id): AuthenticatedAccount,
