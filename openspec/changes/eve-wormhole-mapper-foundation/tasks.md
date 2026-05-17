@@ -9,6 +9,18 @@ Before implementing tasks, the implementer MUST invoke the skill matching the ar
 
 If you (Claude) reach a backend or frontend task and the relevant skill body has not been loaded in this session, stop and invoke it first. Loading both up-front is fine; they are independent.
 
+## 0a. Prior-session warnings (read before starting)
+
+A previous Sonnet session implemented §2b but introduced two `rust-rest-api` skill violations that were fixed in commit `5434b98`. The violations and their fixes are documented in that commit message; the corrected patterns are what is in `develop` now. The implementer of remaining tasks MUST NOT reintroduce either pattern:
+
+1. **DTOs MUST implement `From<DbModel>`, not `From<ServiceType>`.** A DTO importing from `crate::services::*` is a layering inversion. The skill rule lives under "DTOs" — re-read it before adding any new DTO. Concretely: `src/dto/keys.rs` was previously `impl From<services::KeyMetadata> for KeyMetadataDto`; it is now `impl From<db::ApiKeyMetadata> for KeyMetadataDto`. Mirror that direction for every new DTO.
+
+2. **Conflict detection MUST match on a typed `DbError` variant, not on `e.to_string().contains("unique")`.** String-matching SQL error messages is fragile and was explicitly fixed. The `DbError::UniqueViolation { constraint }` variant in `src/db/mod.rs` is the canonical pattern; `sqlx::Error` already converts into it via the `From` impl in the same file. New DB functions that can hit a unique constraint SHOULD return `Result<_, DbError>` and let the conversion handle the mapping.
+
+A third class of issue — missing `backend/tests/` scaffolding (integration + HURL per the `rust-rest-api` skill) — has not yet been addressed and is still open. It will be picked up by a future change; do NOT bundle it into §2c work. Each new handler added under §2c SHOULD still have its `#[cfg(test)]` unit tests per the skill's coverage rules.
+
+Mechanical enforcement of these rules (clippy + CI) is queued as the `backend-enforcement-layer` change — see `openspec/changes/backend-enforcement-layer/`. Until it lands, the gate is review + this notice.
+
 ## 1. Repository Scaffold
 
 - [x] 1.1 Create root-level `frontend/` and `backend/` directories
@@ -79,29 +91,30 @@ _tmp_flaky_test_output.txt
 - [x] 2.14 Implement `GET /auth/logout` handler: remove session from store, clear cookie, redirect to `/`
 - [x] 2.15 Implement `GET /auth/characters/add` handler: require existing session (401 if absent), mark the session as `add_character_mode = true`, accept and validate the same OPTIONAL `?return_to=<path>` parameter via `validate_return_to`, redirect to EVE SSO; the shared `/auth/callback` handler reads `add_character_mode` to decide whether to reuse the session's account and honours the stashed `return_to`.
 - [x] 2.16 Wire `AppState` in `backend/src/main.rs`: load config, `db::connect()` (which runs migrations), call `discover()` at startup (exit on failure for any of these), initialise `SessionStore`, build Axum router with all `/auth/*` routes
-- [ ] 2.17 Verify `cargo build --release` produces zero warnings (use `SQLX_OFFLINE=true` with `cargo sqlx prepare` checked in, or rely on a running DB at build time — pick one and document)
+- [x] 2.17 Verify `cargo build --release` produces zero warnings (use `SQLX_OFFLINE=true` with `cargo sqlx prepare` checked in, or rely on a running DB at build time — pick one and document). Resolved: `.sqlx/` query cache is checked in, so offline builds work without a database. Confirmed zero warnings at commit `5434b98`.
 
 ## 2b. Backend: API key authentication
 
-- [ ] 2b.1 Add `sha2` (or `ring`) and `base64` crates to `Cargo.toml`
-- [ ] 2b.2 Implement `backend/src/handlers/api_key.rs` (key generation/hashing helpers — not a route handler, but lives in the handler layer as a support module):
+- [x] 2b.1 Add `sha2` (or `ring`) and `base64` crates to `Cargo.toml`
+- [x] 2b.2 Implement `backend/src/handlers/api_key.rs` (key generation/hashing helpers — not a route handler, but lives in the handler layer as a support module):
   - `pub const PREFIX: &str = "erb_";`
   - `pub fn generate() -> String` — draw 32 bytes from a CSPRNG, base64url-encode unpadded (43 chars), return `format!("{PREFIX}{body}")`
   - `pub fn hash(key: &str) -> String` — SHA-256 hex digest of the full key
-- [ ] 2b.3 Implement `backend/src/db/api_keys.rs`:
+- [x] 2b.3 Implement `backend/src/db/api_keys.rs`:
   - `create_account_key(account_id, name, expires_at) -> Result<(Uuid, String)>` — generates a key, inserts the row with `scope = 'account'`, returns `(id, plaintext_key)`. Plaintext exists only in the return value.
   - `lookup_by_key(plaintext: &str) -> Result<Option<ApiKeyRow>>` — `SELECT ... WHERE key_hash = $1 AND (expires_at IS NULL OR expires_at > now())`
   - `list_for_account(account_id) -> Result<Vec<ApiKeyMetadata>>` — no `key_hash` in the returned shape
   - `delete_for_account(id, account_id) -> Result<bool>` — `DELETE ... WHERE id = $1 AND account_id = $2`, returns whether a row was deleted
-- [ ] 2b.4 Implement `backend/src/handlers/middleware.rs`: an Axum extractor / middleware `AuthenticatedAccount(pub Uuid)`. On `/api/*`:
+- [x] 2b.4 Implement `backend/src/handlers/middleware.rs`: an Axum extractor / middleware `AuthenticatedAccount(pub Uuid)`. On `/api/*`:
   1. If `Authorization: Bearer <value>` is present and starts with `erb_`: look up via `lookup_by_key`. On hit with `scope = 'account'` → set `account_id`; with `scope = 'server'` → reject 403; miss/expired → reject 401.
   2. Else fall back to session cookie. If neither → 401.
-- [ ] 2b.5 Implement `backend/src/handlers/api/v1/keys.rs`:
+- [x] 2b.5 Implement `backend/src/handlers/api/v1/keys.rs`:
   - `POST /api/v1/keys` — body `{ name, expires_at? }`; calls `create_account_key`; returns `201` with `id, key, name, expires_at, created_at`
   - `GET /api/v1/keys` — calls `list_for_account` for the caller's account
   - `DELETE /api/v1/keys/:id` — calls `delete_for_account`; `204` on success, `404` otherwise (row not found OR belongs to another account OR `scope = 'server'`)
-- [ ] 2b.6 Mount the `/api/v1/keys` routes behind the `AuthenticatedAccount` middleware in `backend/src/main.rs`
+- [x] 2b.6 Mount the `/api/v1/keys` routes behind the `AuthenticatedAccount` middleware in `backend/src/main.rs`
 - [ ] 2b.7 Verify with `curl`: create a key via session cookie; use the returned plaintext as `Authorization: Bearer …` to list keys; delete it; subsequent requests with that key return 401
+
 
 ## 2c. Backend: Account-management endpoints
 
