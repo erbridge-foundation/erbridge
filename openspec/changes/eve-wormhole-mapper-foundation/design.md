@@ -225,7 +225,9 @@ erb_<43 chars base64url>
 
 ### 10. Visual design system — space-dark theme with JetBrains Mono
 
-The authoritative visual contract for this change is the set of HTML wireframes under `openspec/changes/eve-wormhole-mapper-foundation/wireframes/` (`login.html`, `home.html`, `characters.html`, `user-menu.html`). The wireframes are reviewed and approved *before* the frontend implementation tasks begin; Svelte components SHALL match them. The long-range map wireframe at `zz-ref/frontend/wireframes/map_canvas.html` remains the visual reference for future map work and is the source of the shared design tokens below — it is not an in-scope deliverable for this change.
+The authoritative visual contract for this change is the set of HTML wireframes (`login.html`, `home.html`, `characters.html`, `user-menu.html`). They live at `openspec/changes/eve-wormhole-mapper-foundation/wireframes/` during the change's active lifetime and are reviewed/approved *before* the frontend implementation tasks begin; Svelte components SHALL match them. **Before this change is archived, the wireframes SHALL be moved to `frontend/wireframes/`** — a tracked, durable location alongside the code they describe — so future frontend changes can reference and update them. The screenshots in `zz-ref/frontend/screenshots/` are temporary aids for authoring the wireframes; they become obsolete once the wireframes exist, since `zz-ref/` is gitignored and not a durable artefact location.
+
+The long-range map wireframe at `zz-ref/frontend/wireframes/map_canvas.html` is the visual reference for future map work and the source of the shared design tokens below — it is not an in-scope deliverable for this change. (A future change SHOULD relocate it to `frontend/wireframes/map_canvas.html` so it is also durable.)
 
 Key choices:
 
@@ -238,19 +240,20 @@ The design system is implemented as CSS custom properties on `:root` in a global
 
 ### 11. Visible UI surface in this change
 
-The frontend in this change exposes three routes and one shared chrome element. Each is fully specified by its wireframe; the bullets below capture the load-bearing decisions that the wireframes cannot express.
+The frontend in this change exposes four routes and one shared chrome element. Each is fully specified by its wireframe; the bullets below capture the load-bearing decisions that the wireframes cannot express.
 
 **Routes:**
 
 - `/login` — full-viewport `--space-950` background, no nav bar, centred card with the brand mark, "Wormhole Mapper" subtitle, EVE SSO login button (uses the official CCP-hosted PNG `https://web.ccpgamescdn.com/eveonlineassets/developers/eve-sso-login-white-large.png`), and a two-line disclaimer.
-- `/` (home) — global nav at top; centred-left content area shows `Welcome, <main character name>` heading in `--sky`, the main character's name + `main` badge + corporation/alliance lines, and a `Map view coming soon.` placeholder line. This **replaces** the originally-planned 288px collapsible sidebar + canvas placeholder; the sidebar belongs to the future map view (see `map_canvas.html`) and would be visual clutter against an empty canvas.
-- `/characters` — global nav at top; page heading `CHARACTERS` in `--slate-500` uppercase with a `+ add character` button (top-right) whose `href` is `/auth/characters/add`. A vertically stacked list of character cards follows. Each card shows: 64px portrait from `https://images.evetech.net/characters/<eve_character_id>/portrait?size=128`, character name (large), `main` badge (cyan pill) when applicable, faction-coloured corporation row, alliance row (omitted when null). Non-main cards expose right-aligned `set main` and `remove` text-button actions; the main character's card has no actions (cannot be removed or re-promoted while it is already main). Below the list, a `DANGER ZONE` section with a single `delete account` text button in `--red`.
+- `/` (home) — global nav at top; centred-left content area shows `Welcome, <main character name>` heading in `--sky` and the main character's name + `main` badge + corporation/alliance lines. No "Map view coming soon." line here — that placeholder lives on `/maps` so the two pages do not duplicate the same message. This **replaces** the originally-planned 288px collapsible sidebar + canvas placeholder; the sidebar belongs to the future map view (see `map_canvas.html`) and would be visual clutter against an empty canvas.
+- `/maps` — global nav at top; centred body with a single line `Map view coming soon.` in `--slate-500`. Placeholder for the future map-rendering change. The `maps` nav link points here.
+- `/characters` — global nav at top; page heading `CHARACTERS` in `--slate-500` uppercase with a `+ add character` button (top-right) whose `href` is `/auth/characters/add?return_to=/characters`. A vertically stacked list of character cards follows. Each card shows: 64px portrait from `https://images.evetech.net/characters/<eve_character_id>/portrait?size=128`, character name (large), `main` badge (cyan pill) when applicable, faction-coloured corporation row, alliance row (omitted when null). Non-main cards expose right-aligned `set main` and `remove` text-button actions; the main character's card has no actions (cannot be removed or re-promoted while it is already main). Below the list, a `DANGER ZONE` section with a single `delete account` text button in `--red`.
 
 **Shared chrome:**
 
 - **GlobalNav** (48px fixed bar, `--space-900`, bottom border `--space-700`):
   - Left: cyan sun logo SVG + `E-R BRIDGE` wordmark. Clicking links to `/`.
-  - Centre-left: nav links `maps`, `characters`. Active link is indicated by `--sky` colour and a subtle `--space-700` background pill. `maps` resolves to `/` in this change (no separate `/maps` route yet).
+  - Centre-left: nav links `maps` (→ `/maps`), `characters` (→ `/characters`). Active link is indicated by `--sky` colour and a subtle `--space-700` background pill. The brand mark on the left links to `/` (home).
   - Right: pulsing `--emerald` status dot + `connected` label (driven by the success of `GET /api/v1/me`; the dot is `--red` and labelled `disconnected` if the request fails). To the right of the status, the user chip: 24px circular portrait of the **main** character + main character name + chevron, all clickable to toggle the user-menu dropdown.
 - **User-menu dropdown** (opens beneath the user chip, anchored to its right edge, `--space-900` card with `--space-700` border):
   - `preferences` — disabled placeholder in this change (greyed-out, not a `<a>`). Future change.
@@ -266,7 +269,7 @@ The dropdown closes on outside-click and on `Escape`. State is local to the comp
 
 **Why this shape:**
 
-The screenshots make the *structure* obvious but leave several behaviours ambiguous; the bullets above pin them down so the wireframes don't have to encode them. Specifically: which character drives the user chip portrait (the **main**, not the last-logged-in), what `maps` resolves to in this change (the home route), and what happens when an account has only one character (it is automatically main; `remove` is hidden on the main card; `delete_account` is the only way to remove the last identity).
+The screenshots make the *structure* obvious but leave several behaviours ambiguous; the bullets above pin them down so the wireframes don't have to encode them. Specifically: which character drives the user chip portrait (the **main**, not the last-logged-in); `maps` resolves to a `/maps` placeholder page in this change (a real map view ships in a future change); and what happens when an account has only one character (it is automatically main; `remove` is hidden on the main card; `delete account` is the only way to remove the last identity).
 
 ### 12. Account-management endpoints under `/api/v1/`
 
@@ -285,6 +288,38 @@ To support the home and characters pages, four new `/api/v1/` endpoints are adde
 - `DELETE /api/v1/account` is the only place where the soft-delete state machine is *initiated* from the HTTP API; the reactivation path is the SSO callback (already specified). Keeping reactivation implicit (just log in again) means no UX prompt is needed, which matches Risks/Trade-offs §"Soft-delete reactivation is silent".
 - The main-character invariant is enforced at two layers: the Postgres partial unique index `eve_character_one_main_per_account` (no two mains can coexist) and the `cannot_remove_main` / `cannot_remove_last_character` 409s (the API never leaves the account in an invalid state via deletion). The first linked character is automatically promoted to main during `upsert_character_from_login` when the account has no main yet.
 
+### 13. OpenAPI doc via `utoipa`, strict response-validation test, frontend codegen deferred
+
+The api-contract spec promises a "machine-readable description" of `/api/*`. This change discharges that promise with `utoipa` + `utoipa-swagger-ui`:
+
+- Every `/api/v1/*` handler is annotated with `#[utoipa::path(...)]` declaring its request body, response shapes (one per status code), and security requirement.
+- Every DTO (request bodies, response payloads, the success envelope, the error envelope) derives `utoipa::ToSchema`. The envelope types are declared once and referenced via `$ref` from every route response — envelope changes propagate without touching individual routes.
+- A single `#[derive(OpenApi)]` collector references all annotated paths and component schemas; the resulting `utoipa::openapi::OpenApi` is served as `/api/openapi.json` and rendered by `utoipa-swagger-ui` at `/api/docs`.
+- A backend test (`#[test] fn openapi_doc_matches_handler_responses`) instantiates the router with mocked services, hits each documented route with representative inputs, and validates the JSON response against the schema in the same `OpenApi` object. Drift between annotations and actual responses fails the build. This is the "strict" posture; the alternative ("descriptive, may drift") was rejected because the document only buys downstream tooling value if downstream tooling can trust it.
+
+**Frontend codegen is explicitly deferred to a future change.** This change ships the backend OpenAPI doc and a hand-typed `frontend/src/lib/api.ts` whose types mirror it. Bundling a codegen pipeline (generator choice, build-step wiring, schema-drift detection, tsconfig integration) into the foundation change inflates scope without unlocking anything that hand-typing can't deliver while the API surface is this small. Once `account-management` and `api-authentication` stabilise, a follow-up change wires in `openapi-typescript` (or similar) and removes the hand-typed `api.ts` types.
+
+*Alternatives considered:*
+
+- **`axum-aide` / `okapi`.** Rejected — `utoipa` is the most actively maintained OpenAPI stack for Axum, has good `ToSchema` ergonomics, and ships a usable Swagger UI integration.
+- **TypeSpec / hand-authored OpenAPI YAML.** Rejected — a hand-authored description is exactly the drift risk we're trying to avoid. Derive-from-code is non-negotiable.
+- **Skip OpenAPI entirely, keep hand-typed frontend types.** Rejected — the api-contract spec already commits to a machine-readable description, and shipping one now is cheaper than retrofitting it later when more `/api/v1/*` routes exist.
+
+### 14. UI surface for API errors
+
+API errors surface in one of two places, depending on where they originate:
+
+- **Form-action failures** (`POST /api/v1/characters/:id/set-main`, `DELETE /api/v1/characters/:id`, `DELETE /api/v1/account`, and the `/auth/characters/add` redirect chain) surface **inline**, anchored to the action that triggered them. A `set main` or `remove` failure shows a one-line error in `--red` directly below the character's card. A `delete account` failure shows a one-line error in `--red` directly below the DANGER ZONE button. The error text is the envelope's `error.message`; the `error.code` is exposed via `aria-describedby` (or a `data-error-code` attribute) so end-to-end tests can branch on the code without parsing message text.
+
+- **Layout-level failures** (the `/api/v1/me` call in `+layout.server.ts`) surface as a **single top-of-page banner** in `--red` immediately under the GlobalNav, with text "Couldn't load your account: <message>". If the failure is 401, the layout instead redirects to `/login` (per §4.5) — no banner. If the failure is a network error or 5xx, the banner is shown and the page still renders whatever it can without `me` (the home page shows a generic "Welcome." with no name; the characters page shows an empty list; the user chip falls back to a generic placeholder icon).
+
+**Not used:**
+
+- **Toasts** — transient, easy to miss, and require a global store. Rejected: error feedback on a destructive action (`remove`, `delete account`) MUST be persistent until the user dismisses or retries.
+- **`+error.svelte`** — SvelteKit's error route is for *unrecoverable* failures (the page cannot render at all). Our failures are recoverable: the user can retry, pick a different action, or just continue. Routing to `+error.svelte` for "you can't remove the main" would be a worse experience than an inline message.
+
+**Why both, not just one:** form-action errors are local (a single button failed) and inline matches the user's attention. Layout-level errors are global (the whole page is degraded) and need a banner so the user understands why the page looks empty. Picking either alone leaves the other case awkward: a banner for "set main failed" feels disproportionate; an inline error for "couldn't load anything" has no good anchor.
+
 ## Risks / Trade-offs
 
 - **In-memory sessions lost on restart** → Acceptable for this change; durable identity and tokens are in Postgres, so users re-login but their account, linked characters, and last-stored ESI tokens remain.
@@ -295,6 +330,9 @@ To support the home and characters pages, four new `/api/v1/` endpoints are adde
 - **No character-transfer detection** → Without `owner_hash`, if an EVE character is transferred between EVE accounts, the new owner can log in and silently take over the existing row. Accepted for this change; revisit if/when ESI characters become tradeable at scale matters.
 - **`GET /api/v1/me` does N ESI public-info lookups per request** → Each call resolves `corporation_name` and `alliance_name` from ESI for every linked character, with no cross-request cache in this change. Acceptable because the typical account has 1–5 characters and the page is not on a hot path. A future `corporation` / `alliance` cache table (or in-process TTL cache) is a small follow-up if it shows up in latency.
 - **Disabled `preferences` / `settings` menu items** → Greyed-out placeholders ship in the user-menu dropdown to lock in the visual layout from the screenshots, but they have no destinations. A user clicking them gets no feedback. Acceptable as a deliberate placeholder; the alternative (hiding them) would mean the menu has a single `log out` row and looks empty.
+- **`utoipa` annotations are a maintenance surface** → Every new handler and DTO needs `#[utoipa::path]` / `#[derive(ToSchema)]`. The strict response-validation test catches drift but not omission (a handler with no annotation is just missing from the doc). Acceptable — the `rust-rest-api` skill mandates annotations, and the doc-coverage scenario in api-contract requires every `/api/v1/*` route to appear in the doc, which the integration check exercises.
+- **`return_to` validation must be tight** → Same-origin path validation is a known open-redirect surface. The spec explicitly rejects scheme-relative (`//evil.com`) and absolute URLs and limits the value to a path starting with a single `/`. Any future relaxation (e.g. supporting fragment identifiers in the path) MUST be reviewed against the open-redirect risk.
+- **Frontend types are hand-maintained for now** → `frontend/src/lib/api.ts` duplicates the response shapes that the backend OpenAPI doc already describes. Drift is possible (a backend change adds a field; the frontend type lags). Mitigated by the small API surface in this change and the explicit follow-up change to introduce codegen. Until then, reviewers MUST check both sides when a `/api/v1/*` route changes.
 - **Soft-delete reactivation is silent** → A user whose account is `soft_deleted` will be reactivated on next login with no UI prompt. Acceptable because soft-delete is user-initiated; if it was admin-initiated (banned/suspended) that'll be a different status and login will be refused.
 - **API keys cannot be retrieved after creation** → If a user loses the plaintext, the only recovery is revoke + create-new. Documented in the create response. Stronger UX than storing recoverable plaintext.
 - **No `last_used_at` on API keys** → Users can't tell whether a key is in use before revoking it. Accepted to keep the schema lean; trivial to add later (single-column migration with `NULL` default).

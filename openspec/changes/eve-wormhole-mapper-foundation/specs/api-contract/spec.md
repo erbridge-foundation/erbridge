@@ -128,22 +128,36 @@ Every timestamp in any `/api/*` request or response body SHALL be a string in RF
 
 ### Requirement: Machine-readable API description
 
-The backend SHALL publish a single, machine-readable description of every `/api/*` route, covering for each route: HTTP method and path, request body schema (where applicable), response body schema for each status code, required authentication, and the canonical `error.code` values it may return.
+The backend SHALL publish an OpenAPI 3.1 description of every `/api/*` route, covering for each route: HTTP method and path, request body schema (where applicable), response body schema for each status code, required authentication, and the canonical `error.code` values it may return.
 
-- The description SHALL be derived from the running code (handler signatures and DTOs), not maintained by hand alongside it.
-- The frontend's HTTP client types SHALL be generated from this description; no hand-maintained duplicate types of `/api/*` request/response shapes are permitted in the frontend.
-- The description SHALL be available at a stable URL under the backend.
+- The description SHALL be derived from the running code (handler signatures and DTOs) via `utoipa` annotations, not maintained by hand alongside it.
+- The description SHALL be available at `/api/openapi.json` and SHALL parse as valid OpenAPI 3.1.
+- A human-browsable Swagger UI of the same document SHALL be available at `/api/docs`.
+- The description SHALL be strictly faithful to the implementation: a backend test SHALL serialise representative responses from every documented route and validate them against the schema in the published OpenAPI document; documentation drift SHALL fail the build.
+- The success envelope (`{ data, meta? }`) and error envelope (`{ error: { code, message, details? } }`) SHALL be expressed as reusable OpenAPI components and referenced by every relevant route, so envelope changes are made once and propagate.
 
-The choice of description format (OpenAPI v3, TypeSpec, etc.) and tooling is a design/implementation concern and is not fixed by this requirement.
+Frontend type generation from the published OpenAPI document is **deferred to a future change**. Until that change lands, the frontend MAY hand-maintain TypeScript types for `/api/*` request and response shapes; this exception applies only to the foundation change and SHALL be removed once a generator is wired in.
 
-#### Scenario: Description is published by the backend
+#### Scenario: OpenAPI document is published by the backend
 - **WHEN** the backend is running
-- **THEN** a machine-readable description of `/api/*` is reachable at a stable URL
+- **THEN** `GET /api/openapi.json` returns HTTP 200 with `Content-Type: application/json` and a body that parses as valid OpenAPI 3.1
 
-#### Scenario: Description is derived from code
+#### Scenario: Swagger UI is browsable
+- **WHEN** a browser visits `/api/docs`
+- **THEN** the response renders the Swagger UI bound to `/api/openapi.json`
+
+#### Scenario: Document is derived from code
 - **WHEN** a handler's request or response shape changes
-- **THEN** the published description reflects the change without a separate hand-edit step
+- **THEN** the published OpenAPI document reflects the change without a separate hand-edit step
 
-#### Scenario: Frontend types are generated, not hand-written
-- **WHEN** the frontend makes a typed call against `/api/*`
-- **THEN** the TypeScript types for the request and response are produced by a generator that consumes the published description
+#### Scenario: Drift between document and implementation fails the build
+- **WHEN** a handler returns a response shape that does not validate against its declared OpenAPI schema
+- **THEN** the backend test suite fails; the build SHALL NOT pass with an out-of-date document
+
+#### Scenario: Every documented /api/v1 route appears in the document
+- **WHEN** the document is fetched
+- **THEN** every route handler mounted under `/api/v1/` is present in the `paths` object with at least one documented response
+
+#### Scenario: Envelope components are reused
+- **WHEN** the document is fetched
+- **THEN** the success and error envelopes are declared once under `components.schemas` and referenced (`$ref`) by every route response, not inlined per-route

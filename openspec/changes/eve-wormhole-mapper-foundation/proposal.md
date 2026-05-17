@@ -13,12 +13,14 @@ EVE Online wormhole space requires constant spatial awareness — pilots need to
 - API key authentication on `/api/*`: bearer tokens prefixed `erb_`, hashed with SHA-256 for storage; scopes `account` (acts as the owning account) and `server` (shape only — authorization semantics deferred)
 - Management endpoints under `/api/v1/keys` (create / list / revoke) for the authenticated account to manage its own API keys
 - Major-version prefix on all API routes (`/api/v1/...`) so future breaking changes can introduce `/api/v2/...` without disrupting existing clients
-- Shared API contract for `/api/*`: `{ "data", "meta" }` success envelope, `{ "error": { "code", "message", "details" } }` error envelope, canonical error codes, RFC 3339 UTC timestamps, and a machine-readable description of every route from which frontend types are generated
+- Shared API contract for `/api/*`: `{ "data", "meta" }` success envelope, `{ "error": { "code", "message", "details" } }` error envelope, canonical error codes, RFC 3339 UTC timestamps
+- OpenAPI 3.1 document derived from the running code via `utoipa`, served at `/api/openapi.json` with a Swagger UI at `/api/docs`; a backend test validates real handler responses against the document to prevent drift; frontend type generation from the document is deferred to a future change (the foundation ships hand-typed frontend types kept in sync with the OpenAPI doc)
 - Session management: server-side session store (in-memory `HashMap` behind `Arc<RwLock<>>`) keyed by session ID and pointing to an `account_id`; session cookie (`httpOnly`, `SameSite=Lax`) — no token material exposed to the browser
 - ESI refresh tokens encrypted at rest with AES-256-GCM before being stored in Postgres; HS256 JWT for the session cookie; both keys derived from `ENCRYPTION_SECRET`
 - ESI SSO discovery document fetched at startup from the well-known endpoint and cached for process lifetime
-- Frontend redirects unauthenticated requests to `/login`; authenticated routes (`/`, `/characters`) match the screenshots in `zz-ref/frontend/screenshots/` (login card, home welcome view, characters management page, user-menu dropdown)
-- Visual design contract pinned by HTML wireframes under `openspec/changes/eve-wormhole-mapper-foundation/wireframes/` (login / home / characters / user-menu), authored and approved before any Svelte component is written
+- Frontend redirects unauthenticated requests to `/login`; authenticated routes (`/`, `/maps`, `/characters`) match the screenshots in `zz-ref/frontend/screenshots/` (login card, home welcome view, maps placeholder, characters management page, user-menu dropdown)
+- `/auth/login` and `/auth/characters/add` honour an optional `?return_to=<path>` hint (same-origin paths only; off-origin and scheme-relative values rejected); the callback redirects there on success — so e.g. clicking `+ add character` returns the user to `/characters` rather than `/`
+- Visual design contract pinned by HTML wireframes (login / home / maps / characters / user-menu), authored and approved before any Svelte component is written; relocated to `frontend/wireframes/` before archival so they survive as a tracked, durable artefact
 - Account-management API under `/api/v1/`: `GET /me` (returns the caller's account and character list with resolved corp/alliance names and portrait URLs), `POST /characters/:id/set-main`, `DELETE /characters/:id` (with `cannot_remove_main` / `cannot_remove_last_character` guards), `DELETE /account` (soft-delete with session cookie clearing)
 - First-character auto-promotion: the first `eve_character` linked to an account is automatically flagged `is_main = TRUE` so the home page always has a main to render
 - `.env.example` with all required environment variables documented, including `DATABASE_URL`
@@ -40,6 +42,6 @@ EVE Online wormhole space requires constant spatial awareness — pilots need to
 
 - New top-level directories: `/frontend`, `/backend`, `openspec/`
 - New files: `docker-compose.yml`, `traefik.yml` (static config), `.env.example`, `Dockerfile`s for both services, `backend/migrations/*.sql`, HTML wireframes under `openspec/changes/eve-wormhole-mapper-foundation/wireframes/`
-- Dependencies introduced: Axum, tokio, reqwest, sqlx (postgres + uuid + chrono features), aes-gcm, jsonwebtoken, thiserror, anyhow (Rust); SvelteKit, @sveltejs/adapter-node, Svelte 5 (Node)
+- Dependencies introduced: Axum, tokio, reqwest, sqlx (postgres + uuid + chrono features), aes-gcm, jsonwebtoken, thiserror, anyhow, utoipa, utoipa-swagger-ui (Rust); SvelteKit, @sveltejs/adapter-node, Svelte 5 (Node)
 - New Postgres container in the Compose stack; persistent named volume for database data
 - No existing code affected — this is a greenfield project

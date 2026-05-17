@@ -54,19 +54,30 @@ _tmp_flaky_test_output.txt
   - `get_account(id) -> Result<Option<Account>>` — returns the row including `status`, `delete_requested_at`, `is_server_admin`
   - `reactivate_if_soft_deleted(tx, id)` — sets `status = 'active'`, `delete_requested_at = NULL` only when `status = 'soft_deleted'`; takes a transaction so it can be atomic with character upsert
   - `soft_delete(id)` — sets `status = 'soft_deleted'`, `delete_requested_at = now()`
-- [ ] 2.8 Implement `backend/src/db/characters.rs`:
-  - `upsert_character_from_login(tx, account_id, eve_character_id, name, corporation_id, alliance_id, esi_client_id, access_token_plaintext, refresh_token_plaintext, expires_at)` — encrypts both tokens with fresh nonces, then performs `INSERT ... ON CONFLICT (eve_character_id) DO UPDATE` with the rule: if existing `account_id IS NULL` (orphan claim) OR matches the supplied one, set `account_id = excluded.account_id` and rewrite tokens / public info; otherwise leave `account_id` unchanged but still update public info and tokens (re-login on owned row). Bumps `updated_at`.
-  - `create_orphan(eve_character_id, name, corporation_id, alliance_id)` — inserts a row with `account_id = NULL` and NULL token columns
-  - `list_for_account(account_id)` — returns characters (no decrypted tokens)
-  - `delete_character(id)` — hard `DELETE`
-  - `set_main(tx, account_id, character_id)` — in one transaction, clears existing `is_main` on the account then sets it on the target
+- [ ] 2.8 Implement `backend/src/db/characters.rs`. The SSO callback composes these as separate steps inside a single transaction (see §2.13); each step is independently unit-testable per the `rust-rest-api` skill's coverage requirement:
+  - `upsert_tokens(tx, resolved_account_id, eve_character_id, name, corporation_id, alliance_id, esi_client_id, access_token_plaintext, refresh_token_plaintext, expires_at) -> Result<Uuid>` — encrypts both tokens with fresh nonces, then performs `INSERT ... ON CONFLICT (eve_character_id) DO UPDATE` with the rule: if existing `account_id IS NULL` (orphan claim) OR matches `resolved_account_id`, set `account_id = excluded.account_id` and rewrite tokens + public info; otherwise leave `account_id` unchanged but still update public info and tokens (re-login on owned row). Bumps `updated_at`. Returns the row's internal UUID. **Does NOT touch `is_main`** — promotion is `promote_if_no_main`'s job.
+  - `promote_if_no_main(tx, account_id, just_written_character_id) -> Result<bool>` — `UPDATE eve_character SET is_main = TRUE WHERE id = $1 AND NOT EXISTS (SELECT 1 FROM eve_character WHERE account_id = $2 AND is_main = TRUE)`. Returns whether the row was promoted. Safe to call unconditionally after `upsert_tokens` — it is a no-op when an `is_main` row already exists for the account.
+  - `create_orphan(eve_character_id, name, corporation_id, alliance_id) -> Result<Uuid>` — inserts a row with `account_id = NULL` and NULL token columns.
+  - `list_for_account(account_id) -> Result<Vec<Character>>` — returns characters (no decrypted tokens).
+  - `delete_character(id) -> Result<bool>` — hard `DELETE`; returns whether a row was deleted.
+  - `set_main(tx, account_id, character_id) -> Result<()>` — in one transaction step, clears existing `is_main` on the account then sets it on the target. Used by the `POST /api/v1/characters/:id/set-main` handler (§2c.5). May surface a unique-violation if two callers race; the handler maps that to a 409 and the partial unique index `eve_character_one_main_per_account` is the ultimate guard.
 - [ ] 2.9 Implement `backend/src/session.rs`: `Session` struct (`session_id: String`, `account_id: Uuid`, `csrf_state: Option<String>`, `add_character_mode: bool`); `SessionStore` (`Arc<RwLock<HashMap<String, Session>>>`); add/remove/get helpers. Sessions do NOT hold token material — tokens live in Postgres only.
 - [ ] 2.10 Implement `backend/src/auth/crypto.rs`: AES-256-GCM encrypt/decrypt helpers for ESI tokens at rest (`encrypt_token` returns `nonce || ciphertext || tag` packed BYTEA; `decrypt_token` inverse) and for the session cookie payload; HS256 sign/verify for session cookie JWT; all keyed from `ENCRYPTION_SECRET`
 - [ ] 2.11 Implement `backend/src/auth/cookie.rs`: helpers to create and clear the `httpOnly`, `SameSite=Lax`, `Path=/` session cookie
-- [ ] 2.12 Implement `backend/src/auth/handlers.rs`: `GET /auth/login` handler — build EVE SSO redirect URL from `EsiMetadata.authorization_endpoint`, include CSRF state, redirect
-- [ ] 2.13 Implement `GET /auth/callback` handler: validate state, exchange code for tokens via `EsiMetadata.token_endpoint`, parse access-token JWT for `eve_character_id` and `name`; fetch `corporation_id` / `alliance_id` from ESI public-info; in a single Postgres transaction — resolve or create the account (or use session's account in add-character mode), call `reactivate_if_soft_deleted`, call `upsert_character_from_login`; commit; insert/replace the in-memory session pointing to the resolved `account_id`; set cookie; redirect to `/`
+- [ ] 2.12 Implement `backend/src/auth/handlers.rs`:
+  - `GET /auth/login` handler — build EVE SSO redirect URL from `EsiMetadata.authorization_endpoint`, include CSRF state, redirect.
+  - Accept the OPTIONAL `?return_to=<path>` query parameter. Validate per the spec: the value MUST start with a single `/`, MUST NOT start with `//` or `/\\`, and MUST NOT contain `\r` or `\n`. Stash the validated value alongside the CSRF state in the in-flight session record. Invalid values are silently dropped (callback then redirects to `/`).
+  - Implement the validator as a small helper `pub(crate) fn validate_return_to(raw: &str) -> Option<String>` so the same logic is reused by `/auth/characters/add` and is unit-testable.
+- [ ] 2.13 Implement `GET /auth/callback` handler. Validate state, exchange code for tokens via `EsiMetadata.token_endpoint`, parse access-token JWT for `eve_character_id` and `name`; fetch `corporation_id` / `alliance_id` from ESI public-info. Then, in a single Postgres transaction, compose these DB functions in this order:
+
+  1. `let account_id = accounts::resolve_or_create(&mut tx, session.add_character_account_id, eve_character_id).await?;` — returns the session's account when in add-character mode; otherwise either the account that already owns this `eve_character_id`, or a newly-created account row. Implement in `backend/src/db/accounts.rs` as a sibling of the existing helpers.
+  2. `accounts::reactivate_if_soft_deleted(&mut tx, account_id).await?;` — already specified in §2.7.
+  3. `let character_id = characters::upsert_tokens(&mut tx, account_id, eve_character_id, name, corp_id, alliance_id, esi_client_id, access, refresh, expires).await?;`
+  4. `characters::promote_if_no_main(&mut tx, account_id, character_id).await?;` — no-op when the account already has a main; promotes the just-written character otherwise. This is the implementation of the "First linked character is promoted to main" scenario in eve-sso-auth.
+
+  Commit. Insert/replace the in-memory session pointing to the resolved `account_id`. Set cookie. Redirect to the stashed `return_to` path if any, otherwise `/`. Each composition step is a service-layer call returning typed results; no step bundles unrelated concerns.
 - [ ] 2.14 Implement `GET /auth/logout` handler: remove session from store, clear cookie, redirect to `/`
-- [ ] 2.15 Implement `GET /auth/characters/add` handler: require existing session (401 if absent), mark the session as `add_character_mode = true`, redirect to EVE SSO; the shared `/auth/callback` handler reads this flag to decide whether to reuse the session's account
+- [ ] 2.15 Implement `GET /auth/characters/add` handler: require existing session (401 if absent), mark the session as `add_character_mode = true`, accept and validate the same OPTIONAL `?return_to=<path>` parameter via `validate_return_to`, redirect to EVE SSO; the shared `/auth/callback` handler reads `add_character_mode` to decide whether to reuse the session's account and honours the stashed `return_to`.
 - [ ] 2.16 Wire `AppState` in `backend/src/main.rs`: load config, `db::connect()` (which runs migrations), call `discover()` at startup (exit on failure for any of these), initialise `SessionStore`, build Axum router with all `/auth/*` routes
 - [ ] 2.17 Verify `cargo build --release` produces zero warnings (use `SQLX_OFFLINE=true` with `cargo sqlx prepare` checked in, or rely on a running DB at build time — pick one and document)
 
@@ -95,11 +106,10 @@ _tmp_flaky_test_output.txt
 ## 2c. Backend: Account-management endpoints
 
 - [ ] 2c.1 Implement `backend/src/esi/public_info.rs`: `fetch_corporation_name(corporation_id) -> Result<String>` and `fetch_alliance_name(alliance_id) -> Result<String>` against the ESI public-info endpoints discovered via the existing `EsiMetadata` flow (or the documented ESI base URL — pick one and note it). Both functions take `&reqwest::Client`; no caching in this change.
-- [ ] 2c.2 Extend `backend/src/db/characters.rs`:
+- [ ] 2c.2 Extend `backend/src/db/characters.rs` with read/check helpers used by the new `/api/v1/characters/*` handlers (the write functions `upsert_tokens`, `promote_if_no_main`, and `set_main` were defined in §2.8 and are reused here):
   - `count_for_account(account_id) -> Result<i64>` — for the `cannot_remove_last_character` check
-  - `is_main(id) -> Result<Option<(Uuid, bool)>>` — returns `(account_id, is_main)` so the handler can verify ownership and main-status in one query
-  - `set_main(tx, account_id, character_id)` already exists from 2.8 — ensure it is callable from a handler too (not only from the login flow)
-  - When `upsert_character_from_login` inserts the **first** character for an account (count was zero before this call), set `is_main = TRUE` on the newly-inserted row. This satisfies the "first character auto-promoted to main" invariant in design.md §11. The promotion is part of the same transaction as the upsert.
+  - `is_main(id) -> Result<Option<(Uuid, bool)>>` — returns `(account_id, is_main)` so the handler can verify ownership and main-status in one query. Returns `None` when no row matches.
+  - The "first linked character is promoted to main" behaviour lives in `promote_if_no_main` (§2.8) and is called from the SSO callback (§2.13). It is NOT re-implemented here; the `POST /api/v1/characters/:id/set-main` handler (§2c.5) calls `set_main` directly and does not go through the promote-if-no-main path.
 - [ ] 2c.3 Extend `backend/src/db/accounts.rs`: `soft_delete` already exists from 2.7 — wire it into a new handler entry point. Add `list_sessions_for_account(account_id)` helper on `SessionStore` (or equivalent) so the soft-delete handler can drop every session belonging to the soft-deleted account.
 - [ ] 2c.4 Implement `backend/src/api/v1/me.rs`:
   - `GET /api/v1/me` — load the caller's `account` row + all `eve_character` rows; for each character, resolve `corporation_name` and (when `alliance_id IS NOT NULL`) `alliance_name` via `esi::public_info`; build the response shape from `account-management/spec.md` (no token fields included). Wrap in the success envelope per `api-contract`.
@@ -111,6 +121,94 @@ _tmp_flaky_test_output.txt
   - Extend the auth middleware (or the per-route guard) so that an `Authorization: Bearer erb_…` whose `account.status = 'soft_deleted'` is rejected with HTTP 401 and `error.code = "account_soft_deleted"` (per account-management spec).
 - [ ] 2c.7 Mount the new routes behind the `AuthenticatedAccount` middleware in `backend/src/main.rs` alongside `/api/v1/keys`.
 - [ ] 2c.8 Verify with `curl`: `GET /api/v1/me` returns the expected shape after login; `POST /api/v1/characters/<id>/set-main` flips `is_main`; `DELETE /api/v1/characters/<main_id>` returns 409 while siblings exist; `DELETE /api/v1/characters/<only_id>` returns 409; `DELETE /api/v1/account` returns 204 and the cookie is cleared.
+
+## 2d. Backend: OpenAPI document via `utoipa` (strict)
+
+These tasks discharge the api-contract spec's "Machine-readable API description" requirement. They depend on §2b and §2c being implemented first (the handlers and DTOs are what get annotated).
+
+- [ ] 2d.1 Add `utoipa` and `utoipa-swagger-ui` (with the `axum` feature on `utoipa-swagger-ui`) to `backend/Cargo.toml`. Pin to the latest stable major.
+- [ ] 2d.2 Derive `utoipa::ToSchema` on every request/response DTO in `backend/src/dto/` and on the success-envelope (`ApiResponse<T>`) and error-envelope (`ApiError`) types. The envelope types SHALL be declared once and referenced from every annotated response, not inlined per-route.
+- [ ] 2d.3 Annotate every `/api/v1/*` handler with `#[utoipa::path(...)]`:
+  - `POST /api/v1/keys`, `GET /api/v1/keys`, `DELETE /api/v1/keys/:id` (from §2b)
+  - `GET /api/v1/me`, `POST /api/v1/characters/:id/set-main`, `DELETE /api/v1/characters/:id`, `DELETE /api/v1/account` (from §2c)
+  - Each annotation SHALL declare: HTTP method, path, request body schema (where applicable), one response per status code returned (including 2xx, 4xx, and 5xx envelopes), `security` requirements (session cookie or bearer), and the canonical `error.code` values it may return as part of the 4xx response descriptions.
+- [ ] 2d.4 Create `backend/src/openapi.rs`: a struct with `#[derive(utoipa::OpenApi)]` listing every annotated path and every component schema (DTOs + envelopes). Set `info.title = "E-R Bridge API"`, `info.version` from `CARGO_PKG_VERSION`.
+- [ ] 2d.5 Mount routes in `backend/src/main.rs`:
+  - `GET /api/openapi.json` — returns `ApiDoc::openapi().to_json()?` with `Content-Type: application/json`.
+  - `GET /api/docs` — Swagger UI bound to `/api/openapi.json`, via `utoipa_swagger_ui::SwaggerUi`.
+  - Both routes SHALL be public (no auth) so external clients and the Swagger UI can fetch them. They live outside the `AuthenticatedAccount` middleware tree.
+- [ ] 2d.6 Write `backend/tests/openapi_strict.rs`: an integration test that asserts every documented route's actual response validates against its declared schema. Concrete implementation:
+
+  **Dependencies** (dev-dependencies in `Cargo.toml`): `jsonschema = "0.17"` (pin major; widen later if needed), `serde_json = "1"`, `tower = { version = "0.4", features = ["util"] }` for `oneshot` on the Axum router.
+
+  **Setup**: factor router construction into `pub fn build_router(state: AppState) -> Router` in `backend/src/main.rs`, so the test calls it with a test `AppState` (mocked DB pool via the project's standard `MockDb` trait per the `rust-rest-api` skill).
+
+  **Schema extraction**: walk the `utoipa::openapi::OpenApi` value once at the start of the test:
+
+  ```rust
+  let doc = backend::openapi::ApiDoc::openapi();
+  let doc_json: serde_json::Value = serde_json::to_value(&doc).unwrap();
+  let components = doc_json.pointer("/components/schemas").unwrap().clone();
+
+  // For each (path, method, status) we want to test:
+  fn schema_for(
+      doc_json: &serde_json::Value,
+      path: &str,
+      method: &str,
+      status: &str,
+  ) -> serde_json::Value {
+      let raw = doc_json
+          .pointer(&format!(
+              "/paths/{}/{}/responses/{}/content/application~1json/schema",
+              path.replace('/', "~1"),
+              method,
+              status
+          ))
+          .expect("response schema present in doc")
+          .clone();
+      raw // $ref will be resolved by jsonschema against components below
+  }
+
+  // Compile with components as the resolution root so $refs work:
+  let compiled = jsonschema::JSONSchema::options()
+      .with_document(
+          "http://erb.local/openapi#".to_string(),
+          serde_json::json!({ "components": { "schemas": components } }),
+      )
+      .compile(&schema_for(&doc_json, "/api/v1/me", "get", "200"))
+      .unwrap();
+  ```
+
+  **Per-route assertions**: define a `cases: &[Case]` slice covering every documented `(path, method, status, request_fn, expected_status)` tuple — minimally a 200 and one representative 4xx per route. For each case:
+
+  1. `router.clone().oneshot(request_fn()).await.unwrap()` — send the request through the real router.
+  2. Assert `response.status() == expected_status`.
+  3. Read the response body to JSON.
+  4. Compile the schema for `(path, method, expected_status)` and validate the body against it. On failure, panic with `panic!("OpenAPI drift on {method} {path} -> {status}: {errors:?}")`.
+
+  **Failure mode**: this is the "strict drift" check. A handler whose response diverges from its annotation fails CI. To prove it bites, §7.27 temporarily perturbs one handler and confirms this test fails.
+
+- [ ] 2d.7 Add a doc-coverage test in the same file:
+
+  ```rust
+  let documented: HashSet<(String, String)> = doc_json
+      .pointer("/paths").unwrap().as_object().unwrap()
+      .iter()
+      .flat_map(|(path, methods)| {
+          methods.as_object().unwrap().keys()
+              .map(move |m| (path.clone(), m.clone()))
+      })
+      .collect();
+
+  let registered = backend::main::registered_api_v1_routes(); // expose a helper that returns Vec<(path, method)>
+
+  for r in &registered {
+      assert!(documented.contains(r), "route {r:?} is registered but missing from OpenAPI doc");
+  }
+  ```
+
+  A handler with no `#[utoipa::path]` annotation SHALL fail this test. `registered_api_v1_routes` lives in `backend/src/main.rs` and is built from the same route table the router is built from, so it cannot drift from the router itself.
+- [ ] 2d.8 Verify with `curl`: `curl $APP_URL/api/openapi.json | jq .openapi` returns `"3.1.0"` (or the version `utoipa` emits — note in the test if it's `3.0.x`); `curl $APP_URL/api/docs` returns HTML with `<title>Swagger UI</title>`.
 
 ## 3. Backend: Dockerfile
 
@@ -124,10 +222,15 @@ These wireframes are the authoritative visual contract for section 4 (per design
 The user reviews and approves these wireframes before any task in section 4 begins. Tweaks in this phase are cheap; tweaks after Svelte implementation are not.
 
 - [ ] 4a.1 Author `openspec/changes/eve-wormhole-mapper-foundation/wireframes/login.html` matching screenshot 01: centred card on `--space-950` background, cyan sun logo, `E-R BRIDGE` wordmark, "Wormhole Mapper" subtitle, divider, official EVE SSO PNG button (`https://web.ccpgamescdn.com/eveonlineassets/developers/eve-sso-login-white-large.png`), two-line disclaimer in `--slate-500`.
-- [ ] 4a.2 Author `openspec/changes/eve-wormhole-mapper-foundation/wireframes/home.html` matching screenshot 02: 48px GlobalNav at top with logo + brand + `maps` + `characters` links + pulsing emerald `connected` dot + user chip (24px portrait + name + chevron); centred-left body content reading `Welcome, Wasp 223` in `--sky`, then the main character name + `main` badge + corporation/alliance lines, then `Map view coming soon.`.
-- [ ] 4a.3 Author `openspec/changes/eve-wormhole-mapper-foundation/wireframes/characters.html` matching screenshot 04: same GlobalNav; page heading `CHARACTERS` in `--slate-500` uppercase + `+ add character` button top-right (`href="/auth/characters/add"`); two stacked character cards (one with `main` badge and no actions, one with right-aligned `set main` and `remove` text buttons); horizontal divider; `DANGER ZONE` section with `delete account` text button in `--red`.
-- [ ] 4a.4 Author `openspec/changes/eve-wormhole-mapper-foundation/wireframes/user-menu.html` matching screenshot 06: render `home.html`'s top-right chrome with the user-menu dropdown open beneath the user chip. Items: `preferences` (greyed-out, `aria-disabled="true"`), `settings` (greyed-out, `aria-disabled="true"`), divider, `log out` (`href="/auth/logout"`). Card surface is `--space-900` with `--space-700` border, anchored to the chip's right edge.
-- [ ] 4a.5 The user opens each wireframe in a browser and signs off. If anything looks wrong (spacing, copy, palette, hover states, dropdown anchoring, badge style), the wireframe is updated before section 4 begins. The implementer SHALL NOT proceed to section 4 with un-approved wireframes.
+- [ ] 4a.2 Author `openspec/changes/eve-wormhole-mapper-foundation/wireframes/home.html` matching screenshot 02: 48px GlobalNav at top with logo + brand + `maps` + `characters` links + pulsing emerald `connected` dot + user chip (24px portrait + name + chevron); centred-left body content reading `Welcome, Wasp 223` in `--sky`, then the main character name + `main` badge + corporation/alliance lines. No "Map view coming soon." line — that placeholder lives on `/maps`.
+- [ ] 4a.3 Author `openspec/changes/eve-wormhole-mapper-foundation/wireframes/maps.html`: same GlobalNav as `home.html` with `maps` shown as the active link; centred body with a single line `Map view coming soon.` in `--slate-500`. The wireframe SHALL also include one **layout-level error banner** example per design.md §14: a strip in `--red` directly beneath the GlobalNav reading "Couldn't load your account: <error.message>", so the banner's visual treatment is locked in. The maps page is a fine host for this example since the other pages will rely on the same shared component. This is the placeholder for the future map-rendering change.
+- [ ] 4a.4 Author `openspec/changes/eve-wormhole-mapper-foundation/wireframes/characters.html` matching screenshot 04: same GlobalNav with `characters` shown as the active link; page heading `CHARACTERS` in `--slate-500` uppercase + `+ add character` button top-right (`href="/auth/characters/add?return_to=/characters"`); two stacked character cards (one with `main` badge and no actions, one with right-aligned `set main` and `remove` text buttons); horizontal divider; `DANGER ZONE` section with `delete account` text button in `--red`. The wireframe SHALL also include one example **error state** per design.md §14: render the non-main card a second time below the main list with a `--red` inline error message ("Couldn't remove character: cannot_remove_main") anchored directly under it, so the visual treatment of inline form-action errors is locked in.
+- [ ] 4a.5 Author `openspec/changes/eve-wormhole-mapper-foundation/wireframes/user-menu.html` matching screenshot 06: render `home.html`'s top-right chrome with the user-menu dropdown open beneath the user chip. Items: `preferences` (greyed-out, `aria-disabled="true"`), `settings` (greyed-out, `aria-disabled="true"`), divider, `log out` (`href="/auth/logout"`). Card surface is `--space-900` with `--space-700` border, anchored to the chip's right edge.
+- [ ] 4a.6 The user opens each wireframe in a browser and signs off. If anything looks wrong (spacing, copy, palette, hover states, dropdown anchoring, badge style), the wireframe is updated before section 4 begins. The implementer SHALL NOT proceed to section 4 with un-approved wireframes.
+
+  **Spec-sync rule**: design.md §11 ("Visible UI surface") and §14 ("UI surface for API errors") describe load-bearing behaviour (which character drives the user chip, what `maps` resolves to, where errors surface). If wireframe review changes any of those decisions — e.g. you decide errors should be toasts after all, or `maps` should be `/` not `/maps`, or `delete account` should require a confirmation step — the implementer SHALL update the relevant section of design.md *and* re-run `openspec validate eve-wormhole-mapper-foundation` before §4 begins. The wireframes and design.md MUST agree at approval time; downstream tasks (and the rust-rest-api / sveltekit-node skills) read both, so they can't drift.
+
+  Cosmetic-only changes (spacing, font weight, exact shade of red, hover transitions, badge corner radius) do NOT require a design.md update — they live entirely in the wireframe.
 
 ## 4. Frontend: SvelteKit Project
 
@@ -136,22 +239,28 @@ All tasks in this section are blocked on §4a approval. Each task SHALL produce 
 - [ ] 4.1 Scaffold SvelteKit app in `frontend/` using `npm create svelte@latest` with Svelte 5 and TypeScript
 - [ ] 4.2 Install `@sveltejs/adapter-node`; update `svelte.config.js` to use it
 - [ ] 4.3 Create `frontend/src/app.css`: import JetBrains Mono from Google Fonts; define all design-system CSS custom properties (`--space-950` through `--space-600`, full slate scale, `--sky`, `--emerald`, `--amber`, `--red`) on `:root` — names and values MUST match the wireframes' inlined tokens exactly so the Svelte build is pixel-equivalent; set `html, body` to `background: var(--space-950); color: var(--slate-100); font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 13px`; import in `+layout.svelte`.
-- [ ] 4.4 Create `frontend/src/lib/api.ts`: typed wrapper around the backend's `/api/v1/me`, `/api/v1/characters/:id/set-main`, `/api/v1/characters/:id`, and `/api/v1/account` endpoints. Each function returns the unwrapped `data` payload on success and throws a typed error for non-2xx responses (carrying `error.code` and `error.message` from the envelope). Types are derived from the `api-contract` machine-readable description (or hand-typed in this change with a TODO to switch to generated types).
-- [ ] 4.5 Implement `frontend/src/routes/+layout.server.ts`: on every request, call backend `GET /api/v1/me` (forwarding the `cookie` header). On 401, redirect to `/login` unless the current route is `/login`. On 200, store the response in `event.locals.me`. If the request targets `/login` while `event.locals.me` is set, redirect to `/`.
-- [ ] 4.6 Create `frontend/src/lib/components/GlobalNav.svelte` matching `wireframes/home.html`'s top bar exactly: 48px bar (`background: var(--space-900)`, `border-bottom: 1px solid var(--space-700)`); brand logo SVG in `--sky` + `E-R BRIDGE` wordmark linking to `/`; nav links `maps` (→ `/`) and `characters` (→ `/characters`), active link in `--sky` with a `--space-700` pill; right side: pulsing `--emerald` status dot + `connected` label (red + `disconnected` if `me` load failed); to its right, the `UserChip` component (4.7).
+- [ ] 4.4 Create `frontend/src/lib/api.ts`: typed wrapper around the backend's `/api/v1/me`, `/api/v1/characters/:id/set-main`, `/api/v1/characters/:id`, and `/api/v1/account` endpoints. Each function returns the unwrapped `data` payload on success and throws a typed error for non-2xx responses (carrying `error.code` and `error.message` from the envelope). Types are hand-typed in this change to mirror the backend OpenAPI doc at `/api/openapi.json`; a future change wires in `openapi-typescript` (or similar) to generate them. Every type in this file SHALL include a `// keep in sync with: backend/src/dto/<file>.rs` comment pointing at the backend source.
+- [ ] 4.4a Declare `App.Locals` in `frontend/src/app.d.ts`: add `interface Locals { me: MeResponse | null }` so `event.locals.me` is typed end-to-end in `+layout.server.ts`, `+page.server.ts`, and form actions. `MeResponse` is imported from `frontend/src/lib/api.ts`.
+- [ ] 4.5 Implement `frontend/src/routes/+layout.server.ts`: on every request, call backend `GET /api/v1/me` (forwarding the `cookie` header). On 401, set `event.locals.me = null` and redirect to `/login` unless the current route is `/login`. On 200, store the response in `event.locals.me`. If the request targets `/login` while `event.locals.me` is set, redirect to `/`.
+
+  **Lifecycle**: `event.locals.me` is populated *only* by this layout load, and only for the duration of a single SvelteKit request. It is NOT a long-lived store, NOT a session, and is NEVER set by client-side code or by hook code outside this layout. After the SSO callback (`/auth/callback` on the backend, not in SvelteKit) redirects the browser to `/` or to `return_to`, that subsequent request goes through this layout again and `locals.me` is repopulated from the now-valid session cookie. There is no path by which `locals.me` carries state across requests; each request fetches `/api/v1/me` afresh. This keeps the auth gate trivial: the cookie is the only durable state, and the layout is the single point that reads it.
+
+  **Errors**: 401 → redirect to `/login` (no banner). Network error or 5xx → set `locals.me = null` AND return `{ me: null, meError: { code, message } }` so the layout can render the top-of-page error banner per design.md §14. The page still renders (degraded). 4xx other than 401 → same as 5xx (treated as recoverable, banner shown).
+- [ ] 4.6 Create `frontend/src/lib/components/GlobalNav.svelte` matching `wireframes/home.html`'s top bar exactly: 48px bar (`background: var(--space-900)`, `border-bottom: 1px solid var(--space-700)`); brand logo SVG in `--sky` + `E-R BRIDGE` wordmark linking to `/`; nav links `maps` (→ `/maps`) and `characters` (→ `/characters`), active link in `--sky` with a `--space-700` pill; right side: pulsing `--emerald` status dot + `connected` label (red + `disconnected` if `me` load failed); to its right, the `UserChip` component (4.7).
 - [ ] 4.7 Create `frontend/src/lib/components/UserChip.svelte`: 24px circular portrait of the **main** character + main character name + chevron caret. Click toggles a `UserMenu` (4.8). Closes on outside-click and `Escape`.
 - [ ] 4.8 Create `frontend/src/lib/components/UserMenu.svelte` matching `wireframes/user-menu.html`: dropdown card (`--space-900` background, `--space-700` border, anchored to the chip's right edge); items `preferences` (`aria-disabled="true"`, `tabindex="-1"`, no hover), `settings` (same), `--space-700` divider, `log out` (`<a href="/auth/logout">`).
-- [ ] 4.9 Create `frontend/src/routes/+layout.svelte`: full-height shell (`display: flex; flex-direction: column; height: 100vh; overflow: hidden; background: var(--space-950)`); include `GlobalNav` at top **unless** the current route is `/login` (login has no nav per wireframe); yield `{@render children()}` for main content.
+- [ ] 4.9 Create `frontend/src/routes/+layout.svelte`: full-height shell (`display: flex; flex-direction: column; height: 100vh; overflow: hidden; background: var(--space-950)`); include `GlobalNav` at top **unless** the current route is `/login` (login has no nav per wireframe); when `data.meError` is set (the `me` fetch failed with non-401), render the layout-level error banner described in design.md §14 directly below the GlobalNav; yield `{@render children()}` for main content.
 - [ ] 4.10 Implement `frontend/src/routes/login/+page.svelte` matching `wireframes/login.html`: full-viewport `--space-950` background; centred card (`background: var(--space-900)`, `border: 1px solid var(--space-700)`, `border-radius: 8px`); E-R Bridge logo SVG in `--sky`; wordmark + "Wormhole Mapper" subtitle; `<hr>` divider; `<a href="/auth/login"><img src="https://web.ccpgamescdn.com/eveonlineassets/developers/eve-sso-login-white-large.png" alt="LOG IN with EVE Online"></a>`; two-line disclaimer in `--slate-500`.
 - [ ] 4.11 Implement `frontend/src/routes/+page.server.ts`: re-use `event.locals.me` from the layout (no separate fetch); pass `me` to the page as `data.me`.
-- [ ] 4.12 Implement `frontend/src/routes/+page.svelte` (Svelte 5 syntax) matching `wireframes/home.html`: centred-left content area; `Welcome, <main.name>` heading in `--sky`; main character name + `main` badge + corporation row + alliance row (alliance row omitted when `alliance_id IS NULL`); `Map view coming soon.` placeholder. No sidebar. No canvas. The sidebar from the original design is deferred to the future map-rendering change.
-- [ ] 4.13 Implement `frontend/src/routes/characters/+page.server.ts`: re-use `event.locals.me`; return `{ characters: locals.me.characters }`. Also expose form actions:
+- [ ] 4.12 Implement `frontend/src/routes/+page.svelte` (Svelte 5 syntax) matching `wireframes/home.html`: centred-left content area; `Welcome, <main.name>` heading in `--sky`; main character name + `main` badge + corporation row + alliance row (alliance row omitted when `alliance_id IS NULL`). No sidebar. No canvas. No "Map view coming soon." line — that placeholder lives on `/maps`. The sidebar from the original design is deferred to the future map-rendering change.
+- [ ] 4.13 Implement `frontend/src/routes/maps/+page.svelte` matching `wireframes/maps.html`: centred body with a single line `Map view coming soon.` in `--slate-500`. No `+page.server.ts` needed; `event.locals.me` from the layout is enough to gate access. This is the placeholder destination for the `maps` nav link.
+- [ ] 4.14 Implement `frontend/src/routes/characters/+page.server.ts`: re-use `event.locals.me`; return `{ characters: locals.me.characters }`. Also expose form actions, each of which returns `fail(status, { code, message })` on the envelope's `error.code` / `error.message` so the page can surface them inline per design.md §14:
   - `setMain` — `POST /api/v1/characters/:id/set-main` then invalidate the layout load
-  - `remove` — `DELETE /api/v1/characters/:id` then invalidate; surface `error.code` (`cannot_remove_main`, `cannot_remove_last_character`) as a user-visible message
-  - `deleteAccount` — `DELETE /api/v1/account` then `redirect(303, '/login')`
-- [ ] 4.14 Implement `frontend/src/routes/characters/+page.svelte` matching `wireframes/characters.html`: page heading `CHARACTERS` + `+ add character` link (`href="/auth/characters/add"`); stacked character cards rendered from `data.characters` (portrait from `portrait_url`, name, `main` badge for the main, corporation row, alliance row when present, `set main` + `remove` actions on non-main cards using the form actions from 4.13); divider; `DANGER ZONE` section with `delete account` form action button.
-- [ ] 4.15 Verify `npm run build` produces a `build/` directory with a runnable Node.js server.
-- [ ] 4.16 Open each implemented page side-by-side with its wireframe in a browser; the layouts SHALL be visually equivalent. Tune spacing, colours, and hover states until they match. Document any deliberate deviations as a comment in the relevant `+page.svelte`.
+  - `remove` — `DELETE /api/v1/characters/:id` then invalidate; surface `error.code` (`cannot_remove_main`, `cannot_remove_last_character`) as a user-visible message anchored to the character's card
+  - `deleteAccount` — `DELETE /api/v1/account` then `redirect(303, '/login')` on success; on failure, surface the error inline under the DANGER ZONE button
+- [ ] 4.15 Implement `frontend/src/routes/characters/+page.svelte` matching `wireframes/characters.html`: page heading `CHARACTERS` + `+ add character` link (`href="/auth/characters/add?return_to=/characters"`); stacked character cards rendered from `data.characters` (portrait from `portrait_url`, name, `main` badge for the main, corporation row, alliance row when present, `set main` + `remove` actions on non-main cards using the form actions from 4.14); inline error rendered in `--red` directly below a card when its action's `form.code` is set, with `data-error-code={form.code}` attached so tests can branch on the code; divider; `DANGER ZONE` section with `delete account` form action button and an inline error slot underneath it. Errors surface inline per design.md §14; no toasts and no `+error.svelte` route.
+- [ ] 4.16 Verify `npm run build` produces a `build/` directory with a runnable Node.js server.
+- [ ] 4.17 Open each implemented page side-by-side with its wireframe in a browser; the layouts SHALL be visually equivalent. Tune spacing, colours, and hover states until they match. Document any deliberate deviations as a comment in the relevant `+page.svelte`.
 
 ## 5. Frontend: Dockerfile
 
@@ -188,10 +297,15 @@ All tasks in this section are blocked on §4a approval. Each task SHALL produce 
 - [ ] 7.15 Visit `/login` in a browser: layout matches `wireframes/login.html` (logo, wordmark, subtitle, EVE SSO button, disclaimer). The page has no GlobalNav.
 - [ ] 7.16 After SSO, the browser lands on `/` and the layout matches `wireframes/home.html`: GlobalNav with brand + `maps` + `characters` + emerald `connected` dot + user chip (main character's portrait + name + chevron); body shows `Welcome, <main name>` plus the main character block plus `Map view coming soon.`
 - [ ] 7.17 Click the user chip: dropdown appears matching `wireframes/user-menu.html` (`preferences` and `settings` greyed-out and non-interactive; divider; `log out`). Click outside or press `Escape`: dropdown closes. Click `log out`: redirected to `/login`.
-- [ ] 7.18 Click `characters` in the nav: layout matches `wireframes/characters.html`. The main character's card has no actions; the non-main card has `set main` and `remove`. Click `+ add character`: redirected to EVE SSO; after completing with a third character, the new row appears in the list and the previous main is unchanged.
+- [ ] 7.18 Click `maps` in the nav: layout matches `wireframes/maps.html` (GlobalNav with `maps` active, body shows `Map view coming soon.`). Click `characters` in the nav: layout matches `wireframes/characters.html` with `characters` active. The main character's card has no actions; the non-main card has `set main` and `remove`. Click `+ add character`: redirected to EVE SSO; after completing with a third character, the new row appears in the list **and the browser returns to `/characters`** (not `/`) because the `?return_to=/characters` hint was honoured. The previous main is unchanged.
 - [ ] 7.19 Click `set main` on a non-main character: the page reloads, the badge moves, and the user chip in the GlobalNav now shows the new main's portrait and name.
 - [ ] 7.20 Attempt to `remove` the main character via direct API call (`curl -X DELETE`): confirm 409 `cannot_remove_main`. With only one character linked, attempt to remove it: confirm 409 `cannot_remove_last_character`.
 - [ ] 7.21 Click `delete account` in the DANGER ZONE: response is 204, session cookie is cleared, browser redirects to `/login`. Confirm in Postgres that `account.status = 'soft_deleted'` and `delete_requested_at` is set; `eve_character` rows are untouched.
 - [ ] 7.22 Log in again as the soft-deleted account's character: per existing 7.8, the account is reactivated. Visit `/`: the home page renders normally.
 - [ ] 7.23 With a soft-deleted account (before re-login), attempt to use a previously-issued API key: confirm 401 with `error.code = "account_soft_deleted"`.
 - [ ] 7.24 Open the rendered pages side-by-side with their wireframes. Any deviation that is not documented as deliberate is treated as a bug and fixed before this change is considered complete.
+- [ ] 7.25 `GET /api/openapi.json` returns HTTP 200 with `Content-Type: application/json` and a body whose `openapi` field is `"3.1.0"` (or the version `utoipa` emits — record it in the test). The document includes every `/api/v1/*` route mounted by the backend.
+- [ ] 7.26 `GET /api/docs` renders a Swagger UI page (`<title>Swagger UI</title>` in the HTML; the JSON model URL points at `/api/openapi.json`).
+- [ ] 7.27 The backend `cargo test` suite passes including the strict-drift test (§2d.6) and the doc-coverage test (§2d.7). To prove the drift test bites, temporarily change one handler's response shape without updating its annotation and confirm the test fails; revert.
+- [ ] 7.28 `GET /auth/login?return_to=/characters` followed by SSO completion redirects the browser to `/characters` (not `/`). Repeat with `?return_to=https://evil.example.com/` and confirm the callback redirects to `/` (off-origin rejected). Repeat with `?return_to=//evil.example.com/` and confirm the callback redirects to `/` (scheme-relative rejected).
+- [ ] 7.29 **Pre-archival**: move `openspec/changes/eve-wormhole-mapper-foundation/wireframes/` to `frontend/wireframes/` so the wireframes survive archival as a tracked, durable artefact. Update any references in the archived design.md note to point at the new location. Delete `zz-ref/frontend/screenshots/` — the wireframes have superseded them. Run this task only when all earlier §7 checks have passed and the change is ready to be archived.
