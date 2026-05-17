@@ -1,0 +1,72 @@
+name: backend
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend.yml"
+  pull_request:
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend.yml"
+
+defaults:
+  run:
+    working-directory: backend
+
+jobs:
+  check:
+    name: fmt + clippy + test
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 20
+
+    env:
+      # Builds and unit tests use the committed `.sqlx/` cache so the
+      # `sqlx::query!` macros do not need a live DB at compile time.
+      SQLX_OFFLINE: "true"
+      # The `postgres` superuser owns the `postgres` database and has CREATEDB,
+      # which is what `#[sqlx::test]` needs to spawn per-test databases.
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+      CARGO_TERM_COLOR: always
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry and build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend
+
+      - name: cargo fmt
+        run: cargo fmt --all -- --check
+
+      - name: cargo clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Verify .sqlx cache is up to date
+        run: |
+          cargo install sqlx-cli --no-default-features --features postgres,rustls --locked --version ^0.8
+          cargo sqlx prepare --check
+
+      - name: cargo test
+        run: cargo test --all-targets

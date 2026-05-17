@@ -1,0 +1,12 @@
+# Default environment for `cargo` commands run from `backend/`.
+#
+# Values here are picked up by `cargo build`, `cargo test`, `cargo run`, etc.
+# A real shell environment variable always takes precedence, so contributors
+# with non-default Postgres credentials can override without editing this file:
+#
+#   DATABASE_URL=postgres://me:secret@db.local/erbridge cargo test
+#
+# See CONTRIBUTING.md for the expected local-Postgres setup.
+
+[env]
+DATABASE_URL = "postgres://erbridge:Passw0rd@localhost/erbridge?sslmode=disable"
