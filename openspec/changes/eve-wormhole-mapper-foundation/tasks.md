@@ -4,8 +4,8 @@ Before implementing tasks, the implementer MUST invoke the skill matching the ar
 
 | Working on… | Skill | Invoke when |
 |---|---|---|
-| Anything under `backend/` (sections 2, 2b, parts of 6) | `rust-rest-api` | Before writing the first line of Rust in this session |
-| Anything under `frontend/` (sections 4, 5) | `sveltekit-node` | Before writing the first line of Svelte / TypeScript in `frontend/` in this session |
+| Anything under `backend/` (sections 2, 2b, 2c, parts of 6) | `rust-rest-api` | Before writing the first line of Rust in this session |
+| Anything under `frontend/` (sections 4a, 4, 5) | `sveltekit-node` | Before writing the first line of Svelte / TypeScript in `frontend/` in this session. §4a wireframes are plain HTML and do NOT require this skill, but they must be approved before §4 begins. |
 
 If you (Claude) reach a backend or frontend task and the relevant skill body has not been loaded in this session, stop and invoke it first. Loading both up-front is fine; they are independent.
 
@@ -44,7 +44,7 @@ _tmp_flaky_test_output.txt
 ## 2. Backend: Rust/Axum Project
 
 - [ ] 2.1 Initialise Cargo project in `backend/` (`cargo init`)
-- [ ] 2.2 Add dependencies to `Cargo.toml`: `axum`, `tokio` (full), `reqwest` (json feature), `serde`/`serde_json`, `thiserror`, `anyhow`, `aes-gcm`, `jsonwebtoken`, `uuid` (v4 + serde features), `tower-http` (cors/trace), `dotenvy`, `sqlx` (postgres + runtime-tokio-rustls + uuid + chrono + macros features), `chrono` (serde feature)
+- [ ] 2.2 Add dependencies to `Cargo.toml`: `axum`, `tokio` (full), `reqwest` (json feature), `serde`/`serde_json`, `thiserror`, `anyhow`, `aes-gcm`, `jsonwebtoken`, `uuid` (v7 + serde features), `tower-http` (cors/trace), `dotenvy`, `sqlx` (postgres + runtime-tokio-rustls + uuid + chrono + macros features), `chrono` (serde feature)
 - [ ] 2.3 Implement `backend/src/esi/mod.rs` with `EsiMetadata` struct and `discover()` function verbatim as specified
 - [ ] 2.4 Implement `backend/src/config.rs`: read `APP_URL`, `ENCRYPTION_SECRET`, `ESI_CLIENT_ID`, `ESI_CLIENT_SECRET`, `DATABASE_URL` from env; fail fast with clear error if any are missing
 - [ ] 2.5 Create `backend/migrations/00000000000001_create_account_eve_character_and_api_key.sql`: `CREATE EXTENSION IF NOT EXISTS pgcrypto;` then `CREATE TABLE account (...)`, `CREATE TABLE eve_character (...)`, and `CREATE TABLE api_key (...)` matching the schema in design.md §3a verbatim, including all indexes (`account_server_admin_idx`, `eve_character_one_main_per_account`, `eve_character_account_id_idx`, `api_key_hash_idx`, `api_key_account_idx`). Table names MUST be singular.
@@ -92,23 +92,66 @@ _tmp_flaky_test_output.txt
 - [ ] 2b.6 Mount the `/api/v1/keys` routes behind the `AuthenticatedAccount` middleware in `backend/src/main.rs`
 - [ ] 2b.7 Verify with `curl`: create a key via session cookie; use the returned plaintext as `Authorization: Bearer …` to list keys; delete it; subsequent requests with that key return 401
 
+## 2c. Backend: Account-management endpoints
+
+- [ ] 2c.1 Implement `backend/src/esi/public_info.rs`: `fetch_corporation_name(corporation_id) -> Result<String>` and `fetch_alliance_name(alliance_id) -> Result<String>` against the ESI public-info endpoints discovered via the existing `EsiMetadata` flow (or the documented ESI base URL — pick one and note it). Both functions take `&reqwest::Client`; no caching in this change.
+- [ ] 2c.2 Extend `backend/src/db/characters.rs`:
+  - `count_for_account(account_id) -> Result<i64>` — for the `cannot_remove_last_character` check
+  - `is_main(id) -> Result<Option<(Uuid, bool)>>` — returns `(account_id, is_main)` so the handler can verify ownership and main-status in one query
+  - `set_main(tx, account_id, character_id)` already exists from 2.8 — ensure it is callable from a handler too (not only from the login flow)
+  - When `upsert_character_from_login` inserts the **first** character for an account (count was zero before this call), set `is_main = TRUE` on the newly-inserted row. This satisfies the "first character auto-promoted to main" invariant in design.md §11. The promotion is part of the same transaction as the upsert.
+- [ ] 2c.3 Extend `backend/src/db/accounts.rs`: `soft_delete` already exists from 2.7 — wire it into a new handler entry point. Add `list_sessions_for_account(account_id)` helper on `SessionStore` (or equivalent) so the soft-delete handler can drop every session belonging to the soft-deleted account.
+- [ ] 2c.4 Implement `backend/src/api/v1/me.rs`:
+  - `GET /api/v1/me` — load the caller's `account` row + all `eve_character` rows; for each character, resolve `corporation_name` and (when `alliance_id IS NOT NULL`) `alliance_name` via `esi::public_info`; build the response shape from `account-management/spec.md` (no token fields included). Wrap in the success envelope per `api-contract`.
+- [ ] 2c.5 Implement `backend/src/api/v1/characters.rs`:
+  - `POST /api/v1/characters/:id/set-main` — verify the character belongs to the caller (404 otherwise); call `set_main` in a transaction; reload and return the updated character (same shape as one element of `GET /api/v1/me`'s `characters` array, including resolved corp/alliance names and `portrait_url`).
+  - `DELETE /api/v1/characters/:id` — verify ownership (404 otherwise); if `is_main = true` and the account has >1 character → 409 `cannot_remove_main`; if it is the only character → 409 `cannot_remove_last_character`; otherwise hard-delete the row and return 204.
+- [ ] 2c.6 Implement `backend/src/api/v1/account.rs`:
+  - `DELETE /api/v1/account` — in a single Postgres transaction call `accounts::soft_delete(caller.account_id)`. After commit, drop every in-memory session belonging to that account. Set a session-cookie-clearing `Set-Cookie` header on the response. Return 204.
+  - Extend the auth middleware (or the per-route guard) so that an `Authorization: Bearer erb_…` whose `account.status = 'soft_deleted'` is rejected with HTTP 401 and `error.code = "account_soft_deleted"` (per account-management spec).
+- [ ] 2c.7 Mount the new routes behind the `AuthenticatedAccount` middleware in `backend/src/main.rs` alongside `/api/v1/keys`.
+- [ ] 2c.8 Verify with `curl`: `GET /api/v1/me` returns the expected shape after login; `POST /api/v1/characters/<id>/set-main` flips `is_main`; `DELETE /api/v1/characters/<main_id>` returns 409 while siblings exist; `DELETE /api/v1/characters/<only_id>` returns 409; `DELETE /api/v1/account` returns 204 and the cookie is cleared.
+
 ## 3. Backend: Dockerfile
 
 - [ ] 3.1 Write `backend/Dockerfile`: multi-stage build — `rust:latest` builder stage compiling release binary, then `debian:bookworm-slim` runtime stage copying binary
 - [ ] 3.2 Ensure `EXPOSE 3000` (or chosen internal port) and `CMD` are set correctly
 
+## 4a. Wireframes (author and approve BEFORE frontend implementation)
+
+These wireframes are the authoritative visual contract for section 4 (per design.md §10). Each file SHALL be a standalone, self-contained HTML page that can be opened in a browser with no build step. They SHALL inline the design tokens from design.md §10 (`--space-*`, slate scale, `--sky`, `--emerald`, `--red`) on `:root` and load JetBrains Mono from Google Fonts, so the rendered HTML is visually accurate to within ~5% of the final Svelte implementation. Use realistic placeholder data ("Wasp 223", "Artemisia de'Halicarnass", "Exit-Strategy", "Unchained Alliance") so the layout is reviewable.
+
+The user reviews and approves these wireframes before any task in section 4 begins. Tweaks in this phase are cheap; tweaks after Svelte implementation are not.
+
+- [ ] 4a.1 Author `openspec/changes/eve-wormhole-mapper-foundation/wireframes/login.html` matching screenshot 01: centred card on `--space-950` background, cyan sun logo, `E-R BRIDGE` wordmark, "Wormhole Mapper" subtitle, divider, official EVE SSO PNG button (`https://web.ccpgamescdn.com/eveonlineassets/developers/eve-sso-login-white-large.png`), two-line disclaimer in `--slate-500`.
+- [ ] 4a.2 Author `openspec/changes/eve-wormhole-mapper-foundation/wireframes/home.html` matching screenshot 02: 48px GlobalNav at top with logo + brand + `maps` + `characters` links + pulsing emerald `connected` dot + user chip (24px portrait + name + chevron); centred-left body content reading `Welcome, Wasp 223` in `--sky`, then the main character name + `main` badge + corporation/alliance lines, then `Map view coming soon.`.
+- [ ] 4a.3 Author `openspec/changes/eve-wormhole-mapper-foundation/wireframes/characters.html` matching screenshot 04: same GlobalNav; page heading `CHARACTERS` in `--slate-500` uppercase + `+ add character` button top-right (`href="/auth/characters/add"`); two stacked character cards (one with `main` badge and no actions, one with right-aligned `set main` and `remove` text buttons); horizontal divider; `DANGER ZONE` section with `delete account` text button in `--red`.
+- [ ] 4a.4 Author `openspec/changes/eve-wormhole-mapper-foundation/wireframes/user-menu.html` matching screenshot 06: render `home.html`'s top-right chrome with the user-menu dropdown open beneath the user chip. Items: `preferences` (greyed-out, `aria-disabled="true"`), `settings` (greyed-out, `aria-disabled="true"`), divider, `log out` (`href="/auth/logout"`). Card surface is `--space-900` with `--space-700` border, anchored to the chip's right edge.
+- [ ] 4a.5 The user opens each wireframe in a browser and signs off. If anything looks wrong (spacing, copy, palette, hover states, dropdown anchoring, badge style), the wireframe is updated before section 4 begins. The implementer SHALL NOT proceed to section 4 with un-approved wireframes.
+
 ## 4. Frontend: SvelteKit Project
+
+All tasks in this section are blocked on §4a approval. Each task SHALL produce output that matches the corresponding wireframe; if a wireframe is silent on something (e.g. exact hover colour), it falls back to design.md §10/§11.
 
 - [ ] 4.1 Scaffold SvelteKit app in `frontend/` using `npm create svelte@latest` with Svelte 5 and TypeScript
 - [ ] 4.2 Install `@sveltejs/adapter-node`; update `svelte.config.js` to use it
-- [ ] 4.3 Create `frontend/src/app.css`: import JetBrains Mono from Google Fonts; define all design-system CSS custom properties (`--space-950` through `--space-600`, full slate scale, accent colours) on `:root`; set `html, body` to `background: var(--space-950); color: var(--slate-100); font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 13px`; import in `+layout.svelte`
-- [ ] 4.4 Create `frontend/src/lib/components/GlobalNav.svelte`: 48px bar (`background: var(--space-900)`, `border-bottom: 1px solid var(--space-700)`); brand logo SVG in `--sky` + `E-R BRIDGE` wordmark; nav links (`maps`, `characters`) styled per spec; right side: pulsing emerald status dot + label, find-system input, icon-only logout button linking to `/auth/logout`
-- [ ] 4.5 Create `frontend/src/routes/+layout.svelte`: full-height shell (`display: flex; flex-direction: column; height: 100vh; overflow: hidden; background: var(--space-950)`); include `GlobalNav` at top; yield `{@render children()}` for main content
-- [ ] 4.6 Implement `frontend/src/routes/+layout.server.ts`: read session cookie; if absent and route is not `/login`, issue server-side `redirect(302, '/login')`; if present and route is `/login`, redirect to `/`
-- [ ] 4.7 Implement `frontend/src/routes/login/+page.svelte`: full-viewport `--space-950` background, no nav bar; centred card (`background: var(--space-900)`, `border: 1px solid var(--space-700)`, `border-radius: 8px`); E-R Bridge logo SVG in `--sky`; wordmark + "Wormhole Mapper" subtitle; `<hr>` divider; `<a href="/auth/login"><img src="https://web.ccpgamescdn.com/eveonlineassets/developers/eve-sso-login-white-large.png" alt="LOG IN with EVE Online"></a>`; two-line disclaimer in `--slate-500`
-- [ ] 4.8 Implement `frontend/src/routes/+page.server.ts`: load session data (authenticated character list) for the root route; pass to page
-- [ ] 4.9 Implement `frontend/src/routes/+page.svelte` (Svelte 5 syntax): render left sidebar (288px, `background: var(--space-900)`, collapsible to 40px icon rail with `localStorage` persistence) alongside a canvas placeholder area (`background: var(--space-950)`); display authenticated character name(s)
-- [ ] 4.10 Verify `npm run build` produces a `build/` directory with a runnable Node.js server
+- [ ] 4.3 Create `frontend/src/app.css`: import JetBrains Mono from Google Fonts; define all design-system CSS custom properties (`--space-950` through `--space-600`, full slate scale, `--sky`, `--emerald`, `--amber`, `--red`) on `:root` — names and values MUST match the wireframes' inlined tokens exactly so the Svelte build is pixel-equivalent; set `html, body` to `background: var(--space-950); color: var(--slate-100); font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 13px`; import in `+layout.svelte`.
+- [ ] 4.4 Create `frontend/src/lib/api.ts`: typed wrapper around the backend's `/api/v1/me`, `/api/v1/characters/:id/set-main`, `/api/v1/characters/:id`, and `/api/v1/account` endpoints. Each function returns the unwrapped `data` payload on success and throws a typed error for non-2xx responses (carrying `error.code` and `error.message` from the envelope). Types are derived from the `api-contract` machine-readable description (or hand-typed in this change with a TODO to switch to generated types).
+- [ ] 4.5 Implement `frontend/src/routes/+layout.server.ts`: on every request, call backend `GET /api/v1/me` (forwarding the `cookie` header). On 401, redirect to `/login` unless the current route is `/login`. On 200, store the response in `event.locals.me`. If the request targets `/login` while `event.locals.me` is set, redirect to `/`.
+- [ ] 4.6 Create `frontend/src/lib/components/GlobalNav.svelte` matching `wireframes/home.html`'s top bar exactly: 48px bar (`background: var(--space-900)`, `border-bottom: 1px solid var(--space-700)`); brand logo SVG in `--sky` + `E-R BRIDGE` wordmark linking to `/`; nav links `maps` (→ `/`) and `characters` (→ `/characters`), active link in `--sky` with a `--space-700` pill; right side: pulsing `--emerald` status dot + `connected` label (red + `disconnected` if `me` load failed); to its right, the `UserChip` component (4.7).
+- [ ] 4.7 Create `frontend/src/lib/components/UserChip.svelte`: 24px circular portrait of the **main** character + main character name + chevron caret. Click toggles a `UserMenu` (4.8). Closes on outside-click and `Escape`.
+- [ ] 4.8 Create `frontend/src/lib/components/UserMenu.svelte` matching `wireframes/user-menu.html`: dropdown card (`--space-900` background, `--space-700` border, anchored to the chip's right edge); items `preferences` (`aria-disabled="true"`, `tabindex="-1"`, no hover), `settings` (same), `--space-700` divider, `log out` (`<a href="/auth/logout">`).
+- [ ] 4.9 Create `frontend/src/routes/+layout.svelte`: full-height shell (`display: flex; flex-direction: column; height: 100vh; overflow: hidden; background: var(--space-950)`); include `GlobalNav` at top **unless** the current route is `/login` (login has no nav per wireframe); yield `{@render children()}` for main content.
+- [ ] 4.10 Implement `frontend/src/routes/login/+page.svelte` matching `wireframes/login.html`: full-viewport `--space-950` background; centred card (`background: var(--space-900)`, `border: 1px solid var(--space-700)`, `border-radius: 8px`); E-R Bridge logo SVG in `--sky`; wordmark + "Wormhole Mapper" subtitle; `<hr>` divider; `<a href="/auth/login"><img src="https://web.ccpgamescdn.com/eveonlineassets/developers/eve-sso-login-white-large.png" alt="LOG IN with EVE Online"></a>`; two-line disclaimer in `--slate-500`.
+- [ ] 4.11 Implement `frontend/src/routes/+page.server.ts`: re-use `event.locals.me` from the layout (no separate fetch); pass `me` to the page as `data.me`.
+- [ ] 4.12 Implement `frontend/src/routes/+page.svelte` (Svelte 5 syntax) matching `wireframes/home.html`: centred-left content area; `Welcome, <main.name>` heading in `--sky`; main character name + `main` badge + corporation row + alliance row (alliance row omitted when `alliance_id IS NULL`); `Map view coming soon.` placeholder. No sidebar. No canvas. The sidebar from the original design is deferred to the future map-rendering change.
+- [ ] 4.13 Implement `frontend/src/routes/characters/+page.server.ts`: re-use `event.locals.me`; return `{ characters: locals.me.characters }`. Also expose form actions:
+  - `setMain` — `POST /api/v1/characters/:id/set-main` then invalidate the layout load
+  - `remove` — `DELETE /api/v1/characters/:id` then invalidate; surface `error.code` (`cannot_remove_main`, `cannot_remove_last_character`) as a user-visible message
+  - `deleteAccount` — `DELETE /api/v1/account` then `redirect(303, '/login')`
+- [ ] 4.14 Implement `frontend/src/routes/characters/+page.svelte` matching `wireframes/characters.html`: page heading `CHARACTERS` + `+ add character` link (`href="/auth/characters/add"`); stacked character cards rendered from `data.characters` (portrait from `portrait_url`, name, `main` badge for the main, corporation row, alliance row when present, `set main` + `remove` actions on non-main cards using the form actions from 4.13); divider; `DANGER ZONE` section with `delete account` form action button.
+- [ ] 4.15 Verify `npm run build` produces a `build/` directory with a runnable Node.js server.
+- [ ] 4.16 Open each implemented page side-by-side with its wireframe in a browser; the layouts SHALL be visually equivalent. Tune spacing, colours, and hover states until they match. Document any deliberate deviations as a comment in the relevant `+page.svelte`.
 
 ## 5. Frontend: Dockerfile
 
@@ -142,3 +185,13 @@ _tmp_flaky_test_output.txt
 - [ ] 7.12 API key end-to-end: while authenticated by session cookie, `curl -X POST $APP_URL/api/v1/keys -d '{"name":"smoke","expires_at":null}'`; capture returned plaintext `key`; confirm it matches `erb_[A-Za-z0-9_-]{43}`; confirm one row in `api_key` with `scope = 'account'`, matching `account_id`, and `key_hash` equal to `echo -n "$KEY" | sha256sum | cut -d' ' -f1`
 - [ ] 7.13 API key authenticates: `curl -H "Authorization: Bearer $KEY" $APP_URL/api/v1/keys`; confirm the response lists the key and does NOT include a plaintext field
 - [ ] 7.14 API key revocation: `curl -X DELETE -H "Authorization: Bearer $KEY" $APP_URL/api/v1/keys/$ID`; confirm 204; repeat the previous `curl` with the same key and confirm 401
+- [ ] 7.15 Visit `/login` in a browser: layout matches `wireframes/login.html` (logo, wordmark, subtitle, EVE SSO button, disclaimer). The page has no GlobalNav.
+- [ ] 7.16 After SSO, the browser lands on `/` and the layout matches `wireframes/home.html`: GlobalNav with brand + `maps` + `characters` + emerald `connected` dot + user chip (main character's portrait + name + chevron); body shows `Welcome, <main name>` plus the main character block plus `Map view coming soon.`
+- [ ] 7.17 Click the user chip: dropdown appears matching `wireframes/user-menu.html` (`preferences` and `settings` greyed-out and non-interactive; divider; `log out`). Click outside or press `Escape`: dropdown closes. Click `log out`: redirected to `/login`.
+- [ ] 7.18 Click `characters` in the nav: layout matches `wireframes/characters.html`. The main character's card has no actions; the non-main card has `set main` and `remove`. Click `+ add character`: redirected to EVE SSO; after completing with a third character, the new row appears in the list and the previous main is unchanged.
+- [ ] 7.19 Click `set main` on a non-main character: the page reloads, the badge moves, and the user chip in the GlobalNav now shows the new main's portrait and name.
+- [ ] 7.20 Attempt to `remove` the main character via direct API call (`curl -X DELETE`): confirm 409 `cannot_remove_main`. With only one character linked, attempt to remove it: confirm 409 `cannot_remove_last_character`.
+- [ ] 7.21 Click `delete account` in the DANGER ZONE: response is 204, session cookie is cleared, browser redirects to `/login`. Confirm in Postgres that `account.status = 'soft_deleted'` and `delete_requested_at` is set; `eve_character` rows are untouched.
+- [ ] 7.22 Log in again as the soft-deleted account's character: per existing 7.8, the account is reactivated. Visit `/`: the home page renders normally.
+- [ ] 7.23 With a soft-deleted account (before re-login), attempt to use a previously-issued API key: confirm 401 with `error.code = "account_soft_deleted"`.
+- [ ] 7.24 Open the rendered pages side-by-side with their wireframes. Any deviation that is not documented as deliberate is treated as a bug and fixed before this change is considered complete.

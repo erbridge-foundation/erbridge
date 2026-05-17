@@ -71,7 +71,7 @@ If neither method succeeds, the backend SHALL respond with HTTP 401.
 - **THEN** the response is HTTP 400
 
 #### Scenario: Duplicate name is rejected
-- **WHEN** `POST /api/v1/keys` is called where the `name` already exists for the account OR for the server
+- **WHEN** `POST /api/v1/keys` is called where the `name` already exists for the account OR if the key is a server level key, already exists for the server
 - **THEN** the response is HTTP 409
 
 ### Requirement: GET /api/v1/keys lists the caller's keys

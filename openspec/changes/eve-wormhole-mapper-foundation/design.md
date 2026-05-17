@@ -21,7 +21,9 @@ There are no existing services or databases to migrate. Identity data (accounts 
 - Automatic access-token refresh on expiry (both tokens are stored encrypted but the refresh-on-expiry flow is a future change)
 - Owner-hash / character-transfer detection (intentionally omitted from this change; see Decision 3a)
 - The 30-day soft-delete cooldown sweeper (a future scheduled-job change; this change only establishes the columns and reactivation behaviour)
-- Frontend routing beyond `/` and `/login`
+- Map rendering, ACL UI, and `acls`/`maps` route content (the nav exposes `maps` and `characters` only in this change; `acls` is a later capability and the screenshots' `acls` link is intentionally omitted)
+- Wormhole signature scanning, system info panels, sidebar / find-system input (the existing `zz-ref/frontend/wireframes/map_canvas.html` is a long-range visual target, not an in-scope deliverable)
+- Frontend routing beyond `/`, `/login`, and `/characters`
 
 ## Decisions
 
@@ -37,14 +39,14 @@ The browser holds only an opaque session ID (AES-256-GCM encrypted, HS256 JWT si
 
 *Alternative considered: storing tokens in a signed cookie.* Rejected — even encrypted, token material in the browser is higher risk and harder to revoke.
 
-### 3. Postgres for identity + tokens, in-memory map for session routing
+### 3. Postgres for identity + tokens + API keys, in-memory map for session routing
 
 Two distinct stores, chosen for their distinct durability needs:
 
-- **`account` and `eve_character` tables in Postgres** — identity AND ESI tokens are durable. Both the encrypted access token and encrypted refresh token live in `eve_character` columns. Postgres is the single source of truth for tokens; any login flow writes both. Identity survives restarts because losing it means re-onboarding every user; tokens survive restarts so an active session that has just refreshed its access token doesn't lose it to a restart.
+- **`account`, `eve_character`, and `api_key` tables in Postgres** — identity, ESI tokens, and long-lived API credentials are all durable. Both the encrypted access token and encrypted refresh token live in `eve_character` columns; `api_key` holds a SHA-256 hash of each issued key. Postgres is the single source of truth for all three. Identity survives restarts because losing it means re-onboarding every user; ESI tokens survive restarts so an active session that has just refreshed its access token doesn't lose it to a restart; API keys are by definition long-lived bearer credentials that the holder expects to keep working across deployments.
 - **`HashMap<SessionId, Session>` behind `Arc<RwLock<>>`** — sessions are ephemeral routing. Each session entry holds only `account_id` and CSRF state for in-flight OAuth2 redirects. Losing these on restart is acceptable; users re-login. There are no tokens in this map.
 
-This split keeps the session table out of Postgres (no expiry-sweep job needed) while making tokens durable. `sqlx` is the database driver: compile-time-checked queries via `sqlx::query!`, native async with tokio.
+This split keeps the session table out of Postgres (no expiry-sweep job needed) while making identity, ESI tokens, and API keys durable. `sqlx` is the database driver: compile-time-checked queries via `sqlx::query!`, native async with tokio.
 
 *Alternative considered: SQLite.* Rejected because Postgres is the eventual production target for the domain data (maps, signatures, chain history) and there's no benefit to introducing SQLite only to migrate away from it later.
 
@@ -221,17 +223,67 @@ erb_<43 chars base64url>
 - **Hex encoding.** Rejected — base64url is 25% shorter and equally URL-safe.
 - **No prefix.** Rejected — the prefix is essentially free and makes operational secret-scanning far more reliable.
 
-### 9. Visual design system — space-dark theme with JetBrains Mono
+### 10. Visual design system — space-dark theme with JetBrains Mono
 
-The wireframe (`zz-ref/frontend/wireframes/map_canvas.html`) defines the complete design language. Key choices:
+The authoritative visual contract for this change is the set of HTML wireframes under `openspec/changes/eve-wormhole-mapper-foundation/wireframes/` (`login.html`, `home.html`, `characters.html`, `user-menu.html`). The wireframes are reviewed and approved *before* the frontend implementation tasks begin; Svelte components SHALL match them. The long-range map wireframe at `zz-ref/frontend/wireframes/map_canvas.html` remains the visual reference for future map work and is the source of the shared design tokens below — it is not an in-scope deliverable for this change.
 
-- **Typeface**: JetBrains Mono exclusively — reinforces the technical/terminal aesthetic appropriate for a scanning tool
-- **Colour palette**: deep navy `--space-950` → `--space-600` for backgrounds/surfaces; slate scale for text; `--sky` (`#38bdf8`) as the single brand accent (logo, active tab indicator, primary buttons); `--emerald` for online/positive; `--amber` for warning; `--red` for destructive
-- **Global nav**: 48px fixed bar, `--space-900` surface, brand logo + wordmark left, nav links centre-left, status dot + find input + logout icon right
-- **Left sidebar**: 288px collapsible panel with a 40px icon-rail collapsed state; toggle button overflows the sidebar edge; sections use uppercase 10px headers with chevrons; state persists to `localStorage`
-- **Login page**: same shell (nav bar + `--space-950` background); centred CTA; `--sky` accent on the login button
+Key choices:
 
-The design system is implemented as CSS custom properties on `:root` in a global stylesheet, consumed by all Svelte components. No CSS framework — custom properties only.
+- **Typeface**: JetBrains Mono exclusively — reinforces the technical/terminal aesthetic appropriate for a scanning tool. Loaded from Google Fonts in `frontend/src/app.css`.
+- **Colour palette**: deep navy `--space-950` → `--space-600` for backgrounds/surfaces; slate scale for text (`--slate-100` body, `--slate-300` secondary, `--slate-500` muted/disclaimer); `--sky` (`#38bdf8`) as the single brand accent (logo, active nav indicator, primary buttons, headings); `--emerald` for connected/positive states; `--amber` for warning; `--red` for destructive actions (`remove`, `delete account`).
+- **Density**: 13px base font size; generous whitespace; 8px / 12px / 16px spacing rhythm.
+- **Card surfaces**: `background: var(--space-900)`, `border: 1px solid var(--space-700)`, `border-radius: 6px`, padding `16px–24px`.
+
+The design system is implemented as CSS custom properties on `:root` in a global stylesheet (`frontend/src/app.css`), consumed by all Svelte components. No CSS framework — custom properties only. The token names are shared with `zz-ref/frontend/wireframes/map_canvas.html` so that future map work picks up the same palette without redefinition.
+
+### 11. Visible UI surface in this change
+
+The frontend in this change exposes three routes and one shared chrome element. Each is fully specified by its wireframe; the bullets below capture the load-bearing decisions that the wireframes cannot express.
+
+**Routes:**
+
+- `/login` — full-viewport `--space-950` background, no nav bar, centred card with the brand mark, "Wormhole Mapper" subtitle, EVE SSO login button (uses the official CCP-hosted PNG `https://web.ccpgamescdn.com/eveonlineassets/developers/eve-sso-login-white-large.png`), and a two-line disclaimer.
+- `/` (home) — global nav at top; centred-left content area shows `Welcome, <main character name>` heading in `--sky`, the main character's name + `main` badge + corporation/alliance lines, and a `Map view coming soon.` placeholder line. This **replaces** the originally-planned 288px collapsible sidebar + canvas placeholder; the sidebar belongs to the future map view (see `map_canvas.html`) and would be visual clutter against an empty canvas.
+- `/characters` — global nav at top; page heading `CHARACTERS` in `--slate-500` uppercase with a `+ add character` button (top-right) whose `href` is `/auth/characters/add`. A vertically stacked list of character cards follows. Each card shows: 64px portrait from `https://images.evetech.net/characters/<eve_character_id>/portrait?size=128`, character name (large), `main` badge (cyan pill) when applicable, faction-coloured corporation row, alliance row (omitted when null). Non-main cards expose right-aligned `set main` and `remove` text-button actions; the main character's card has no actions (cannot be removed or re-promoted while it is already main). Below the list, a `DANGER ZONE` section with a single `delete account` text button in `--red`.
+
+**Shared chrome:**
+
+- **GlobalNav** (48px fixed bar, `--space-900`, bottom border `--space-700`):
+  - Left: cyan sun logo SVG + `E-R BRIDGE` wordmark. Clicking links to `/`.
+  - Centre-left: nav links `maps`, `characters`. Active link is indicated by `--sky` colour and a subtle `--space-700` background pill. `maps` resolves to `/` in this change (no separate `/maps` route yet).
+  - Right: pulsing `--emerald` status dot + `connected` label (driven by the success of `GET /api/v1/me`; the dot is `--red` and labelled `disconnected` if the request fails). To the right of the status, the user chip: 24px circular portrait of the **main** character + main character name + chevron, all clickable to toggle the user-menu dropdown.
+- **User-menu dropdown** (opens beneath the user chip, anchored to its right edge, `--space-900` card with `--space-700` border):
+  - `preferences` — disabled placeholder in this change (greyed-out, not a `<a>`). Future change.
+  - `settings` — disabled placeholder in this change. Future change. The link target for both placeholders is `#`; they SHALL have `aria-disabled="true"` and `tabindex="-1"` and no hover effect.
+  - Visual divider (`--space-700`).
+  - `log out` — `<a href="/auth/logout">`.
+
+The dropdown closes on outside-click and on `Escape`. State is local to the component (no store needed).
+
+**Auth gating:**
+
+`+layout.server.ts` runs on every navigation. It calls the backend's `GET /api/v1/me` server-side (forwarding the request's `cookie` header). On 401, it redirects to `/login` unless the requested route is already `/login`. On 200, it stashes the response in `event.locals` so child `+page.server.ts` files can reuse it without re-fetching. If the layout load reaches `/login` with an authenticated session, it redirects to `/`.
+
+**Why this shape:**
+
+The screenshots make the *structure* obvious but leave several behaviours ambiguous; the bullets above pin them down so the wireframes don't have to encode them. Specifically: which character drives the user chip portrait (the **main**, not the last-logged-in), what `maps` resolves to in this change (the home route), and what happens when an account has only one character (it is automatically main; `remove` is hidden on the main card; `delete_account` is the only way to remove the last identity).
+
+### 12. Account-management endpoints under `/api/v1/`
+
+To support the home and characters pages, four new `/api/v1/` endpoints are added (full contracts in `specs/account-management/spec.md`):
+
+- `GET /api/v1/me` — returns the caller's account plus their full character list, including `corporation_name` / `alliance_name` resolved from ESI public-info and `portrait_url` constructed from the EVE image server. Token columns are NEVER included in the response.
+- `POST /api/v1/characters/:id/set-main` — promotes a character to main; flips `is_main` in a single transaction relying on the partial unique index `eve_character_one_main_per_account` for correctness.
+- `DELETE /api/v1/characters/:id` — hard-deletes a non-main character. Rejects removal of the only character (409 `cannot_remove_last_character`) and removal of the current main while siblings exist (409 `cannot_remove_main`) — the caller must promote another character to main first.
+- `DELETE /api/v1/account` — soft-deletes the caller's account (`status = 'soft_deleted'`, `delete_requested_at = now()`), drops every in-memory session for the account, and clears the caller's session cookie. Character rows and API keys are NOT modified. A subsequent SSO login reactivates the account (per the `eve-sso-auth` capability).
+
+**Why this shape:**
+
+- Splitting `GET /api/v1/me` from the existing `/auth/*` endpoints keeps the authenticated read of identity inside the versioned, envelope-wrapped `/api/*` surface. `/auth/*` is reserved for OAuth2 redirects and session-cookie management; it stays HTML-redirect-shaped, not JSON.
+- `corporation_name` and `alliance_name` are resolved server-side (and not stored in `eve_character`) because the names can change in EVE and we want the displayed value to be fresh on each `GET /api/v1/me`. Server-side ESI lookup also avoids exposing the ESI URL pattern to the browser.
+- `portrait_url` is also resolved server-side, even though the URL is deterministic from `eve_character_id`, so that a future move to a different image host (or signed URLs) is a one-line change in the backend.
+- `DELETE /api/v1/account` is the only place where the soft-delete state machine is *initiated* from the HTTP API; the reactivation path is the SSO callback (already specified). Keeping reactivation implicit (just log in again) means no UX prompt is needed, which matches Risks/Trade-offs §"Soft-delete reactivation is silent".
+- The main-character invariant is enforced at two layers: the Postgres partial unique index `eve_character_one_main_per_account` (no two mains can coexist) and the `cannot_remove_main` / `cannot_remove_last_character` 409s (the API never leaves the account in an invalid state via deletion). The first linked character is automatically promoted to main during `upsert_character_from_login` when the account has no main yet.
 
 ## Risks / Trade-offs
 
@@ -241,6 +293,8 @@ The design system is implemented as CSS custom properties on `:root` in a global
 - **`ENCRYPTION_SECRET` rotation requires re-encrypting tokens** → Documented; out of scope to implement an automatic rotation tool. Manual rotation procedure deferred to a future ops-focused change.
 - **No automatic access-token refresh** → ESI access tokens expire after ~20 minutes. Refresh tokens are stored but not yet used to refresh on demand. Users will need to re-authenticate when their access token expires. Refresh-on-expiry is the next auth improvement and is unblocked by tokens now being in Postgres.
 - **No character-transfer detection** → Without `owner_hash`, if an EVE character is transferred between EVE accounts, the new owner can log in and silently take over the existing row. Accepted for this change; revisit if/when ESI characters become tradeable at scale matters.
+- **`GET /api/v1/me` does N ESI public-info lookups per request** → Each call resolves `corporation_name` and `alliance_name` from ESI for every linked character, with no cross-request cache in this change. Acceptable because the typical account has 1–5 characters and the page is not on a hot path. A future `corporation` / `alliance` cache table (or in-process TTL cache) is a small follow-up if it shows up in latency.
+- **Disabled `preferences` / `settings` menu items** → Greyed-out placeholders ship in the user-menu dropdown to lock in the visual layout from the screenshots, but they have no destinations. A user clicking them gets no feedback. Acceptable as a deliberate placeholder; the alternative (hiding them) would mean the menu has a single `log out` row and looks empty.
 - **Soft-delete reactivation is silent** → A user whose account is `soft_deleted` will be reactivated on next login with no UI prompt. Acceptable because soft-delete is user-initiated; if it was admin-initiated (banned/suspended) that'll be a different status and login will be refused.
 - **API keys cannot be retrieved after creation** → If a user loses the plaintext, the only recovery is revoke + create-new. Documented in the create response. Stronger UX than storing recoverable plaintext.
 - **No `last_used_at` on API keys** → Users can't tell whether a key is in use before revoking it. Accepted to keep the schema lean; trivial to add later (single-column migration with `NULL` default).

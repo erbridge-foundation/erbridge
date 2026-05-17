@@ -199,11 +199,24 @@ Do not wrap it. Do not apply `ApiResponse` to it.
 
 ## Testing Requirements
 
-### Unit Tests — 100% coverage of service logic
+### Unit Tests — 100% coverage of every non-trivial function
 
-- Every service function **must** have unit tests.
-- Mock the DB layer (use a trait + test double, or `mockall`).
-- Tests live in `#[cfg(test)]` modules within the service file, or in `src/services/tests/`.
+Unit-test coverage is **not** limited to the service layer. Every function with meaningful behaviour gets a unit test — handlers, services, DB functions, and helpers alike. The only exclusions are trivial glue (one-line `From` impls, a constructor that just assigns fields, a handler that does literally nothing but `service.call().await`). If a function has a branch, a transformation, a validation, or an error path, it needs a test.
+
+Tests live in `#[cfg(test)]` modules within the file they cover (preferred — keeps the test next to the code), or in a sibling `tests.rs` for that module.
+
+**Coverage targets per layer:**
+
+| Layer | What to test | How to isolate |
+|---|---|---|
+| Handler | request parsing, validation dispatch, envelope shape, error → status mapping | mock the service (trait + test double) |
+| Service | business logic, orchestration, error translation from DB to service errors | mock the DB layer (trait + `mockall` or hand-rolled) |
+| DB | SQL correctness, row-to-domain mapping, constraint behaviour, transaction semantics | real test DB via `#[sqlx::test]` — unit-level scope, one function per test |
+| Helper / pure functions | every branch and edge case | none needed — pure functions test directly |
+| DTO `From` impls | only if the mapping is non-trivial (computed fields, conditional inclusion, redaction) | none needed |
+| Error → response mapping | every `AppError` variant maps to the documented status & body | none needed; construct the variant and call `into_response` |
+
+**Service example — mock the DB:**
 
 ```rust
 #[cfg(test)]
@@ -221,6 +234,77 @@ mod tests {
     }
 }
 ```
+
+**Handler example — mock the service:**
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn create_user_returns_201_with_envelope() {
+        let mut mock_svc = MockUserService::new();
+        mock_svc.expect_create_user().returning(|_| Ok(fake_user_dto()));
+        let state = AppState::with_user_service(Arc::new(mock_svc));
+        let resp = create_user(State(state), Json(valid_request())).await.unwrap();
+        assert_eq!(resp.0.data.email, "a@b.com");
+    }
+
+    #[tokio::test]
+    async fn create_user_maps_conflict_to_409() {
+        let mut mock_svc = MockUserService::new();
+        mock_svc.expect_create_user().returning(|_| Err(ServiceError::Conflict));
+        let state = AppState::with_user_service(Arc::new(mock_svc));
+        let err = create_user(State(state), Json(valid_request())).await.unwrap_err();
+        assert_eq!(err.into_response().status(), StatusCode::CONFLICT);
+    }
+}
+```
+
+**DB example — real test DB, one function under test:**
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[sqlx::test]
+    async fn insert_then_find_returns_same_row(pool: PgPool) {
+        let inserted = insert(&pool, NewUser { email: "a@b.com".into() }).await.unwrap();
+        let found = find_by_id(&pool, inserted.id).await.unwrap();
+        assert_eq!(found.email, "a@b.com");
+    }
+
+    #[sqlx::test]
+    async fn insert_duplicate_email_returns_unique_violation(pool: PgPool) {
+        insert(&pool, NewUser { email: "a@b.com".into() }).await.unwrap();
+        let err = insert(&pool, NewUser { email: "a@b.com".into() }).await.unwrap_err();
+        assert!(matches!(err, DbError::UniqueViolation { .. }));
+    }
+}
+```
+
+**Helper example — pure function, no mocks:**
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_email_lowercases_and_trims() {
+        assert_eq!(normalize_email("  A@B.COM  "), "a@b.com");
+    }
+
+    #[test]
+    fn normalize_email_rejects_missing_at() {
+        assert!(normalize_email_checked("bogus").is_err());
+    }
+}
+```
+
+Note the boundary with integration tests: a *unit* DB test exercises one function in isolation; an *integration* test exercises a full handler→service→db request. Both use `#[sqlx::test]`; the distinguishing factor is scope, not tooling.
 
 ### Integration Tests — 100% coverage of handler→service→db paths
 
@@ -289,7 +373,7 @@ Two HURL requests in the same file are separated by a blank line — the file re
 - [ ] DB function was extended rather than duplicated where possible
 - [ ] Response uses a DTO, not a DB model
 - [ ] Response is wrapped in `ApiResponse` envelope (except `/api/healthz`)
-- [ ] Unit test for every service function
+- [ ] Unit test for every non-trivial function — handlers, services, DB functions, helpers, and any non-trivial DTO mappings or error→response conversions
 - [ ] Integration test for every handler (happy + key error paths)
 - [ ] HURL test for every endpoint
 - [ ] No `.unwrap()` / `.expect()` in non-test code

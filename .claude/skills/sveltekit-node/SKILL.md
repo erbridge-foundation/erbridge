@@ -419,6 +419,127 @@ export const handle: Handle = async ({ event, resolve }) => {
 
 ---
 
+## Testing Requirements
+
+Frontend tests are not optional. Every non-trivial piece of frontend code gets a test — load functions, form actions, server endpoints, components with logic, rune-state modules, and utility helpers. The only exclusions are trivial glue (pure-presentational components with no logic, one-line helpers, `+page.svelte` files that just render `data` from `load`).
+
+### Tooling
+
+| Test type | Tool | Lives in |
+|---|---|---|
+| Unit (functions, modules, components in isolation) | **Vitest** + `@testing-library/svelte` | `*.test.ts` co-located next to the file under test |
+| End-to-end (real browser, real server) | **Playwright** | `frontend/tests/e2e/` |
+| Type checking | `svelte-check` | run in CI; treat warnings as errors |
+
+Both tools are wired up by `npm create svelte@latest` when the test options are selected — keep them. Do not introduce a third test runner.
+
+### Unit Tests — Vitest
+
+Cover every non-trivial unit individually. Mock the boundary (server load mocks `db`, components mock fetched `data`, server endpoints mock services).
+
+**Coverage targets per file type:**
+
+| File | What to test | How to isolate |
+|---|---|---|
+| `+page.server.ts` load | auth gating, error paths, shape of returned `data` | mock `$lib/server/db` (or whatever it imports) |
+| `+page.server.ts` actions | validation branches, redirect vs. `fail` returns, side effects | mock the server module the action calls |
+| `+server.ts` endpoints | each method, each status code, payload shape, auth gating | mock the server module the handler calls |
+| `+page.svelte` / components | conditional rendering, event handlers, `$derived` correctness, prop variants | render via `@testing-library/svelte`; pass `data`/`form` as props |
+| `.svelte.ts` rune state modules | every mutator, every `$derived` | import directly; assert on `$state` values |
+| `$lib/utils.ts` / pure helpers | every branch, every edge case | none needed — call the function |
+| `hooks.server.ts` | every code path in `handle` (session present/absent, error paths) | mock cookie store and `resolve` |
+
+**Load function example:**
+
+```ts
+// src/routes/dashboard/+page.server.test.ts
+import { describe, it, expect, vi } from 'vitest';
+import { load } from './+page.server';
+
+vi.mock('$lib/server/db', () => ({
+  db: { projects: { listByUser: vi.fn().mockResolvedValue([{ id: '1', name: 'p' }]) } },
+}));
+
+describe('dashboard load', () => {
+  it('returns projects for authenticated user', async () => {
+    const result = await load({ locals: { user: { id: 'u1' } } } as any);
+    expect(result.projects).toHaveLength(1);
+  });
+
+  it('throws 401 when unauthenticated', async () => {
+    await expect(load({ locals: { user: null } } as any)).rejects.toMatchObject({ status: 401 });
+  });
+});
+```
+
+**Component example:**
+
+```ts
+// src/lib/components/TaskCard.test.ts
+import { render, screen } from '@testing-library/svelte';
+import TaskCard from './TaskCard.svelte';
+
+it('renders the label', () => {
+  render(TaskCard, { props: { task: { id: '1', label: 'ship it', status: 'done' } } });
+  expect(screen.getByText('ship it')).toBeInTheDocument();
+});
+
+it('applies done state', () => {
+  const { container } = render(TaskCard, { props: { task: { id: '1', label: 'x', status: 'done' } } });
+  expect(container.querySelector('[data-status="done"]')).not.toBeNull();
+});
+```
+
+**Rune state example:**
+
+```ts
+// src/lib/state/cart.svelte.test.ts
+import { describe, it, expect } from 'vitest';
+import { cart, addItem } from './cart.svelte';
+
+describe('cart state', () => {
+  it('addItem appends to items', () => {
+    addItem({ id: '1', qty: 1 });
+    expect(cart.items).toHaveLength(1);
+  });
+});
+```
+
+`.svelte.ts` modules need Vitest's Svelte plugin to compile runes. Use `vitest-plugin-svelte` (or the integration that ships with `npm create svelte`) — don't try to test `.svelte.ts` files with the bare `node` environment.
+
+### End-to-End Tests — Playwright
+
+E2E tests exercise the real built app: real server, real browser, real navigation. They are slow; reserve them for **user-visible flows that span pages and persist state**.
+
+- One spec file per flow under `frontend/tests/e2e/`, e.g. `login.spec.ts`, `add-character.spec.ts`.
+- Run against a built app (`npm run build && npm run preview`) so the assertions reflect production behaviour, not dev-server quirks.
+- Mock the EVE SSO / backend at the network boundary (Playwright's `route.fulfill`) when the test needs to avoid real external calls; otherwise drive against the docker-compose stack.
+
+```ts
+// frontend/tests/e2e/login.spec.ts
+import { test, expect } from '@playwright/test';
+
+test('unauthenticated visit redirects to /login', async ({ page }) => {
+  await page.goto('/');
+  await expect(page).toHaveURL(/\/login$/);
+  await expect(page.getByAltText(/LOG IN with EVE Online/)).toBeVisible();
+});
+```
+
+### What NOT to test
+
+- Pure-presentational components with no logic (a `<header class="…">` that just wraps a slot). Snapshot tests for these are noise.
+- The framework itself (don't test that `redirect()` actually redirects — trust SvelteKit).
+- Style values (don't assert `getComputedStyle(...)` equals a CSS custom property — that's a design system regression test, not a unit test).
+
+### Running tests
+
+- `npm run test` — Vitest in watch mode (dev) or single run (CI).
+- `npm run test:e2e` — Playwright headless against the built app.
+- Both **must** pass before commit. CI runs `svelte-check` + `vitest run` + `playwright test`.
+
+---
+
 ## Checklist Before Committing
 
 - [ ] All reactive state uses `$state`, `$derived`, `$effect` — no `$:` or `export let`
@@ -433,3 +554,6 @@ export const handle: Handle = async ({ event, resolve }) => {
 - [ ] `$env/dynamic/private` for runtime secrets
 - [ ] `locals.user` set in `hooks.server.ts` — not re-fetched in every load function
 - [ ] `strict: true` TypeScript, no `any`
+- [ ] Vitest unit test for every non-trivial unit — load functions, actions, `+server.ts` handlers, components with logic, `.svelte.ts` state modules, hooks, and helpers
+- [ ] Playwright e2e test for every user-visible flow that spans pages or persists state
+- [ ] `svelte-check`, `vitest run`, and `playwright test` all pass locally
