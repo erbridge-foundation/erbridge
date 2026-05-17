@@ -11,12 +11,12 @@ If you (Claude) reach a backend or frontend task and the relevant skill body has
 
 ## 1. Repository Scaffold
 
-- [ ] 1.1 Create root-level `frontend/` and `backend/` directories
-- [ ] 1.2 Write `.env.example` with `APP_URL`, `ENCRYPTION_SECRET`, `ESI_CLIENT_ID`, `ESI_CLIENT_SECRET`, `DATABASE_URL`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` — no secret defaults, comments for each
-- [ ] 1.3 Add top level `.gitignore` file covering `.env`, `.idea/`, `.vscode/`, `.DS_Store`, `*Zone.Identifier`, `zz-ref/`
-- [ ] 1.3 Add component level `.gitignore` files
-- [ ] 1.3.1 Backend using standard Rust .gitignore from `https://github.com/github/gitignore/blob/main/Rust.gitignore`
-- [ ] 1.4.2 Frontend using the following .gitignore verbatim
+- [x] 1.1 Create root-level `frontend/` and `backend/` directories
+- [x] 1.2 Write `.env.example` with `APP_URL`, `ENCRYPTION_SECRET`, `ESI_CLIENT_ID`, `ESI_CLIENT_SECRET`, `DATABASE_URL`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` — no secret defaults, comments for each
+- [x] 1.3 Add top level `.gitignore` file covering `.env`, `.idea/`, `.vscode/`, `.DS_Store`, `*Zone.Identifier`, `zz-ref/`
+- [x] 1.3 Add component level `.gitignore` files
+- [x] 1.3.1 Backend using standard Rust .gitignore from `https://github.com/github/gitignore/blob/main/Rust.gitignore`
+- [x] 1.4.2 Frontend using the following .gitignore verbatim
 ```
 # Playwright
 playwright-report/
@@ -43,32 +43,32 @@ _tmp_flaky_test_output.txt
 
 ## 2. Backend: Rust/Axum Project
 
-- [ ] 2.1 Initialise Cargo project in `backend/` (`cargo init`)
-- [ ] 2.2 Add dependencies to `Cargo.toml`: `axum`, `tokio` (full), `reqwest` (json feature), `serde`/`serde_json`, `thiserror`, `anyhow`, `aes-gcm`, `jsonwebtoken`, `uuid` (v7 + serde features), `tower-http` (cors/trace), `dotenvy`, `sqlx` (postgres + runtime-tokio-rustls + uuid + chrono + macros features), `chrono` (serde feature)
-- [ ] 2.3 Implement `backend/src/esi/mod.rs` with `EsiMetadata` struct and `discover()` function verbatim as specified
-- [ ] 2.4 Implement `backend/src/config.rs`: read `APP_URL`, `ENCRYPTION_SECRET`, `ESI_CLIENT_ID`, `ESI_CLIENT_SECRET`, `DATABASE_URL` from env; fail fast with clear error if any are missing
-- [ ] 2.5 Create `backend/migrations/00000000000001_create_account_eve_character_and_api_key.sql`: `CREATE EXTENSION IF NOT EXISTS pgcrypto;` then `CREATE TABLE account (...)`, `CREATE TABLE eve_character (...)`, and `CREATE TABLE api_key (...)` matching the schema in design.md §3a verbatim, including all indexes (`account_server_admin_idx`, `eve_character_one_main_per_account`, `eve_character_account_id_idx`, `api_key_hash_idx`, `api_key_account_idx`). Table names MUST be singular.
-- [ ] 2.6 Implement `backend/src/db/mod.rs`: `connect(database_url: &str) -> Result<PgPool>` that creates a pool with a bounded initial-connection retry, then runs `sqlx::migrate!("./migrations").run(&pool).await`
-- [ ] 2.7 Implement `backend/src/db/accounts.rs`:
+- [x] 2.1 Initialise Cargo project in `backend/` (`cargo init`)
+- [x] 2.2 Add dependencies to `Cargo.toml`: `axum`, `tokio` (full), `reqwest` (json feature), `serde`/`serde_json`, `thiserror`, `anyhow`, `aes-gcm`, `jsonwebtoken`, `uuid` (v7 + serde features), `tower-http` (cors/trace), `dotenvy`, `sqlx` (postgres + runtime-tokio-rustls + uuid + chrono + macros features), `chrono` (serde feature)
+- [x] 2.3 Implement `backend/src/esi/mod.rs` with `EsiMetadata` struct and `discover()` function verbatim as specified
+- [x] 2.4 Implement `backend/src/config.rs`: read `APP_URL`, `ENCRYPTION_SECRET`, `ESI_CLIENT_ID`, `ESI_CLIENT_SECRET`, `DATABASE_URL` from env; fail fast with clear error if any are missing
+- [x] 2.5 Create `backend/migrations/00000000000001_create_account_eve_character_and_api_key.sql`: `CREATE EXTENSION IF NOT EXISTS pgcrypto;` then `CREATE TABLE account (...)`, `CREATE TABLE eve_character (...)`, and `CREATE TABLE api_key (...)` matching the schema in design.md §3a verbatim, including all indexes (`account_server_admin_idx`, `eve_character_one_main_per_account`, `eve_character_account_id_idx`, `api_key_hash_idx`, `api_key_account_idx`). Table names MUST be singular.
+- [x] 2.6 Implement `backend/src/db/mod.rs`: `connect(database_url: &str) -> Result<PgPool>` that creates a pool with a bounded initial-connection retry, then runs `sqlx::migrate!("./migrations").run(&pool).await`
+- [x] 2.7 Implement `backend/src/db/accounts.rs`:
   - `create_account() -> Result<Uuid>` — inserts a row with defaults, returns `id`
   - `get_account(id) -> Result<Option<Account>>` — returns the row including `status`, `delete_requested_at`, `is_server_admin`
   - `reactivate_if_soft_deleted(tx, id)` — sets `status = 'active'`, `delete_requested_at = NULL` only when `status = 'soft_deleted'`; takes a transaction so it can be atomic with character upsert
   - `soft_delete(id)` — sets `status = 'soft_deleted'`, `delete_requested_at = now()`
-- [ ] 2.8 Implement `backend/src/db/characters.rs`. The SSO callback composes these as separate steps inside a single transaction (see §2.13); each step is independently unit-testable per the `rust-rest-api` skill's coverage requirement:
+- [x] 2.8 Implement `backend/src/db/characters.rs`. The SSO callback composes these as separate steps inside a single transaction (see §2.13); each step is independently unit-testable per the `rust-rest-api` skill's coverage requirement:
   - `upsert_tokens(tx, resolved_account_id, eve_character_id, name, corporation_id, alliance_id, esi_client_id, access_token_plaintext, refresh_token_plaintext, expires_at) -> Result<Uuid>` — encrypts both tokens with fresh nonces, then performs `INSERT ... ON CONFLICT (eve_character_id) DO UPDATE` with the rule: if existing `account_id IS NULL` (orphan claim) OR matches `resolved_account_id`, set `account_id = excluded.account_id` and rewrite tokens + public info; otherwise leave `account_id` unchanged but still update public info and tokens (re-login on owned row). Bumps `updated_at`. Returns the row's internal UUID. **Does NOT touch `is_main`** — promotion is `promote_if_no_main`'s job.
   - `promote_if_no_main(tx, account_id, just_written_character_id) -> Result<bool>` — `UPDATE eve_character SET is_main = TRUE WHERE id = $1 AND NOT EXISTS (SELECT 1 FROM eve_character WHERE account_id = $2 AND is_main = TRUE)`. Returns whether the row was promoted. Safe to call unconditionally after `upsert_tokens` — it is a no-op when an `is_main` row already exists for the account.
   - `create_orphan(eve_character_id, name, corporation_id, alliance_id) -> Result<Uuid>` — inserts a row with `account_id = NULL` and NULL token columns.
   - `list_for_account(account_id) -> Result<Vec<Character>>` — returns characters (no decrypted tokens).
   - `delete_character(id) -> Result<bool>` — hard `DELETE`; returns whether a row was deleted.
   - `set_main(tx, account_id, character_id) -> Result<()>` — in one transaction step, clears existing `is_main` on the account then sets it on the target. Used by the `POST /api/v1/characters/:id/set-main` handler (§2c.5). May surface a unique-violation if two callers race; the handler maps that to a 409 and the partial unique index `eve_character_one_main_per_account` is the ultimate guard.
-- [ ] 2.9 Implement `backend/src/session.rs`: `Session` struct (`session_id: String`, `account_id: Uuid`, `csrf_state: Option<String>`, `add_character_mode: bool`); `SessionStore` (`Arc<RwLock<HashMap<String, Session>>>`); add/remove/get helpers. Sessions do NOT hold token material — tokens live in Postgres only.
-- [ ] 2.10 Implement `backend/src/auth/crypto.rs`: AES-256-GCM encrypt/decrypt helpers for ESI tokens at rest (`encrypt_token` returns `nonce || ciphertext || tag` packed BYTEA; `decrypt_token` inverse) and for the session cookie payload; HS256 sign/verify for session cookie JWT; all keyed from `ENCRYPTION_SECRET`
-- [ ] 2.11 Implement `backend/src/auth/cookie.rs`: helpers to create and clear the `httpOnly`, `SameSite=Lax`, `Path=/` session cookie
-- [ ] 2.12 Implement `backend/src/auth/handlers.rs`:
+- [x] 2.9 Implement `backend/src/session.rs`: `Session` struct (`session_id: String`, `account_id: Uuid`, `csrf_state: Option<String>`, `add_character_mode: bool`); `SessionStore` (`Arc<RwLock<HashMap<String, Session>>>`); add/remove/get helpers. Sessions do NOT hold token material — tokens live in Postgres only.
+- [x] 2.10 Implement `backend/src/handlers/crypto.rs`: AES-256-GCM encrypt/decrypt helpers for ESI tokens at rest (`encrypt_token` returns `nonce || ciphertext || tag` packed BYTEA; `decrypt_token` inverse) and for the session cookie payload; HS256 sign/verify for session cookie JWT; all keyed from `ENCRYPTION_SECRET`
+- [x] 2.11 Implement `backend/src/handlers/cookie.rs`: helpers to create and clear the `httpOnly`, `SameSite=Lax`, `Path=/` session cookie
+- [x] 2.12 Implement `backend/src/handlers/auth.rs`:
   - `GET /auth/login` handler — build EVE SSO redirect URL from `EsiMetadata.authorization_endpoint`, include CSRF state, redirect.
   - Accept the OPTIONAL `?return_to=<path>` query parameter. Validate per the spec: the value MUST start with a single `/`, MUST NOT start with `//` or `/\\`, and MUST NOT contain `\r` or `\n`. Stash the validated value alongside the CSRF state in the in-flight session record. Invalid values are silently dropped (callback then redirects to `/`).
   - Implement the validator as a small helper `pub(crate) fn validate_return_to(raw: &str) -> Option<String>` so the same logic is reused by `/auth/characters/add` and is unit-testable.
-- [ ] 2.13 Implement `GET /auth/callback` handler. Validate state, exchange code for tokens via `EsiMetadata.token_endpoint`, parse access-token JWT for `eve_character_id` and `name`; fetch `corporation_id` / `alliance_id` from ESI public-info. Then, in a single Postgres transaction, compose these DB functions in this order:
+- [x] 2.13 Implement `GET /auth/callback` handler. Validate state, exchange code for tokens via `EsiMetadata.token_endpoint`, parse access-token JWT for `eve_character_id` and `name`; fetch `corporation_id` / `alliance_id` from ESI public-info. Then, in a single Postgres transaction, compose these DB functions in this order:
 
   1. `let account_id = accounts::resolve_or_create(&mut tx, session.add_character_account_id, eve_character_id).await?;` — returns the session's account when in add-character mode; otherwise either the account that already owns this `eve_character_id`, or a newly-created account row. Implement in `backend/src/db/accounts.rs` as a sibling of the existing helpers.
   2. `accounts::reactivate_if_soft_deleted(&mut tx, account_id).await?;` — already specified in §2.7.
@@ -76,15 +76,15 @@ _tmp_flaky_test_output.txt
   4. `characters::promote_if_no_main(&mut tx, account_id, character_id).await?;` — no-op when the account already has a main; promotes the just-written character otherwise. This is the implementation of the "First linked character is promoted to main" scenario in eve-sso-auth.
 
   Commit. Insert/replace the in-memory session pointing to the resolved `account_id`. Set cookie. Redirect to the stashed `return_to` path if any, otherwise `/`. Each composition step is a service-layer call returning typed results; no step bundles unrelated concerns.
-- [ ] 2.14 Implement `GET /auth/logout` handler: remove session from store, clear cookie, redirect to `/`
-- [ ] 2.15 Implement `GET /auth/characters/add` handler: require existing session (401 if absent), mark the session as `add_character_mode = true`, accept and validate the same OPTIONAL `?return_to=<path>` parameter via `validate_return_to`, redirect to EVE SSO; the shared `/auth/callback` handler reads `add_character_mode` to decide whether to reuse the session's account and honours the stashed `return_to`.
-- [ ] 2.16 Wire `AppState` in `backend/src/main.rs`: load config, `db::connect()` (which runs migrations), call `discover()` at startup (exit on failure for any of these), initialise `SessionStore`, build Axum router with all `/auth/*` routes
+- [x] 2.14 Implement `GET /auth/logout` handler: remove session from store, clear cookie, redirect to `/`
+- [x] 2.15 Implement `GET /auth/characters/add` handler: require existing session (401 if absent), mark the session as `add_character_mode = true`, accept and validate the same OPTIONAL `?return_to=<path>` parameter via `validate_return_to`, redirect to EVE SSO; the shared `/auth/callback` handler reads `add_character_mode` to decide whether to reuse the session's account and honours the stashed `return_to`.
+- [x] 2.16 Wire `AppState` in `backend/src/main.rs`: load config, `db::connect()` (which runs migrations), call `discover()` at startup (exit on failure for any of these), initialise `SessionStore`, build Axum router with all `/auth/*` routes
 - [ ] 2.17 Verify `cargo build --release` produces zero warnings (use `SQLX_OFFLINE=true` with `cargo sqlx prepare` checked in, or rely on a running DB at build time — pick one and document)
 
 ## 2b. Backend: API key authentication
 
 - [ ] 2b.1 Add `sha2` (or `ring`) and `base64` crates to `Cargo.toml`
-- [ ] 2b.2 Implement `backend/src/api_key/mod.rs`:
+- [ ] 2b.2 Implement `backend/src/handlers/api_key.rs` (key generation/hashing helpers — not a route handler, but lives in the handler layer as a support module):
   - `pub const PREFIX: &str = "erb_";`
   - `pub fn generate() -> String` — draw 32 bytes from a CSPRNG, base64url-encode unpadded (43 chars), return `format!("{PREFIX}{body}")`
   - `pub fn hash(key: &str) -> String` — SHA-256 hex digest of the full key
@@ -93,10 +93,10 @@ _tmp_flaky_test_output.txt
   - `lookup_by_key(plaintext: &str) -> Result<Option<ApiKeyRow>>` — `SELECT ... WHERE key_hash = $1 AND (expires_at IS NULL OR expires_at > now())`
   - `list_for_account(account_id) -> Result<Vec<ApiKeyMetadata>>` — no `key_hash` in the returned shape
   - `delete_for_account(id, account_id) -> Result<bool>` — `DELETE ... WHERE id = $1 AND account_id = $2`, returns whether a row was deleted
-- [ ] 2b.4 Implement `backend/src/auth/middleware.rs`: an Axum extractor / middleware `AuthenticatedAccount(pub Uuid)`. On `/api/*`:
+- [ ] 2b.4 Implement `backend/src/handlers/middleware.rs`: an Axum extractor / middleware `AuthenticatedAccount(pub Uuid)`. On `/api/*`:
   1. If `Authorization: Bearer <value>` is present and starts with `erb_`: look up via `lookup_by_key`. On hit with `scope = 'account'` → set `account_id`; with `scope = 'server'` → reject 403; miss/expired → reject 401.
   2. Else fall back to session cookie. If neither → 401.
-- [ ] 2b.5 Implement `backend/src/api/v1/keys.rs`:
+- [ ] 2b.5 Implement `backend/src/handlers/api/v1/keys.rs`:
   - `POST /api/v1/keys` — body `{ name, expires_at? }`; calls `create_account_key`; returns `201` with `id, key, name, expires_at, created_at`
   - `GET /api/v1/keys` — calls `list_for_account` for the caller's account
   - `DELETE /api/v1/keys/:id` — calls `delete_for_account`; `204` on success, `404` otherwise (row not found OR belongs to another account OR `scope = 'server'`)
@@ -111,12 +111,12 @@ _tmp_flaky_test_output.txt
   - `is_main(id) -> Result<Option<(Uuid, bool)>>` — returns `(account_id, is_main)` so the handler can verify ownership and main-status in one query. Returns `None` when no row matches.
   - The "first linked character is promoted to main" behaviour lives in `promote_if_no_main` (§2.8) and is called from the SSO callback (§2.13). It is NOT re-implemented here; the `POST /api/v1/characters/:id/set-main` handler (§2c.5) calls `set_main` directly and does not go through the promote-if-no-main path.
 - [ ] 2c.3 Extend `backend/src/db/accounts.rs`: `soft_delete` already exists from 2.7 — wire it into a new handler entry point. Add `list_sessions_for_account(account_id)` helper on `SessionStore` (or equivalent) so the soft-delete handler can drop every session belonging to the soft-deleted account.
-- [ ] 2c.4 Implement `backend/src/api/v1/me.rs`:
+- [ ] 2c.4 Implement `backend/src/handlers/api/v1/me.rs`:
   - `GET /api/v1/me` — load the caller's `account` row + all `eve_character` rows; for each character, resolve `corporation_name` and (when `alliance_id IS NOT NULL`) `alliance_name` via `esi::public_info`; build the response shape from `account-management/spec.md` (no token fields included). Wrap in the success envelope per `api-contract`.
-- [ ] 2c.5 Implement `backend/src/api/v1/characters.rs`:
+- [ ] 2c.5 Implement `backend/src/handlers/api/v1/characters.rs`:
   - `POST /api/v1/characters/:id/set-main` — verify the character belongs to the caller (404 otherwise); call `set_main` in a transaction; reload and return the updated character (same shape as one element of `GET /api/v1/me`'s `characters` array, including resolved corp/alliance names and `portrait_url`).
   - `DELETE /api/v1/characters/:id` — verify ownership (404 otherwise); if `is_main = true` and the account has >1 character → 409 `cannot_remove_main`; if it is the only character → 409 `cannot_remove_last_character`; otherwise hard-delete the row and return 204.
-- [ ] 2c.6 Implement `backend/src/api/v1/account.rs`:
+- [ ] 2c.6 Implement `backend/src/handlers/api/v1/account.rs`:
   - `DELETE /api/v1/account` — in a single Postgres transaction call `accounts::soft_delete(caller.account_id)`. After commit, drop every in-memory session belonging to that account. Set a session-cookie-clearing `Set-Cookie` header on the response. Return 204.
   - Extend the auth middleware (or the per-route guard) so that an `Authorization: Bearer erb_…` whose `account.status = 'soft_deleted'` is rejected with HTTP 401 and `error.code = "account_soft_deleted"` (per account-management spec).
 - [ ] 2c.7 Mount the new routes behind the `AuthenticatedAccount` middleware in `backend/src/main.rs` alongside `/api/v1/keys`.

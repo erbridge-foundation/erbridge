@@ -17,6 +17,57 @@ description: |
 
 # Rust REST API — Rules & Guidance
 
+## Module Layout
+
+Code is organised by **layer**, not by domain. Every handler lives in `src/handlers/`, every service in `src/services/`, every DB function in `src/db/`. Files within each layer are named by domain/resource.
+
+```
+backend/src/
+├── main.rs              # server entry point, router wiring
+├── app_state.rs         # AppState struct
+├── config.rs            # env-var loading, fail-fast
+├── error.rs             # AppError enum + IntoResponse
+├── response.rs          # ApiResponse<T> envelope type
+├── session.rs           # Session + SessionStore
+│
+├── handlers/            # HANDLER LAYER — one file per route group
+│   ├── mod.rs
+│   ├── auth.rs          # /auth/* routes: login, callback, logout, add_character
+│   └── api/
+│       └── v1/
+│           ├── mod.rs
+│           ├── keys.rs
+│           ├── me.rs
+│           ├── characters.rs
+│           └── account.rs
+│
+├── services/            # SERVICE LAYER — one file per domain
+│   ├── mod.rs
+│   ├── auth.rs          # SSO flow, session management
+│   └── account.rs       # account + character business logic
+│
+├── db/                  # DATABASE LAYER — one file per resource
+│   ├── mod.rs           # connect() + migration runner
+│   ├── accounts.rs
+│   ├── characters.rs
+│   └── api_keys.rs
+│
+├── dto/                 # DTOs — one file per resource or handler group
+│   └── *.rs
+│
+└── esi/                 # ESI client helpers (not a layer — external API client)
+    ├── mod.rs           # EsiMetadata + discover()
+    └── public_info.rs
+```
+
+**Rules enforced by this layout:**
+- Never add a handler function outside `src/handlers/`.
+- Never add a service function outside `src/services/`.
+- Never add a DB function outside `src/db/`.
+- Auth-related crypto/cookie helpers (`crypto.rs`, `cookie.rs`, `middleware.rs`) live in `src/handlers/auth_support/` or alongside `src/handlers/auth.rs` as sibling files in `src/handlers/` — they are handler-layer concerns, not services.
+
+---
+
 ## Architecture: The Only Permitted Flow
 
 ```
@@ -107,7 +158,7 @@ let user = self.db.users.find_by_id(id).await?; // ❌ unnecessary second call
 
 ## DB / Repository Rules
 
-- DB functions live in `src/db/`.
+- DB functions live in `src/db/`. One file per resource (`accounts.rs`, `characters.rs`, `api_keys.rs`). Never nest further.
 - Each function maps to a query or a small, cohesive set of queries.
 - **Before adding a new function**, check whether an existing one can be extended (e.g., add a `RETURNING` clause, join an extra table) to satisfy the new requirement.
 - DB functions return domain model structs (`User`, `Order`, …) — never raw query row types exposed outside `src/db/`.

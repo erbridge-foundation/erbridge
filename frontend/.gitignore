@@ -1,0 +1,21 @@
+# Playwright
+playwright-report/
+
+node_modules
+dist
+test-results/
+package-lock.json
+yarn.lock
+vite.config.js.timestamp-*
+/packages/package/test/**/package
+/documentation/types.js
+.vercel_build_output
+.svelte-kit
+.cloudflare
+.pnpm-debug.log
+.netlify
+.turbo
+.vercel
+.test-tmp
+symlink-from
+_tmp_flaky_test_output.txt

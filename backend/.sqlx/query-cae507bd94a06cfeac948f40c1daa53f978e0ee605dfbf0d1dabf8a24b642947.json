@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE eve_character SET is_main = TRUE\n        WHERE id = $1\n          AND NOT EXISTS (\n              SELECT 1 FROM eve_character\n              WHERE account_id = $2 AND is_main = TRUE\n          )\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "cae507bd94a06cfeac948f40c1daa53f978e0ee605dfbf0d1dabf8a24b642947"
+}
