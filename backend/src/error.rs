@@ -35,6 +35,9 @@ pub enum AppError {
     #[error("unauthorized")]
     Unauthorized,
 
+    #[error("account soft deleted")]
+    AccountSoftDeleted,
+
     #[error("forbidden")]
     Forbidden,
 
@@ -59,8 +62,13 @@ impl IntoResponse for AppError {
         let (status, code, message) = match &self {
             AppError::Unauthorized => (
                 StatusCode::UNAUTHORIZED,
-                "unauthorized",
+                "unauthenticated",
                 "Authentication required".to_string(),
+            ),
+            AppError::AccountSoftDeleted => (
+                StatusCode::UNAUTHORIZED,
+                "account_soft_deleted",
+                "This account has been soft-deleted".to_string(),
             ),
             AppError::Forbidden => (
                 StatusCode::FORBIDDEN,
@@ -108,6 +116,11 @@ mod tests {
     #[test]
     fn unauthorized_maps_to_401() {
         assert_eq!(status(AppError::Unauthorized), StatusCode::UNAUTHORIZED);
+    }
+
+    #[test]
+    fn account_soft_deleted_maps_to_401() {
+        assert_eq!(status(AppError::AccountSoftDeleted), StatusCode::UNAUTHORIZED);
     }
 
     #[test]

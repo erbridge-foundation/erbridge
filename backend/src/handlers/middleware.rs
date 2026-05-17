@@ -4,11 +4,13 @@ use axum::{
 };
 use uuid::Uuid;
 
-use crate::{app_state::AppState, error::AppError, handlers::{cookie, crypto}, services::api_keys as svc};
+use crate::{app_state::AppState, db::accounts, error::AppError, handlers::{cookie, crypto}, services::api_keys as svc};
 
 /// Axum extractor that resolves the authenticated account ID from either:
 /// 1. `Authorization: Bearer erb_…` (API key, account-scoped only)
 /// 2. Session cookie (falls back when no bearer header is present or prefix doesn't match)
+///
+/// Rejects soft-deleted accounts with 401 `account_soft_deleted` when using an API key.
 pub struct AuthenticatedAccount(pub Uuid);
 
 impl<S> FromRequestParts<S> for AuthenticatedAccount
@@ -32,7 +34,17 @@ where
                 return match row {
                     Some(r) if r.scope == "account" => {
                         let account_id = r.account_id.ok_or(AppError::Unauthorized)?;
-                        Ok(AuthenticatedAccount(account_id))
+                        // Reject if the account has been soft-deleted.
+                        let account = accounts::get_account(&state.db, account_id)
+                            .await
+                            .map_err(AppError::Internal)?;
+                        match account {
+                            Some(a) if a.status == "soft_deleted" => {
+                                Err(AppError::AccountSoftDeleted)
+                            }
+                            Some(_) => Ok(AuthenticatedAccount(account_id)),
+                            None => Err(AppError::Unauthorized),
+                        }
                     }
                     Some(_) => Err(AppError::Forbidden),
                     None => Err(AppError::Unauthorized),

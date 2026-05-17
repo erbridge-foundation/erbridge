@@ -1,3 +1,5 @@
+pub mod public_info;
+
 use anyhow::{Context, Result};
 use serde::Deserialize;
 

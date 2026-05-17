@@ -1,8 +1,3 @@
-#![allow(dead_code)]
-// Several helpers in this module are spec-mandated for §2c handlers not yet
-// wired into the router. Tests exercise them; release builds would otherwise
-// flag them as dead until those handlers land.
-
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Postgres, Transaction};

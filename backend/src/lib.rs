@@ -16,9 +16,13 @@ use app_state::AppState;
 
 pub fn build_router(state: AppState) -> Router {
     let api_v1_routes = Router::new()
+        .route("/me", get(handlers::api::v1::me::get_me))
         .route("/keys", post(handlers::api::v1::keys::create_key))
         .route("/keys", get(handlers::api::v1::keys::list_keys))
-        .route("/keys/{id}", delete(handlers::api::v1::keys::delete_key));
+        .route("/keys/{id}", delete(handlers::api::v1::keys::delete_key))
+        .route("/characters/{id}/set-main", post(handlers::api::v1::characters::set_main))
+        .route("/characters/{id}", delete(handlers::api::v1::characters::delete_character))
+        .route("/account", delete(handlers::api::v1::account::delete_account));
 
     Router::new()
         .route("/auth/login", get(handlers::auth::login))

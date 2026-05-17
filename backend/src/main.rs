@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::Context;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
 use backend::{app_state::AppState, config, db, esi, session::SessionStore};
 

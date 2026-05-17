@@ -118,21 +118,21 @@ _tmp_flaky_test_output.txt
 
 ## 2c. Backend: Account-management endpoints
 
-- [ ] 2c.1 Implement `backend/src/esi/public_info.rs`: `fetch_corporation_name(corporation_id) -> Result<String>` and `fetch_alliance_name(alliance_id) -> Result<String>` against the ESI public-info endpoints discovered via the existing `EsiMetadata` flow (or the documented ESI base URL — pick one and note it). Both functions take `&reqwest::Client`; no caching in this change.
-- [ ] 2c.2 Extend `backend/src/db/characters.rs` with read/check helpers used by the new `/api/v1/characters/*` handlers (the write functions `upsert_tokens`, `promote_if_no_main`, and `set_main` were defined in §2.8 and are reused here):
+- [x] 2c.1 Implement `backend/src/esi/public_info.rs`: `fetch_corporation_name(corporation_id) -> Result<String>` and `fetch_alliance_name(alliance_id) -> Result<String>` against the ESI public-info endpoints discovered via the existing `EsiMetadata` flow (or the documented ESI base URL — pick one and note it). Both functions take `&reqwest::Client`; no caching in this change.
+- [x] 2c.2 Extend `backend/src/db/characters.rs` with read/check helpers used by the new `/api/v1/characters/*` handlers (the write functions `upsert_tokens`, `promote_if_no_main`, and `set_main` were defined in §2.8 and are reused here):
   - `count_for_account(account_id) -> Result<i64>` — for the `cannot_remove_last_character` check
   - `is_main(id) -> Result<Option<(Uuid, bool)>>` — returns `(account_id, is_main)` so the handler can verify ownership and main-status in one query. Returns `None` when no row matches.
   - The "first linked character is promoted to main" behaviour lives in `promote_if_no_main` (§2.8) and is called from the SSO callback (§2.13). It is NOT re-implemented here; the `POST /api/v1/characters/:id/set-main` handler (§2c.5) calls `set_main` directly and does not go through the promote-if-no-main path.
-- [ ] 2c.3 Extend `backend/src/db/accounts.rs`: `soft_delete` already exists from 2.7 — wire it into a new handler entry point. Add `list_sessions_for_account(account_id)` helper on `SessionStore` (or equivalent) so the soft-delete handler can drop every session belonging to the soft-deleted account.
-- [ ] 2c.4 Implement `backend/src/handlers/api/v1/me.rs`:
+- [x] 2c.3 Extend `backend/src/db/accounts.rs`: `soft_delete` already exists from 2.7 — wire it into a new handler entry point. Add `list_sessions_for_account(account_id)` helper on `SessionStore` (or equivalent) so the soft-delete handler can drop every session belonging to the soft-deleted account.
+- [x] 2c.4 Implement `backend/src/handlers/api/v1/me.rs`:
   - `GET /api/v1/me` — load the caller's `account` row + all `eve_character` rows; for each character, resolve `corporation_name` and (when `alliance_id IS NOT NULL`) `alliance_name` via `esi::public_info`; build the response shape from `account-management/spec.md` (no token fields included). Wrap in the success envelope per `api-contract`.
-- [ ] 2c.5 Implement `backend/src/handlers/api/v1/characters.rs`:
+- [x] 2c.5 Implement `backend/src/handlers/api/v1/characters.rs`:
   - `POST /api/v1/characters/:id/set-main` — verify the character belongs to the caller (404 otherwise); call `set_main` in a transaction; reload and return the updated character (same shape as one element of `GET /api/v1/me`'s `characters` array, including resolved corp/alliance names and `portrait_url`).
   - `DELETE /api/v1/characters/:id` — verify ownership (404 otherwise); if `is_main = true` and the account has >1 character → 409 `cannot_remove_main`; if it is the only character → 409 `cannot_remove_last_character`; otherwise hard-delete the row and return 204.
-- [ ] 2c.6 Implement `backend/src/handlers/api/v1/account.rs`:
+- [x] 2c.6 Implement `backend/src/handlers/api/v1/account.rs`:
   - `DELETE /api/v1/account` — in a single Postgres transaction call `accounts::soft_delete(caller.account_id)`. After commit, drop every in-memory session belonging to that account. Set a session-cookie-clearing `Set-Cookie` header on the response. Return 204.
   - Extend the auth middleware (or the per-route guard) so that an `Authorization: Bearer erb_…` whose `account.status = 'soft_deleted'` is rejected with HTTP 401 and `error.code = "account_soft_deleted"` (per account-management spec).
-- [ ] 2c.7 Mount the new routes behind the `AuthenticatedAccount` middleware in `backend/src/main.rs` alongside `/api/v1/keys`.
+- [x] 2c.7 Mount the new routes behind the `AuthenticatedAccount` middleware in `backend/src/main.rs` alongside `/api/v1/keys`.
 - [ ] 2c.8 Verify with `curl`: `GET /api/v1/me` returns the expected shape after login; `POST /api/v1/characters/<id>/set-main` flips `is_main`; `DELETE /api/v1/characters/<main_id>` returns 409 while siblings exist; `DELETE /api/v1/characters/<only_id>` returns 409; `DELETE /api/v1/account` returns 204 and the cookie is cleared.
 
 ## 2d. Backend: OpenAPI document via `utoipa` (strict)
