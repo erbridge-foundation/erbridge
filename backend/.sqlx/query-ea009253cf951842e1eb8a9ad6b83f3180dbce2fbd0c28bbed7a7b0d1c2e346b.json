@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        DELETE FROM api_key\n        WHERE id = $1\n          AND account_id = $2\n          AND scope = 'account'\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "ea009253cf951842e1eb8a9ad6b83f3180dbce2fbd0c28bbed7a7b0d1c2e346b"
+}

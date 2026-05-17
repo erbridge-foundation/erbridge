@@ -1,9 +1,34 @@
 pub mod accounts;
+pub mod api_keys;
 pub mod characters;
 
 use anyhow::{Context, Result};
 use sqlx::PgPool;
 use std::time::Duration;
+
+#[derive(thiserror::Error, Debug)]
+pub enum DbError {
+    #[error("unique constraint violated: {constraint}")]
+    UniqueViolation { constraint: String },
+
+    #[error(transparent)]
+    Other(#[from] anyhow::Error),
+}
+
+impl From<sqlx::Error> for DbError {
+    fn from(err: sqlx::Error) -> Self {
+        if let sqlx::Error::Database(ref db_err) = err {
+            if db_err.is_unique_violation() {
+                let constraint = db_err
+                    .constraint()
+                    .unwrap_or("<unknown>")
+                    .to_string();
+                return DbError::UniqueViolation { constraint };
+            }
+        }
+        DbError::Other(anyhow::Error::from(err))
+    }
+}
 
 pub async fn connect(database_url: &str) -> Result<PgPool> {
     let pool = sqlx::postgres::PgPoolOptions::new()
