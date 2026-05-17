@@ -1,7 +1,7 @@
 ## 1. Schema
 
 - [ ] 1.1 Add migration `backend/migrations/<next-ts>_create_session.sql`: `CREATE TABLE session ( session_id TEXT PRIMARY KEY, account_id UUID NOT NULL REFERENCES account(id) ON DELETE CASCADE, csrf_state TEXT, add_character_mode BOOL NOT NULL DEFAULT FALSE, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(), expires_at TIMESTAMPTZ NOT NULL );` plus indexes `CREATE INDEX session_expires_at_idx ON session(expires_at);` and `CREATE INDEX session_account_id_idx ON session(account_id);`. Singular table name per the foundation convention.
-- [ ] 1.2 Run `backend/scripts/test.sh` once to confirm the migration applies cleanly against a fresh test DB.
+- [ ] 1.2 Run `cargo test` once to confirm the migration applies cleanly against a fresh per-test DB spawned by `#[sqlx::test]`.
 
 ## 2. DB layer
 
@@ -51,5 +51,5 @@
 
 - [ ] 9.1 Run `cargo sqlx prepare` to regenerate `.sqlx/` for the new queries; commit the updated cache.
 - [ ] 9.2 `cargo build --release` produces zero warnings.
-- [ ] 9.3 Full `backend/scripts/test.sh` passes.
+- [ ] 9.3 Full `cargo test` suite passes locally and in CI.
 - [ ] 9.4 Manual smoke: log in, restart the backend, refresh the browser — request succeeds, no re-login prompt. Inspect a response and confirm a refreshed `Set-Cookie` is present.

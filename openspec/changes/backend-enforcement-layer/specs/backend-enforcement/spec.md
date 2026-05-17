@@ -22,7 +22,7 @@ The backend SHALL ship a `backend/clippy.toml` configuration that mechanically e
 
 ### Requirement: CI workflow runs the gate on backend changes
 
-The repository SHALL include a CI workflow at `.github/workflows/backend.yml` (or equivalent venue named in `design.md`) that runs `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, and `./backend/scripts/test.sh` on every push and pull request that touches files under `backend/**` or the workflow file itself.
+The repository SHALL include a CI workflow at `.github/workflows/backend.yml` (or equivalent venue named in `design.md`) that runs `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo sqlx prepare --check` (drift check on the committed `backend/.sqlx/` offline cache), and `cargo test` on every push and pull request that touches files under `backend/**` or the workflow file itself. The workflow SHALL provision a Postgres service container for the test step (GitHub Actions `services: postgres:16`) and SHALL set `SQLX_OFFLINE=true` job-wide so `sqlx::query!` macros compile against the committed cache rather than a live database.
 
 #### Scenario: Workflow runs on push touching backend
 - **WHEN** a commit is pushed to any branch and the commit modifies a file under `backend/**`

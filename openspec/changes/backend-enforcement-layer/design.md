@@ -9,7 +9,7 @@ A future `frontend-enforcement-layer` change will apply the same pattern to `fro
 **Goals:**
 
 - Mechanically reject — at `cargo clippy` time, before review — a backend change that violates the three highest-value `rust-rest-api` skill rules: handler-imports-db, service-imports-http, and serde-derive-on-db-model.
-- Run the gate in CI on every push and PR that touches `backend/**`, alongside `cargo fmt --check` and `./backend/scripts/test.sh`.
+- Run the gate in CI on every push and PR that touches `backend/**`, alongside `cargo fmt --check` and `cargo test` (against a GitHub Actions Postgres service container, with `SQLX_OFFLINE=true` for compile-time `sqlx::query!` validation).
 - Provide a documented, reproducible way for a future implementer to prove the gate bites (the §2d.6 / §7.27 pattern from the foundation: temporarily perturb the code, confirm the gate fails, revert).
 - Stay zero-warning on the existing codebase at the moment the gate goes live.
 
@@ -49,8 +49,8 @@ Each rule SHALL include an explanatory `reason` field pointing at the skill clau
 The repository will (per the foundation's §6 docker setup) likely live on GitHub. GitHub Actions is the default and requires no separate account or runner. The workflow:
 
 - Triggers on `push` and `pull_request` with `paths: ['backend/**', '.github/workflows/backend.yml']`.
-- Single job, `ubuntu-latest`. Steps: checkout, install Rust stable, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `./backend/scripts/test.sh`.
-- The test step requires Docker. GitHub-hosted runners have Docker preinstalled; the wrapper script handles compose up/down. No additional setup needed.
+- Single job, `ubuntu-latest`, with `services: postgres:16` (the workflow uses the default `postgres` superuser, which already has `CREATEDB` and owns the `postgres` database — both required by `#[sqlx::test]`). Steps: checkout, install Rust stable, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo sqlx prepare --check`, `cargo test`.
+- `SQLX_OFFLINE=true` is set job-wide so `sqlx::query!` macros validate against the committed `backend/.sqlx/` cache rather than needing a live DB at build time. `DATABASE_URL` is set so `cargo test` can talk to the service container at runtime.
 
 If the user later moves to a different runner (Gitea, self-hosted), the workflow file is the only thing that changes; the lint config is portable.
 

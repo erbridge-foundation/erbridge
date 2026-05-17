@@ -72,7 +72,7 @@ We have no background-task infrastructure. Expired rows are physically removed b
 - **Clock skew between app and DB** → Not material because all expiry checks use `now()` in the database itself; the app never compares its own clock to `expires_at`.
 - **Opportunistic cleanup leaks rows under sustained read-only traffic** → Bounded: each authenticated request has a small probability of running `DELETE`. Under any realistic load the table stays small (rows are ≤ 7 days old). Worst case is migrating to a scheduled task later.
 - **Migration drops in-memory sessions on deploy** → Same as current behaviour (a deploy already logs everyone out today). No user-visible regression.
-- **`#[sqlx::test]` requires the docker-compose test DB workflow** (`backend/scripts/test.sh`) → Already established; no new requirement.
+- **`#[sqlx::test]` requires a Postgres role with `CREATEDB` that owns the base database** → Already established by the local-Postgres workflow in `CONTRIBUTING.md`; no new requirement.
 
 ## Migration Plan
 

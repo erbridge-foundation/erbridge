@@ -11,7 +11,7 @@ If the skill body is not loaded and a backend task is reached, stop and load it 
 ## 1. Baseline check
 
 - [ ] 1.1 From `backend/`, run `cargo clippy --all-targets -- -D warnings` against the current `develop` HEAD. Confirm zero warnings. If any warning appears, fix it under this change before adding `clippy.toml` (per design.md §"Migration Plan").
-- [ ] 1.2 From `backend/`, run `./scripts/test.sh` and confirm all tests pass against a clean clone. This establishes the baseline the CI workflow must reproduce.
+- [ ] 1.2 From `backend/`, run `cargo test` and confirm all tests pass against a clean clone with the local Postgres setup described in `CONTRIBUTING.md`. This establishes the baseline the CI workflow must reproduce.
 
 ## 2. Lint configuration
 
@@ -23,7 +23,7 @@ If the skill body is not loaded and a backend task is reached, stop and load it 
 ## 3. CI workflow
 
 - [ ] 3.1 Create `.github/workflows/backend.yml` (at the repository root, NOT under `backend/`). Trigger: `push` on any branch and `pull_request` with `paths: ['backend/**', '.github/workflows/backend.yml']`.
-- [ ] 3.2 Single job, `runs-on: ubuntu-latest`. Steps: `actions/checkout@v4`, `dtolnay/rust-toolchain@stable` (or equivalent pinned action), then in order: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `./backend/scripts/test.sh`. Each step uses `working-directory: backend` where applicable.
+- [ ] 3.2 Single job, `runs-on: ubuntu-latest`, with a `services.postgres` block running `postgres:16` (use the default `postgres` superuser; it has `CREATEDB` and owns the `postgres` database — both required by `#[sqlx::test]`). Set `env.SQLX_OFFLINE: "true"` and `env.DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres` job-wide. Steps: `actions/checkout@v4`, `dtolnay/rust-toolchain@stable` (or equivalent pinned action), then in order: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo sqlx prepare --check` (drift check on the committed `.sqlx/` cache), `cargo test --all-targets`. Each step uses `working-directory: backend` where applicable.
 - [ ] 3.3 Verify the workflow file is YAML-valid (`yamllint .github/workflows/backend.yml` or equivalent). Do NOT push yet — the next task validates behaviour first.
 
 ## 4. Prove the gate bites (deliberate-violation reference)

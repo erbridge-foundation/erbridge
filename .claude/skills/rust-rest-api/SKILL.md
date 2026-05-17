@@ -250,6 +250,12 @@ Do not wrap it. Do not apply `ApiResponse` to it.
 
 ## Testing Requirements
 
+### Test environment
+
+Backend tests run against the contributor's **local Postgres** (no Docker harness). `cargo test` picks up `DATABASE_URL` from `backend/.cargo/config.toml`; the role needs `CREATEDB` and must own the base database so `#[sqlx::test]` can spawn its per-test DBs and bookkeeping schema. Setup steps live in `CONTRIBUTING.md`.
+
+`sqlx::query!` macros validate against the live DB at compile time. To keep `cargo build` working without a database (and for CI), the repo ships a committed `backend/.sqlx/` offline cache. **After adding, removing, or changing any `sqlx::query!` invocation, regenerate the cache with `cargo sqlx prepare` from `backend/` and commit the diff.** CI runs `cargo sqlx prepare --check` and fails on drift.
+
 ### Unit Tests — 100% coverage of every non-trivial function
 
 Unit-test coverage is **not** limited to the service layer. Every function with meaningful behaviour gets a unit test — handlers, services, DB functions, and helpers alike. The only exclusions are trivial glue (one-line `From` impls, a constructor that just assigns fields, a handler that does literally nothing but `service.call().await`). If a function has a branch, a transformation, a validation, or an error path, it needs a test.
