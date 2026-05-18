@@ -254,7 +254,7 @@ Do not wrap it. Do not apply `ApiResponse` to it.
 
 Backend tests run against the contributor's **local Postgres** (no Docker harness). `cargo test` picks up `DATABASE_URL` from `backend/.cargo/config.toml`; the role needs `CREATEDB` and must own the base database so `#[sqlx::test]` can spawn its per-test DBs and bookkeeping schema. Setup steps live in `CONTRIBUTING.md`.
 
-`sqlx::query!` macros validate against the live DB at compile time. To keep `cargo build` working without a database (and for CI), the repo ships a committed `backend/.sqlx/` offline cache. **After adding, removing, or changing any `sqlx::query!` invocation, regenerate the cache with `cargo sqlx prepare` from `backend/` and commit the diff.** CI runs `cargo sqlx prepare --check` and fails on drift.
+`sqlx::query!` macros validate against the live DB at compile time. To keep `cargo build` working without a database (and for CI), the repo ships a committed `backend/.sqlx/` offline cache. **After adding, removing, or changing any `sqlx::query!` invocation, regenerate the cache with `cargo sqlx prepare -- --all-targets` from `backend/` and commit the diff.** The `--all-targets` flag is required so test-only `sqlx::query!` invocations (under `#[cfg(test)]` and in integration tests) are also cached — without it the cache drifts and CI fails on the next run. CI runs `cargo sqlx prepare --check -- --all-targets` and fails on drift.
 
 ### Unit Tests — 100% coverage of every non-trivial function
 

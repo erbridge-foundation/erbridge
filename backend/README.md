@@ -26,14 +26,14 @@ Run this before pushing, so CI doesn't catch what you can catch locally:
 ```sh
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
-cargo sqlx prepare --check
+cargo sqlx prepare --check -- --all-targets
 cargo test --all-targets
 ```
 
-`cargo sqlx prepare --check` verifies the committed `backend/.sqlx/` offline cache is in sync with the `sqlx::query!` invocations in the code. If you've added, removed, or changed a `sqlx::query!`, regenerate the cache:
+`cargo sqlx prepare --check -- --all-targets` verifies the committed `backend/.sqlx/` offline cache is in sync with the `sqlx::query!` invocations in the code (the `--all-targets` flag is required so test-only invocations are included). If you've added, removed, or changed a `sqlx::query!`, regenerate the cache:
 
 ```sh
-cargo sqlx prepare
+cargo sqlx prepare -- --all-targets
 git add .sqlx/
 ```
 

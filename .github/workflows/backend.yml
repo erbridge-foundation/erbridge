@@ -65,7 +65,7 @@ jobs:
       - name: Verify .sqlx cache is up to date
         run: |
           cargo install sqlx-cli --no-default-features --features postgres,rustls --locked --version ^0.8
-          cargo sqlx prepare --check
+          cargo sqlx prepare --check -- --all-targets
 
       - name: cargo test
         run: cargo test --all-targets
