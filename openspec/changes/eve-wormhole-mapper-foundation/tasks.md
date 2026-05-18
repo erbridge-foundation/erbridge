@@ -225,8 +225,8 @@ These tasks discharge the api-contract spec's "Machine-readable API description"
 
 ## 3. Backend: Dockerfile
 
-- [ ] 3.1 Write `backend/Dockerfile`: multi-stage build — `rust:latest` builder stage compiling release binary, then `debian:bookworm-slim` runtime stage copying binary
-- [ ] 3.2 Ensure `EXPOSE 3000` (or chosen internal port) and `CMD` are set correctly
+- [x] 3.1 Write `backend/Dockerfile`: multi-stage build — `rust:latest` builder stage compiling release binary, then `debian:bookworm-slim` runtime stage copying binary
+- [x] 3.2 Ensure `EXPOSE 3000` (or chosen internal port) and `CMD` are set correctly
 
 ## 4a. Wireframes (author and approve BEFORE frontend implementation)
 
