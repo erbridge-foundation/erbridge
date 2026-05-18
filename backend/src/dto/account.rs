@@ -24,6 +24,13 @@ impl From<Account> for AccountDto {
     }
 }
 
+#[derive(Serialize, ToSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TokenStatus {
+    Active,
+    Expired,
+}
+
 #[derive(Serialize, ToSchema)]
 pub struct CharacterDto {
     pub id: Uuid,
@@ -35,6 +42,7 @@ pub struct CharacterDto {
     pub alliance_name: Option<String>,
     pub is_main: bool,
     pub portrait_url: String,
+    pub token_status: TokenStatus,
 }
 
 impl From<CharacterInfo> for CharacterDto {
@@ -49,6 +57,7 @@ impl From<CharacterInfo> for CharacterDto {
             alliance_name: c.alliance_name,
             is_main: c.is_main,
             portrait_url: c.portrait_url,
+            token_status: c.token_status,
         }
     }
 }

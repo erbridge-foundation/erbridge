@@ -39,6 +39,7 @@ jsonpath "$.data.characters[0].corporation_id" isInteger
 jsonpath "$.data.characters[0].corporation_name" isString
 jsonpath "$.data.characters[0].is_main" isBoolean
 jsonpath "$.data.characters[0].portrait_url" matches "^https://images\\.evetech\\.net/characters/[0-9]+/portrait\\?size=128$"
+jsonpath "$.data.characters[0].token_status" matches "^(active|expired)$"
 # Sensitive fields must be absent
 jsonpath "$.data.characters[0].encrypted_access_token" not exists
 jsonpath "$.data.characters[0].encrypted_refresh_token" not exists

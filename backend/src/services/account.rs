@@ -1,8 +1,10 @@
+use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
     db::{accounts, characters},
+    dto::account::TokenStatus,
     error::AppError,
     esi::public_info,
 };
@@ -17,6 +19,14 @@ pub struct CharacterInfo {
     pub alliance_name: Option<String>,
     pub is_main: bool,
     pub portrait_url: String,
+    pub token_status: TokenStatus,
+}
+
+fn derive_token_status(expires_at: Option<DateTime<Utc>>, now: DateTime<Utc>) -> TokenStatus {
+    match expires_at {
+        Some(t) if t > now => TokenStatus::Active,
+        _ => TokenStatus::Expired,
+    }
 }
 
 pub struct MeInfo {
@@ -38,6 +48,7 @@ pub async fn get_me(
         .await
         .map_err(AppError::Internal)?;
 
+    let now = Utc::now();
     let mut character_infos = Vec::with_capacity(chars.len());
     for c in chars {
         let corporation_name = public_info::fetch_corporation_name(http, c.corporation_id)
@@ -58,6 +69,8 @@ pub async fn get_me(
             c.eve_character_id
         );
 
+        let token_status = derive_token_status(c.esi_token_expires_at, now);
+
         character_infos.push(CharacterInfo {
             id: c.id,
             eve_character_id: c.eve_character_id,
@@ -68,6 +81,7 @@ pub async fn get_me(
             alliance_name,
             is_main: c.is_main,
             portrait_url,
+            token_status,
         });
     }
 
@@ -132,6 +146,8 @@ pub async fn set_main_character(
         c.eve_character_id
     );
 
+    let token_status = derive_token_status(c.esi_token_expires_at, Utc::now());
+
     Ok(CharacterInfo {
         id: c.id,
         eve_character_id: c.eve_character_id,
@@ -142,6 +158,7 @@ pub async fn set_main_character(
         alliance_name,
         is_main: c.is_main,
         portrait_url,
+        token_status,
     })
 }
 
@@ -186,6 +203,9 @@ pub async fn delete_character(
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use chrono::Duration;
+
     #[test]
     fn portrait_url_format() {
         let url = format!(
@@ -196,5 +216,38 @@ mod tests {
             url,
             "https://images.evetech.net/characters/12345/portrait?size=128"
         );
+    }
+
+    #[test]
+    fn token_status_active_when_expires_in_future() {
+        let now = Utc::now();
+        let expires = now + Duration::days(1);
+        assert_eq!(
+            derive_token_status(Some(expires), now),
+            TokenStatus::Active
+        );
+    }
+
+    #[test]
+    fn token_status_expired_when_expires_in_past() {
+        let now = Utc::now();
+        let expires = now - Duration::days(1);
+        assert_eq!(
+            derive_token_status(Some(expires), now),
+            TokenStatus::Expired
+        );
+    }
+
+    #[test]
+    fn token_status_expired_when_null() {
+        let now = Utc::now();
+        assert_eq!(derive_token_status(None, now), TokenStatus::Expired);
+    }
+
+    #[test]
+    fn token_status_expired_when_exactly_now() {
+        let now = Utc::now();
+        // Boundary: `t > now` is strict, so equality is expired.
+        assert_eq!(derive_token_status(Some(now), now), TokenStatus::Expired);
     }
 }
