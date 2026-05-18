@@ -152,8 +152,7 @@ pub async fn callback(
             .await
             .map_err(|e| AppError::BadGateway(format!("ESI public info error: {e}")))?;
 
-    let encryption_key = crypto::token_encryption_key(&state.config.encryption_secret)
-        .map_err(anyhow::Error::from)?;
+    let encryption_key = crypto::token_encryption_key(&state.config.encryption_secret)?;
     let expires_at = Utc::now() + Duration::seconds(token_resp.expires_in);
 
     // Single Postgres transaction composing the DB steps.
@@ -200,9 +199,8 @@ pub async fn callback(
     };
     state.session_store.add(new_session).await;
 
-    let jwt_key =
-        crypto::jwt_signing_key(&state.config.encryption_secret).map_err(anyhow::Error::from)?;
-    let jwt = crypto::sign_session_jwt(&session_id, &jwt_key).map_err(anyhow::Error::from)?;
+    let jwt_key = crypto::jwt_signing_key(&state.config.encryption_secret)?;
+    let jwt = crypto::sign_session_jwt(&session_id, &jwt_key)?;
 
     let redirect_path = inflight.return_to.as_deref().unwrap_or("/");
     let mut response = Redirect::to(redirect_path).into_response();

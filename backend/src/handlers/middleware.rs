@@ -30,31 +30,29 @@ where
         let state = AppState::from_ref(state);
 
         // 1. Try Bearer token.
-        if let Some(bearer_value) = extract_bearer(&parts.headers) {
-            if bearer_value.starts_with(crate::handlers::api_key::PREFIX) {
-                let row = svc::lookup_by_plaintext(&state.db, &bearer_value).await?;
+        if let Some(bearer_value) = extract_bearer(&parts.headers)
+            && bearer_value.starts_with(crate::handlers::api_key::PREFIX)
+        {
+            let row = svc::lookup_by_plaintext(&state.db, &bearer_value).await?;
 
-                return match row {
-                    Some(r) if r.scope == "account" => {
-                        let account_id = r.account_id.ok_or(AppError::Unauthorized)?;
-                        // Reject if the account has been soft-deleted.
-                        let account = accounts::get_account(&state.db, account_id)
-                            .await
-                            .map_err(AppError::Internal)?;
-                        match account {
-                            Some(a) if a.status == "soft_deleted" => {
-                                Err(AppError::AccountSoftDeleted)
-                            }
-                            Some(_) => Ok(AuthenticatedAccount(account_id)),
-                            None => Err(AppError::Unauthorized),
-                        }
+            return match row {
+                Some(r) if r.scope == "account" => {
+                    let account_id = r.account_id.ok_or(AppError::Unauthorized)?;
+                    // Reject if the account has been soft-deleted.
+                    let account = accounts::get_account(&state.db, account_id)
+                        .await
+                        .map_err(AppError::Internal)?;
+                    match account {
+                        Some(a) if a.status == "soft_deleted" => Err(AppError::AccountSoftDeleted),
+                        Some(_) => Ok(AuthenticatedAccount(account_id)),
+                        None => Err(AppError::Unauthorized),
                     }
-                    Some(_) => Err(AppError::Forbidden),
-                    None => Err(AppError::Unauthorized),
-                };
-            }
-            // Bearer present but not erb_ prefix — fall through to session.
+                }
+                Some(_) => Err(AppError::Forbidden),
+                None => Err(AppError::Unauthorized),
+            };
         }
+        // Bearer present but not erb_ prefix — falls through to session below.
 
         // 2. Try session cookie.
         let jwt = cookie::extract_session_jwt(&parts.headers).ok_or(AppError::Unauthorized)?;

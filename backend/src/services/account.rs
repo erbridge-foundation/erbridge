@@ -186,8 +186,6 @@ pub async fn delete_character(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn portrait_url_format() {
         let url = format!(

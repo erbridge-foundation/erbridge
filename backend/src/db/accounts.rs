@@ -88,10 +88,10 @@ pub async fn resolve_or_create(
     .await
     .context("failed to look up existing character")?;
 
-    if let Some(row) = existing {
-        if let Some(account_id) = row.account_id {
-            return Ok(account_id);
-        }
+    if let Some(row) = existing
+        && let Some(account_id) = row.account_id
+    {
+        return Ok(account_id);
     }
 
     // No account found — create a new one.
