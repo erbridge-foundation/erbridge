@@ -26,7 +26,7 @@ use backend::{
     config::Config,
     esi::EsiMetadata,
     handlers::crypto,
-    session::{Session, SessionStore},
+    session::{InflightStore, SessionStore},
 };
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -55,14 +55,15 @@ fn test_esi_metadata() -> Arc<EsiMetadata> {
 fn build_state(pool: PgPool) -> AppState {
     AppState {
         config: test_config(),
-        db: pool,
+        db: pool.clone(),
         esi_metadata: test_esi_metadata(),
-        session_store: SessionStore::new(),
+        session_store: SessionStore::new(pool),
+        inflight_store: InflightStore::new(),
         http_client: reqwest::Client::new(),
     }
 }
 
-/// Creates a real account row, injects a session into the store, and returns
+/// Creates a real account row, inserts a session row, and returns
 /// `(account_id, session_cookie_header_value)`.
 async fn create_session(state: &AppState) -> (Uuid, String) {
     let account_id = backend::db::accounts::create_account(&state.db)
@@ -72,14 +73,9 @@ async fn create_session(state: &AppState) -> (Uuid, String) {
     let session_id = Uuid::new_v4().to_string();
     state
         .session_store
-        .add(Session {
-            session_id: session_id.clone(),
-            account_id,
-            csrf_state: None,
-            return_to: None,
-            add_character_mode: false,
-        })
-        .await;
+        .add(&session_id, account_id, None, false)
+        .await
+        .expect("insert session");
 
     let key_bytes = crypto::jwt_signing_key(&state.config.encryption_secret).unwrap();
     let jwt = crypto::sign_session_jwt(&session_id, &key_bytes).unwrap();

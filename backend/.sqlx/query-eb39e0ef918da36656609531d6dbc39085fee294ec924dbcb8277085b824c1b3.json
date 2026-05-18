@@ -1,0 +1,58 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE session\n         SET last_seen_at = now(),\n             expires_at = now() + interval '7 days'\n         WHERE session_id = $1 AND expires_at > now()\n         RETURNING session_id, account_id, csrf_state, add_character_mode,\n                   created_at, last_seen_at, expires_at",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "session_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "account_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "csrf_state",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "add_character_mode",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 4,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 5,
+        "name": "last_seen_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 6,
+        "name": "expires_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "eb39e0ef918da36656609531d6dbc39085fee294ec924dbcb8277085b824c1b3"
+}

@@ -12,6 +12,7 @@ pub mod session;
 
 use axum::{
     Router,
+    middleware::from_fn,
     routing::{delete, get, post},
 };
 use tower_http::trace::TraceLayer;
@@ -19,6 +20,7 @@ use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
 use app_state::AppState;
+use handlers::middleware::refresh_session_cookie;
 
 pub fn build_router(state: AppState) -> Router {
     let api_v1_routes = Router::new()
@@ -47,6 +49,7 @@ pub fn build_router(state: AppState) -> Router {
         .nest("/api/v1", api_v1_routes)
         // SwaggerUi registers GET /api/openapi.json and GET /api/docs (+ /api/docs/*rest)
         .merge(SwaggerUi::new("/api/docs").url("/api/openapi.json", openapi::ApiDoc::openapi()))
+        .layer(from_fn(refresh_session_cookie))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }

@@ -25,7 +25,11 @@ pub async fn delete_account(
         .await
         .map_err(AppError::Internal)?;
 
-    state.session_store.remove_all_for_account(account_id).await;
+    state
+        .session_store
+        .remove_all_for_account(account_id)
+        .await
+        .map_err(AppError::Internal)?;
 
     let mut headers = axum::http::HeaderMap::new();
     cookie::clear_session_cookie(&mut headers);

@@ -3,7 +3,11 @@ use std::sync::Arc;
 use anyhow::Context;
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
-use backend::{app_state::AppState, config, db, esi, session::SessionStore};
+use backend::{
+    app_state::AppState,
+    config, db, esi,
+    session::{InflightStore, SessionStore},
+};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -30,13 +34,15 @@ async fn main() -> anyhow::Result<()> {
         .await
         .context("failed to connect to database")?;
 
-    let session_store = SessionStore::new();
+    let session_store = SessionStore::new(db.clone());
+    let inflight_store = InflightStore::new();
 
     let state = AppState {
         config,
         db,
         esi_metadata,
         session_store,
+        inflight_store,
         http_client,
     };
 

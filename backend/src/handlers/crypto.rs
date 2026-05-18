@@ -65,12 +65,19 @@ pub fn decrypt_token(ciphertext_with_nonce: &[u8], key_bytes: &[u8]) -> Result<S
 #[derive(Serialize, Deserialize)]
 struct SessionClaims {
     sub: String,
+    exp: i64,
 }
 
-/// Signs a session ID as an HS256 JWT for use in the session cookie.
+const SESSION_JWT_LIFETIME_SECONDS: i64 = 7 * 24 * 60 * 60;
+
+/// Signs a session ID as an HS256 JWT with `exp = now() + 7 days` for use in
+/// the session cookie. Re-issued on every authenticated request so the
+/// browser-side cookie lifetime tracks the server-side `session.expires_at`.
 pub fn sign_session_jwt(session_id: &str, key_bytes: &[u8]) -> Result<String> {
+    let exp = chrono::Utc::now().timestamp() + SESSION_JWT_LIFETIME_SECONDS;
     let claims = SessionClaims {
         sub: session_id.to_string(),
+        exp,
     };
     encode(
         &Header::new(Algorithm::HS256),
@@ -80,10 +87,9 @@ pub fn sign_session_jwt(session_id: &str, key_bytes: &[u8]) -> Result<String> {
     .context("failed to sign session JWT")
 }
 
-/// Verifies and extracts the session ID from an HS256 JWT.
+/// Verifies and extracts the session ID from an HS256 JWT. Rejects expired tokens.
 pub fn verify_session_jwt(token: &str, key_bytes: &[u8]) -> Result<String> {
-    let mut validation = Validation::new(Algorithm::HS256);
-    validation.required_spec_claims.clear();
+    let validation = Validation::new(Algorithm::HS256);
 
     let data = decode::<SessionClaims>(token, &DecodingKey::from_secret(key_bytes), &validation)
         .context("invalid session JWT")?;

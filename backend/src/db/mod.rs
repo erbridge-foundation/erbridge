@@ -1,6 +1,7 @@
 pub mod accounts;
 pub mod api_keys;
 pub mod characters;
+pub mod sessions;
 
 use anyhow::{Context, Result};
 use sqlx::PgPool;

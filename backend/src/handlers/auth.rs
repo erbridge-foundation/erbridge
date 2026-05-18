@@ -12,7 +12,7 @@ use crate::{
     db::{accounts, characters},
     error::AppError,
     handlers::{cookie, crypto},
-    session::Session,
+    session::{InflightRecord, Session},
 };
 
 const ESI_SCOPES: &str = "esi-location.read_location.v1 \
@@ -48,17 +48,14 @@ pub async fn login(
     let csrf_state = Uuid::new_v4().to_string();
     let return_to = query.return_to.as_deref().and_then(validate_return_to);
 
-    // Create an in-flight session with no account yet — we use a placeholder
-    // account ID; the callback will resolve and replace with the real account.
-    // We need a session entry to store csrf_state and return_to.
-    let session = Session {
-        session_id: format!("inflight_{csrf_state}"),
-        account_id: Uuid::nil(),
-        csrf_state: Some(csrf_state.clone()),
-        return_to,
-        add_character_mode: false,
-    };
-    state.session_store.add(session).await;
+    state
+        .inflight_store
+        .add(InflightRecord {
+            csrf_state: csrf_state.clone(),
+            return_to,
+            account_id: None,
+        })
+        .await;
 
     let redirect_url = format!(
         "{}?response_type=code&client_id={}&redirect_uri={}/auth/callback&scope={}&state={}",
@@ -95,18 +92,16 @@ pub async fn callback(
     State(state): State<AppState>,
     Query(query): Query<CallbackQuery>,
 ) -> Result<Response, AppError> {
-    // Find in-flight session by state value.
-    let inflight_id = format!("inflight_{}", query.state);
-    let inflight =
-        state.session_store.get(&inflight_id).await.ok_or_else(|| {
-            AppError::BadRequest("invalid or missing state parameter".to_string())
-        })?;
+    // Find and consume the in-flight OAuth record by csrf_state.
+    let inflight = state
+        .inflight_store
+        .take(&query.state)
+        .await
+        .ok_or_else(|| AppError::BadRequest("invalid or missing state parameter".to_string()))?;
 
-    if inflight.csrf_state.as_deref() != Some(query.state.as_str()) {
+    if inflight.csrf_state != query.state {
         return Err(AppError::BadRequest("state parameter mismatch".to_string()));
     }
-
-    state.session_store.remove(&inflight_id).await;
 
     // Exchange code for tokens.
     let token_resp: TokenResponse = state
@@ -158,14 +153,8 @@ pub async fn callback(
     // Single Postgres transaction composing the DB steps.
     let mut tx = state.db.begin().await.map_err(anyhow::Error::from)?;
 
-    let add_character_account_id = if inflight.add_character_mode {
-        Some(inflight.account_id)
-    } else {
-        None
-    };
-
     let account_id =
-        accounts::resolve_or_create(&mut tx, add_character_account_id, eve_character_id).await?;
+        accounts::resolve_or_create(&mut tx, inflight.account_id, eve_character_id).await?;
 
     accounts::reactivate_if_soft_deleted(&mut tx, account_id).await?;
 
@@ -188,16 +177,14 @@ pub async fn callback(
 
     tx.commit().await.map_err(anyhow::Error::from)?;
 
-    // Create persistent session.
+    // Create the persistent session row. The session ID is a fresh UUID; the
+    // cookie carries it as a signed JWT.
     let session_id = Uuid::new_v4().to_string();
-    let new_session = Session {
-        session_id: session_id.clone(),
-        account_id,
-        csrf_state: None,
-        return_to: None,
-        add_character_mode: false,
-    };
-    state.session_store.add(new_session).await;
+    state
+        .session_store
+        .add(&session_id, account_id, None, inflight.account_id.is_some())
+        .await
+        .map_err(AppError::Internal)?;
 
     let jwt_key = crypto::jwt_signing_key(&state.config.encryption_secret)?;
     let jwt = crypto::sign_session_jwt(&session_id, &jwt_key)?;
@@ -264,7 +251,8 @@ pub async fn logout(State(state): State<AppState>, headers: HeaderMap) -> Respon
     });
 
     if let Some(sid) = session_id {
-        state.session_store.remove(&sid).await;
+        // Best-effort delete; ignore DB errors so logout always clears the cookie.
+        let _ = state.session_store.remove(&sid).await;
     }
 
     let mut response = Redirect::to("/").into_response();
@@ -284,29 +272,20 @@ pub async fn add_character(
 ) -> Result<Response, AppError> {
     // Require existing session.
     let session = extract_session(&state, &headers)
-        .await
+        .await?
         .ok_or(AppError::Unauthorized)?;
 
     let csrf_state = Uuid::new_v4().to_string();
     let return_to = query.return_to.as_deref().and_then(validate_return_to);
 
-    // Replace session with add_character_mode = true.
-    let updated = Session {
-        session_id: session.session_id.clone(),
-        account_id: session.account_id,
-        csrf_state: Some(csrf_state.clone()),
-        return_to,
-        add_character_mode: true,
-    };
-    // Store an in-flight record keyed by csrf_state, preserving account_id.
-    let inflight = Session {
-        session_id: format!("inflight_{csrf_state}"),
-        account_id: session.account_id,
-        csrf_state: Some(csrf_state.clone()),
-        return_to: updated.return_to.clone(),
-        add_character_mode: true,
-    };
-    state.session_store.add(inflight).await;
+    state
+        .inflight_store
+        .add(InflightRecord {
+            csrf_state: csrf_state.clone(),
+            return_to,
+            account_id: Some(session.account_id),
+        })
+        .await;
 
     let redirect_url = format!(
         "{}?response_type=code&client_id={}&redirect_uri={}/auth/callback&scope={}&state={}",
@@ -320,11 +299,22 @@ pub async fn add_character(
     Ok(Redirect::to(&redirect_url).into_response())
 }
 
-pub async fn extract_session(state: &AppState, headers: &HeaderMap) -> Option<Session> {
-    let jwt = cookie::extract_session_jwt(headers)?;
-    let key = crypto::jwt_signing_key(&state.config.encryption_secret).ok()?;
-    let session_id = crypto::verify_session_jwt(&jwt, &key).ok()?;
-    state.session_store.get(&session_id).await
+pub async fn extract_session(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<Option<Session>, AppError> {
+    let Some(jwt) = cookie::extract_session_jwt(headers) else {
+        return Ok(None);
+    };
+    let key = crypto::jwt_signing_key(&state.config.encryption_secret).map_err(AppError::Internal)?;
+    let Ok(session_id) = crypto::verify_session_jwt(&jwt, &key) else {
+        return Ok(None);
+    };
+    state
+        .session_store
+        .get(&session_id)
+        .await
+        .map_err(AppError::Internal)
 }
 
 #[cfg(test)]

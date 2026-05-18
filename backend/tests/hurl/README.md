@@ -88,3 +88,14 @@ hurl --test \
 ```
 
 **Note:** this file soft-deletes the account. Re-login via SSO reactivates it (status returns to `active`, `delete_requested_at` cleared).
+
+### session.hurl
+
+Tests that a cookie-authenticated request reissues the session cookie and an unauthenticated request does not. No extra variables beyond `base_url` and `session`.
+
+```sh
+hurl --test \
+     --variable base_url=$BASE_URL \
+     --variable session=$SESSION \
+     tests/hurl/session.hurl
+```
