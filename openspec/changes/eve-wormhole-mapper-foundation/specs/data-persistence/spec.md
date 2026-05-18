@@ -190,6 +190,42 @@ CREATE INDEX api_key_account_idx ON api_key (account_id) WHERE account_id IS NOT
 - **WHEN** a row is inspected after creation
 - **THEN** no column contains the plaintext key; only the SHA-256 hex digest in `key_hash`
 
+### Requirement: Session table
+The initial migration SHALL create a `session` table matching:
+
+```sql
+CREATE TABLE session (
+    session_id         TEXT        PRIMARY KEY,
+    account_id         UUID        NOT NULL REFERENCES account(id) ON DELETE CASCADE,
+    csrf_state         TEXT,
+    add_character_mode BOOL        NOT NULL DEFAULT FALSE,
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_seen_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at         TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX session_expires_at_idx ON session (expires_at);
+CREATE INDEX session_account_id_idx ON session (account_id);
+```
+
+- `session_id` is the opaque session identifier carried inside the session cookie's JWT. The JWT signature establishes integrity; the `session_id` is the lookup key into this table.
+- `account_id` is the authenticated account the session resolves to. `ON DELETE CASCADE` so account hard-deletion sweeps the account's sessions.
+- `csrf_state` and `add_character_mode` are carried forward from the in-flight OAuth2 record at the moment of session creation. They are persisted so a backend restart between SSO start and SSO callback does not strand the user. (The in-flight OAuth2 record itself remains in-memory by design — it has no `account_id` yet and is intentionally restart-volatile.)
+- `created_at` records first sight; `last_seen_at` is advanced on every authenticated request that resolves via this row; `expires_at` is the moment past which the row is treated as if it does not exist.
+- The `session_expires_at_idx` partial index supports the opportunistic `DELETE FROM session WHERE expires_at < now()` cleanup path; `session_account_id_idx` supports `list_session_ids_for_account` (used by `DELETE /api/v1/account` to drop every session belonging to a soft-deleted account).
+
+#### Scenario: Session rows survive backend restart
+- **WHEN** a session row is created, the backend process is restarted, and a browser presents the same session cookie before `expires_at`
+- **THEN** the row is still present and the request is authenticated against it; no re-login is required
+
+#### Scenario: Session rows hold no token material
+- **WHEN** any row in the `session` table is inspected
+- **THEN** the row holds only `session_id`, `account_id`, `csrf_state`, `add_character_mode`, `created_at`, `last_seen_at`, and `expires_at`; it does NOT hold access tokens, refresh tokens, or any other ESI credentials
+
+#### Scenario: Account deletion cascades to sessions
+- **WHEN** an `account` row is deleted
+- **THEN** all `session` rows where `account_id` matches are removed via `ON DELETE CASCADE`
+
 ### Requirement: ESI tokens are encrypted at rest
 Both ESI access tokens and refresh tokens SHALL be encrypted with AES-256-GCM using a key derived from `ENCRYPTION_SECRET` before being written to `eve_character.encrypted_access_token` and `eve_character.encrypted_refresh_token`. A fresh 12-byte random nonce SHALL be generated per write and stored inline with the ciphertext (e.g. nonce-prefixed). Plaintext tokens SHALL NOT appear in logs, error messages, or any other persistent store. Postgres is the single source of truth for tokens; no plaintext token copy SHALL be cached elsewhere across requests.
 

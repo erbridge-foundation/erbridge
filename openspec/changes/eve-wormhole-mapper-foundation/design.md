@@ -17,7 +17,7 @@ There are no existing services or databases to migrate. Identity data (accounts 
 **Non-Goals:**
 - Wormhole chain visualization or signature scanning
 - Domain tables beyond `account` and `eve_character` (maps, systems, signatures come in later changes)
-- Persistent sessions across restarts (sessions remain in-memory; users re-login after a backend restart)
+- Hard maximum session lifetime independent of activity (the foundation ships sliding 7-day idle expiry; "force re-login every 30 days regardless of activity" is a future capability)
 - Automatic access-token refresh on expiry (both tokens are stored encrypted but the refresh-on-expiry flow is a future change)
 - Owner-hash / character-transfer detection (intentionally omitted from this change; see Decision 3a)
 - The 30-day soft-delete cooldown sweeper (a future scheduled-job change; this change only establishes the columns and reactivation behaviour)
@@ -35,22 +35,45 @@ Traefik's Docker provider auto-discovers services via container labels, eliminat
 
 ### 2. Session cookie with server-side token storage
 
-The browser holds only an opaque session ID (AES-256-GCM encrypted, HS256 JWT signed). All OAuth2 tokens live in backend memory keyed by session ID. This eliminates token exposure to JavaScript and avoids PKCE complexity for a server-side flow.
+The browser holds only an opaque session ID inside an HS256-signed JWT (the cookie value). All OAuth2 tokens live in Postgres (`eve_character.encrypted_access_token` / `encrypted_refresh_token`), encrypted at rest with AES-256-GCM and keyed by `eve_character_id`, not by session. This eliminates token exposure to JavaScript and avoids PKCE complexity for a server-side flow.
 
 *Alternative considered: storing tokens in a signed cookie.* Rejected — even encrypted, token material in the browser is higher risk and harder to revoke.
 
-### 3. Postgres for identity + tokens + API keys, in-memory map for session routing
+### 3. Postgres for identity, tokens, API keys, and sessions
 
-Two distinct stores, chosen for their distinct durability needs:
+A single durable store for everything authenticated:
 
-- **`account`, `eve_character`, and `api_key` tables in Postgres** — identity, ESI tokens, and long-lived API credentials are all durable. Both the encrypted access token and encrypted refresh token live in `eve_character` columns; `api_key` holds a SHA-256 hash of each issued key. Postgres is the single source of truth for all three. Identity survives restarts because losing it means re-onboarding every user; ESI tokens survive restarts so an active session that has just refreshed its access token doesn't lose it to a restart; API keys are by definition long-lived bearer credentials that the holder expects to keep working across deployments.
-- **`HashMap<SessionId, Session>` behind `Arc<RwLock<>>`** — sessions are ephemeral routing. Each session entry holds only `account_id` and CSRF state for in-flight OAuth2 redirects. Losing these on restart is acceptable; users re-login. There are no tokens in this map.
+- **`account` and `eve_character`** — identity and ESI tokens. Both the encrypted access token and encrypted refresh token live in `eve_character` columns. Identity survives restarts because losing it means re-onboarding every user; ESI tokens survive restarts so an active session that has just refreshed its access token doesn't lose it to a restart.
+- **`api_key`** — long-lived bearer credentials issued under `/api/v1/keys`, stored as SHA-256 hashes. By definition holders expect them to keep working across deployments.
+- **`session`** — session-cookie → account mapping with `csrf_state`, `add_character_mode`, and a sliding `expires_at`. Sessions persist across backend restarts so a user with a valid unexpired cookie stays logged in through a deploy; idle sessions auto-expire after 7 days. The session row holds NO token material — the cookie's JWT carries only `session_id`, and tokens stay in `eve_character`. See Decision 3d for the sliding-expiry mechanics and Decision 3e for the cookie-refresh behaviour.
 
-This split keeps the session table out of Postgres (no expiry-sweep job needed) while making identity, ESI tokens, and API keys durable. `sqlx` is the database driver: compile-time-checked queries via `sqlx::query!`, native async with tokio.
+In-flight OAuth2 records (the brief window between `/auth/login` redirect and `/auth/callback` return) remain in-memory: they have no `account_id` yet, are bound to one redirect cycle, and are intentionally restart-volatile (a backend restart mid-redirect just sends the user back through SSO). A sibling `InflightStore` (in-memory `HashMap`) holds these alongside the `SessionStore` (Postgres-backed).
+
+`sqlx` is the database driver: compile-time-checked queries via `sqlx::query!`, native async with tokio.
 
 *Alternative considered: SQLite.* Rejected because Postgres is the eventual production target for the domain data (maps, signatures, chain history) and there's no benefit to introducing SQLite only to migrate away from it later.
 
-*Alternative considered: persisting sessions in Postgres too.* Rejected for this change — adds schema, expiry logic, and DB load for data that is intentionally short-lived. Can be revisited if multi-instance backends are needed.
+*Alternative considered: in-memory session map.* Rejected because every backend restart would silently 401 every authenticated browser. Will also break the moment we run more than one backend replica. Postgres is the smallest possible step that fixes both, with one extra DB write per authenticated request as the only cost.
+
+*Alternative considered: Redis or `tower-sessions`.* Rejected — Redis adds an infra dependency for a session table that is already small and bounded by 7-day expiry; `tower-sessions` would replace the hand-rolled `SessionStore` but pulls in its own cookie shape and middleware without a clear win at this scale.
+
+### 3d. Sliding 7-day session expiry
+
+On session creation `expires_at = now() + interval '7 days'`. On every cookie-authenticated request the middleware runs a single `UPDATE session SET last_seen_at = now(), expires_at = now() + interval '7 days' WHERE session_id = $1 AND expires_at > now() RETURNING ...`. A row is treated as valid iff that `UPDATE` affected a row (i.e., the `WHERE` matched). This collapses "read + refresh" into one round-trip and atomically rejects already-expired rows.
+
+API-key requests (`Authorization: Bearer erb_…`) bypass the session table entirely — they neither read nor extend any session row.
+
+*Alternative considered: refresh only on a threshold (e.g., > 1 day since `last_seen_at`).* Saves a write on burst traffic but complicates reasoning. Postgres can comfortably absorb one UPDATE per authenticated request at our scale.
+
+*Alternative considered: fixed lifetime with explicit refresh endpoint.* Standard OAuth pattern, but heavier for a single-page web UI and requires frontend changes.
+
+Expired rows are physically removed opportunistically: a small fraction of authenticated requests issue `DELETE FROM session WHERE expires_at < now()`. The read path checks `expires_at > now()` anyway, so stale rows are inert in the meantime — a scheduled cleanup job is deferred until we have a job scheduler for something else.
+
+### 3e. Session cookie JWT is refreshed on each authenticated request
+
+When the middleware successfully refreshes a session row, the response also carries a fresh `Set-Cookie` header re-issuing the session JWT with `exp = now() + 7 days`. The session ID and signing key are unchanged; only `exp` advances. Without this, the browser-side cookie would expire on its original `exp` while the DB row was still good.
+
+Implemented as a `tower` middleware layer that installs a request-scoped `RefreshedJwtSlot`; the `AuthenticatedAccount` extractor fills the slot when the session cookie was the auth source, and the layer writes the `Set-Cookie` header on the way out. API-key auth never fills the slot, so bearer responses never carry a refreshed cookie.
 
 ### 3a. Schema
 
@@ -111,6 +134,19 @@ CREATE TABLE api_key (
 
 CREATE UNIQUE INDEX api_key_hash_idx ON api_key (key_hash);
 CREATE INDEX api_key_account_idx ON api_key (account_id) WHERE account_id IS NOT NULL;
+
+CREATE TABLE session (
+    session_id         TEXT        PRIMARY KEY,
+    account_id         UUID        NOT NULL REFERENCES account(id) ON DELETE CASCADE,
+    csrf_state         TEXT,
+    add_character_mode BOOL        NOT NULL DEFAULT FALSE,
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_seen_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at         TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX session_expires_at_idx ON session (expires_at);
+CREATE INDEX session_account_id_idx ON session (account_id);
 ```
 
 Notes on the columns and indexes:
@@ -141,6 +177,14 @@ Notes on the columns and indexes:
 - **No `last_used_at`.** Deferred; adding it later is a single-column migration.
 - **`api_key_hash_idx`** is `UNIQUE` — collision on `key_hash` would be a SHA-256 collision, which we treat as impossible, and the unique constraint is a safety net.
 - **`api_key_account_idx`** is partial (`WHERE account_id IS NOT NULL`) so "list keys for this account" is a tight index scan and `server`-scoped rows don't bloat it.
+
+`session` columns:
+
+- **`session_id`** is the opaque identifier carried inside the session-cookie JWT. The JWT's signature establishes integrity; this column is the lookup key.
+- **`account_id`** is the authenticated account the session resolves to. `ON DELETE CASCADE` so account hard-deletion sweeps the account's sessions.
+- **`csrf_state` / `add_character_mode`** are carried forward from the in-flight OAuth2 record when the session is created. Persisting them means a backend restart between SSO start and SSO callback does not strand the user.
+- **`created_at`** records first sight; **`last_seen_at`** is advanced atomically with `expires_at` on every authenticated request (see Decision 3d); **`expires_at`** is the moment past which the row is treated as if it does not exist.
+- **`session_expires_at_idx`** supports the opportunistic `DELETE FROM session WHERE expires_at < now()` cleanup; **`session_account_id_idx`** supports `list_session_ids_for_account` (used by `DELETE /api/v1/account` to drop every session belonging to a soft-deleted account).
 
 ### 3b. Account lifecycle (soft delete)
 
@@ -283,7 +327,7 @@ To support the home and characters pages, four new `/api/v1/` endpoints are adde
 - `GET /api/v1/me` — returns the caller's account plus their full character list, including `corporation_name` / `alliance_name` read directly from the denormalised `eve_character` columns (no ESI calls in this handler), `portrait_url` constructed from the EVE image server, and a derived `token_status` enum per character (see below). Raw token columns are NEVER included in the response.
 - `POST /api/v1/characters/:id/set-main` — promotes a character to main; flips `is_main` in a single transaction relying on the partial unique index `eve_character_one_main_per_account` for correctness.
 - `DELETE /api/v1/characters/:id` — hard-deletes a non-main character. Rejects removal of the only character (409 `cannot_remove_last_character`) and removal of the current main while siblings exist (409 `cannot_remove_main`) — the caller must promote another character to main first.
-- `DELETE /api/v1/account` — soft-deletes the caller's account (`status = 'soft_deleted'`, `delete_requested_at = now()`), drops every in-memory session for the account, and clears the caller's session cookie. Character rows and API keys are NOT modified. A subsequent SSO login reactivates the account (per the `eve-sso-auth` capability).
+- `DELETE /api/v1/account` — soft-deletes the caller's account (`status = 'soft_deleted'`, `delete_requested_at = now()`), deletes every row in `session` belonging to the account (logging out every browser the user is on), and clears the caller's session cookie. Character rows and API keys are NOT modified. A subsequent SSO login reactivates the account (per the `eve-sso-auth` capability).
 
 **Per-character `token_status`.** Each element of `data.characters` SHALL carry a `token_status` field with the value `"active"` when the row's `encrypted_refresh_token IS NOT NULL`, and `"expired"` when it is `NULL`. Neither `access_token_expires_at` nor the `scopes` array SHALL appear on the wire. The field is a **string enum**, not a boolean, so future expansion (e.g. `"missing_scopes"` once required-scope-set drift detection lands, or a future `invalid_grant`-driven flip once refresh-on-demand exists) can land without a breaking change. The characters-page UI renders a `--emerald` / `--red` dot driven entirely by this value.
 
@@ -337,7 +381,9 @@ API errors surface in one of two places, depending on where they originate:
 
 ## Risks / Trade-offs
 
-- **In-memory sessions lost on restart** → Acceptable for this change; durable identity and tokens are in Postgres, so users re-login but their account, linked characters, and last-stored ESI tokens remain.
+- **One extra DB write per cookie-authenticated request** → The middleware `UPDATE`s the session row to advance `last_seen_at` and `expires_at` on every request. Acceptable at this scale; the same request already touches `account` indirectly. Bearer-token (API-key) requests bypass this entirely.
+- **JWT replay window grows from "until original `exp`" to "until DB row expires"** → Intentional. This is the whole point of the persisted-session design — the cookie's `exp` is advanced on every authenticated request so it tracks the server-side row, not the original issue time. The session ID is still server-revocable via `delete` (logout / soft-delete / future "log out everywhere" admin endpoint).
+- **Opportunistic session cleanup leaks rows under sustained read-only traffic** → A small fraction of authenticated requests issue `DELETE FROM session WHERE expires_at < now()`. Under any realistic load the table stays small (rows are ≤ 7 days old). Worst case is migrating to a scheduled task later when a job scheduler exists for something else (ESI refresh, character refresh).
 - **Tokens at rest in Postgres** → Both access and refresh tokens persist encrypted (AES-256-GCM). DB compromise + `ENCRYPTION_SECRET` compromise = token compromise; that's the threat model, and it's the same as any encrypted-at-rest scheme. The application MUST never log decrypted tokens.
 - **Migrations run at startup** → On boot the backend applies any new migrations before serving traffic. A broken migration prevents startup, which is the correct failure mode for a single-instance deployment. Multi-instance deployments would need to gate migrations separately.
 - **`ENCRYPTION_SECRET` rotation requires re-encrypting tokens** → Documented; out of scope to implement an automatic rotation tool. Manual rotation procedure deferred to a future ops-focused change.
@@ -354,4 +400,3 @@ API errors surface in one of two places, depending on where they originate:
 - **Server-scoped API keys have no authority yet** → The column exists for future use; no route currently honours them. A `server`-scoped key is effectively inert until a later change defines its permissions.
 - **Single Traefik instance, no HA** → This is a single-user/small-team tool; HA is not required.
 - **`SameSite=Lax` without `Secure` in dev** → Cookie is transmitted over HTTP in local development. This is intentional and documented. Production deployment MUST add `Secure`.
-- **`Arc<RwLock<>>` write contention under load on the session map** → Not a concern for expected usage (single pilot / small corp).

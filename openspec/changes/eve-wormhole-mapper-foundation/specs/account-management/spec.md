@@ -123,7 +123,7 @@ The backend SHALL refuse to delete the character flagged `is_main = true` while 
 
 ### Requirement: DELETE /api/v1/account soft-deletes the caller's account
 
-`DELETE /api/v1/account` SHALL initiate soft-delete on the authenticated account by setting `account.status = 'soft_deleted'` and `account.delete_requested_at = now()`. It SHALL invalidate every in-memory session belonging to that account and SHALL clear the caller's session cookie in the response. Character rows SHALL NOT be modified. API keys belonging to the account SHALL NOT be deleted (a soft-deleted account that reactivates by re-login keeps its keys).
+`DELETE /api/v1/account` SHALL initiate soft-delete on the authenticated account by setting `account.status = 'soft_deleted'` and `account.delete_requested_at = now()`. It SHALL delete every row in the `session` table belonging to that account (so any other browser the user is logged in on is immediately logged out) and SHALL clear the caller's session cookie in the response. Character rows SHALL NOT be modified. API keys belonging to the account SHALL NOT be deleted (a soft-deleted account that reactivates by re-login keeps its keys).
 
 The response SHALL be HTTP 204 with no body and a `Set-Cookie` header that clears the session cookie.
 
@@ -131,7 +131,7 @@ A subsequent SSO login as any of the account's characters SHALL reactivate the a
 
 #### Scenario: Owner soft-deletes their own account
 - **WHEN** the authenticated caller calls `DELETE /api/v1/account`
-- **THEN** their `account.status` becomes `'soft_deleted'`, `delete_requested_at` is set to `now()`, all of their in-memory sessions are dropped, the response is HTTP 204, and the response clears the session cookie
+- **THEN** their `account.status` becomes `'soft_deleted'`, `delete_requested_at` is set to `now()`, all of their `session` rows are deleted, the response is HTTP 204, and the response clears the session cookie
 
 #### Scenario: Account row remains queryable while soft-deleted
 - **WHEN** an account is soft-deleted

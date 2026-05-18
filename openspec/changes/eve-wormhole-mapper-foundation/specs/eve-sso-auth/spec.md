@@ -46,12 +46,12 @@ On success the backend SHALL:
    - **If a row exists with `account_id` set**: overwrite `encrypted_access_token`, `encrypted_refresh_token`, `access_token_expires_at`, `esi_client_id`, `scopes`, refresh public-info fields, bump `updated_at`. The row's `account_id` is the session's account.
 2. If the resolved account has no character flagged `is_main = TRUE` after the row is written/claimed (this is true for any account that just gained its first character, including via orphan-claim), the same transaction SHALL set `is_main = TRUE` on the just-written character. There SHALL always be exactly one main per account that has any characters.
 3. If the resolved `account.status` is `'soft_deleted'`, atomically reactivate it: `status = 'active'`, `delete_requested_at = NULL`.
-4. Establish or update a session: an in-memory entry keyed by session ID, pointing to the resolved `account_id`. The session entry does NOT hold token material; tokens live only in Postgres.
-5. Set the session cookie (`httpOnly`, `SameSite=Lax`) and redirect to the validated `return_to` path stashed in the in-flight OAuth2 record, or to `/` when none was stashed.
+4. Establish or update a session: insert (or update, in add-character mode) a row in the Postgres `session` table keyed by session ID, with `account_id` set to the resolved account, `csrf_state` and `add_character_mode` carried from the in-flight OAuth2 record, `created_at = now()` for new rows, `last_seen_at = now()`, and `expires_at = now() + interval '7 days'`. The row does NOT hold token material; tokens live only in `eve_character`.
+5. Set the session cookie (`httpOnly`, `SameSite=Lax`) carrying a signed HS256 JWT whose `exp` claim is 7 days out, and redirect to the validated `return_to` path stashed in the in-flight OAuth2 record, or to `/` when none was stashed.
 
 #### Scenario: Valid callback creates session and redirects home
 - **WHEN** EVE SSO redirects to `/auth/callback` with a valid `code` and matching `state`
-- **THEN** the backend exchanges the code for tokens, persists them encrypted in `eve_character`, creates an in-memory session pointing to the resolved account, sets a session cookie, and redirects the browser to `/`
+- **THEN** the backend exchanges the code for tokens, persists them encrypted in `eve_character`, inserts a row in the `session` table pointing to the resolved account with `expires_at = now() + interval '7 days'`, sets a session cookie whose JWT carries a matching `exp`, and redirects the browser to `/`
 
 #### Scenario: Orphan character is claimed on first login
 - **WHEN** the callback resolves an `eve_character_id` that exists with `account_id = NULL`
@@ -69,9 +69,9 @@ On success the backend SHALL:
 - **WHEN** the callback writes a new character to an account that already has a different character with `is_main = TRUE`
 - **THEN** the existing main is unchanged and the new character is inserted with `is_main = FALSE`
 
-#### Scenario: Session entry holds no token material
-- **WHEN** any session is inspected in the in-memory session store
-- **THEN** the entry holds only `account_id` and CSRF / routing state; it does NOT hold the access or refresh token
+#### Scenario: Session row holds no token material
+- **WHEN** any row in the `session` table is inspected
+- **THEN** the row holds only `session_id`, `account_id`, `csrf_state`, `add_character_mode`, `created_at`, `last_seen_at`, and `expires_at`; it does NOT hold the access or refresh token
 
 #### Scenario: Invalid or missing state parameter
 - **WHEN** `/auth/callback` is called with a missing or mismatched `state` parameter
@@ -82,11 +82,11 @@ On success the backend SHALL:
 - **THEN** the backend responds with HTTP 502 and does not create a session
 
 ### Requirement: Logout clears session
-The system SHALL handle `GET /auth/logout` by removing the session from the server-side store and clearing the session cookie. The response SHALL redirect to `/`.
+The system SHALL handle `GET /auth/logout` by deleting the session row from the Postgres `session` table and clearing the session cookie. The response SHALL redirect to `/`.
 
 #### Scenario: Authenticated user logs out
 - **WHEN** a browser with a valid session cookie requests `GET /auth/logout`
-- **THEN** the session is removed from the store, the session cookie is cleared, and the browser is redirected to `/`
+- **THEN** the row in the `session` table for that session ID is deleted, the session cookie is cleared, and the browser is redirected to `/`
 
 #### Scenario: Unauthenticated user requests logout
 - **WHEN** a browser with no session cookie requests `GET /auth/logout`
@@ -109,6 +109,47 @@ The session cookie SHALL contain only an encrypted, signed session ID — no acc
 #### Scenario: Session cookie inspection reveals no token data
 - **WHEN** a session is established after login
 - **THEN** the `Set-Cookie` header value contains only an opaque session ID; access and refresh tokens are absent from all response headers and cookie values
+
+### Requirement: Sessions survive backend restarts
+The session store SHALL be backed by Postgres so that session rows persist across backend process restarts. A browser holding a valid, unexpired session cookie SHALL remain authenticated across a backend restart without re-running the EVE SSO flow.
+
+#### Scenario: Session survives restart
+- **WHEN** a user logs in, the backend process is restarted, and the same browser makes an authenticated request before the session's `expires_at`
+- **THEN** the request is authenticated against the persisted `session` row and succeeds; no re-login is required
+
+### Requirement: Sessions expire after 7 days of inactivity (sliding)
+Each session row SHALL carry an `expires_at` timestamp. On creation, `expires_at` SHALL be set to `now() + interval '7 days'`. On every successful authenticated request that resolves via the session cookie, the backend SHALL atomically advance `last_seen_at = now()` and `expires_at = now() + interval '7 days'` for the matched row, gated by `expires_at > now()`. A row whose `expires_at` is in the past SHALL be treated as if it does not exist: cookie-authenticated requests resolving to it SHALL respond with HTTP 401.
+
+API-key authenticated requests (bearer `erb_…`) do NOT touch the session table and do NOT extend any session.
+
+#### Scenario: Active session is refreshed on each request
+- **WHEN** a cookie-authenticated request succeeds for session `S`
+- **THEN** `S.last_seen_at` is updated to `now()` and `S.expires_at` is updated to `now() + interval '7 days'` in the same database round-trip
+
+#### Scenario: Session past its expiry is rejected
+- **WHEN** a request arrives with a cookie whose session row has `expires_at < now()`
+- **THEN** the backend responds with HTTP 401 and does not extend the row
+
+#### Scenario: Idle session expires after 7 days
+- **WHEN** a session is created at time `T` and no requests using it arrive before `T + 7 days`
+- **THEN** any request arriving at `T + 7 days + ε` with that session's cookie is rejected with HTTP 401
+
+#### Scenario: API-key request does not extend session
+- **WHEN** an authenticated `Authorization: Bearer erb_…` request arrives for an account that also has an active session row
+- **THEN** the session row's `last_seen_at` and `expires_at` are unchanged
+
+### Requirement: Session cookie JWT is refreshed on each authenticated request
+On every cookie-authenticated request whose session row was successfully refreshed (per the sliding-expiry requirement), the response SHALL include a fresh `Set-Cookie` header carrying a newly-signed session JWT whose `exp` claim is 7 days from the response time. The session ID and signing key SHALL be unchanged from the prior cookie; only the `exp` is advanced.
+
+If the session row is missing or expired, no refreshed cookie SHALL be set (the request fails authentication anyway).
+
+#### Scenario: Cookie is reissued on successful auth
+- **WHEN** a cookie-authenticated request succeeds
+- **THEN** the response carries a `Set-Cookie` header with a fresh JWT whose `exp` is approximately `now() + 7 days`
+
+#### Scenario: Cookie is not reissued on auth failure
+- **WHEN** a request arrives with a cookie whose session is expired or missing
+- **THEN** the response does NOT include a fresh session cookie (and the response is HTTP 401)
 
 ### Requirement: Required ESI scopes are requested
 The OAuth2 authorization request SHALL include exactly the following scopes: `esi-location.read_location.v1`, `esi-location.read_ship_type.v1`, `esi-location.read_online.v1`, `esi-search.search_structures.v1`, `esi-ui.write_waypoint.v1`.
