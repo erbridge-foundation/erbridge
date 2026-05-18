@@ -62,10 +62,17 @@ jobs:
       - name: cargo clippy
         run: cargo clippy --all-targets -- -D warnings
 
+      - name: Install sqlx-cli
+        run: cargo install sqlx-cli --no-default-features --features postgres,rustls --locked --version ^0.8
+
+      - name: Apply migrations to the live DB
+        # `cargo sqlx prepare --check` re-runs the `sqlx::query!` macros against
+        # the live DB, so the schema must exist first. `#[sqlx::test]` migrates
+        # its own per-test DBs but not the base `postgres` DB used here.
+        run: sqlx migrate run
+
       - name: Verify .sqlx cache is up to date
-        run: |
-          cargo install sqlx-cli --no-default-features --features postgres,rustls --locked --version ^0.8
-          cargo sqlx prepare --check -- --all-targets
+        run: cargo sqlx prepare --check -- --all-targets
 
       - name: cargo test
         run: cargo test --all-targets
