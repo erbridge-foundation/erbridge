@@ -84,7 +84,7 @@ The `/login` route SHALL render a vertically and horizontally centred card on a 
 
 - Card: `background: var(--space-900)`, `border: 1px solid var(--space-700)`, `border-radius: 8px`, content centred, generous vertical padding
 - Top of card: the E-R Bridge logo SVG in `--sky`, centred
-- Below logo: wordmark `E-R BRIDGE` in 14px/600 weight with `letter-spacing: 0.2em`, `color: var(--slate-100)`
+- Below logo: wordmark `E-R BRIDGE` in `0.875rem` / `600` weight with `letter-spacing: 0.2em`, `color: var(--slate-100)`
 - Below wordmark: subtitle `Wormhole Mapper` in 11px, `color: var(--slate-400)`
 - Horizontal rule separating the branding from the login action: `border-color: var(--space-700)`
 - Login button: an `<a href="/auth/login">` wrapping an `<img>` loaded from `https://web.ccpgamescdn.com/eveonlineassets/developers/eve-sso-login-white-large.png` (the official EVE SSO button image); no custom button styling applied — the image is the button
@@ -106,7 +106,7 @@ The `/login` route SHALL render a vertically and horizontally centred card on a 
 The frontend SHALL implement the visual design language established in the wireframe. All pages and components SHALL use this system consistently.
 
 **Typography**
-The sole typeface is JetBrains Mono (Google Fonts), applied globally via `font-family: "JetBrains Mono", ui-monospace, monospace` at `font-size: 13px`.
+The sole typeface is JetBrains Mono (Google Fonts), applied globally via `font-family: "JetBrains Mono", ui-monospace, monospace`. The `<html>` element SHALL be set to `font-size: 100%` (picking up the browser/OS default, typically 16px), and the `<body>` SHALL be set to `font-size: 0.875rem` (≈14px at the default). **All typography rules across the design system SHALL be expressed in `rem`, not `px`**, so the UI scales when a visitor changes their browser font-size or zooms. Spacing (padding, margin, gap, border-radius, avatar/icon dimensions, border widths) is exempt and SHALL remain in `px`, since those are visual-layout values that must not grow with text-size preferences.
 
 **Colour tokens** — defined as CSS custom properties on `:root`:
 

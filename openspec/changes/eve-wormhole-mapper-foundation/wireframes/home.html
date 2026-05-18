@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>E-R Bridge — Home</title>
+		<style>
+			@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap");
+
+			:root {
+				--space-950: #05080f;
+				--space-900: #080d1a;
+				--space-800: #0d1526;
+				--space-700: #152238;
+				--space-600: #1e3352;
+
+				--slate-100: #f1f5f9;
+				--slate-200: #e2e8f0;
+				--slate-300: #cbd5e1;
+				--slate-400: #94a3b8;
+				--slate-500: #64748b;
+				--slate-600: #475569;
+				--slate-700: #334155;
+
+				--sky: #38bdf8;
+				--emerald: #10b981;
+				--amber: #f59e0b;
+				--red: #ef4444;
+			}
+
+			*,
+			*::before,
+			*::after {
+				box-sizing: border-box;
+			}
+
+			html {
+				font-size: 100%;
+			}
+
+			body {
+				margin: 0;
+				padding: 0;
+				background: var(--space-950);
+				color: var(--slate-100);
+				font-family: "JetBrains Mono", ui-monospace, monospace;
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.app {
+				display: flex;
+				flex-direction: column;
+				height: 100vh;
+				overflow: hidden;
+			}
+
+			/* ─────────────── GlobalNav ─────────────── */
+
+			.global-nav {
+				height: 48px;
+				display: flex;
+				align-items: center;
+				padding: 0 16px;
+				background: var(--space-900);
+				border-bottom: 1px solid var(--space-700);
+				flex-shrink: 0;
+			}
+
+			.brand {
+				display: flex;
+				align-items: center;
+				gap: 8px;
+				padding-right: 16px;
+				border-right: 1px solid var(--space-700);
+				text-decoration: none;
+				color: var(--slate-100);
+			}
+			.brand svg {
+				color: var(--sky);
+			}
+			.brand-name {
+				font-size: 0.75rem;
+				font-weight: 600;
+				letter-spacing: 0.2em;
+			}
+
+			.nav-links {
+				display: flex;
+				align-items: center;
+				gap: 4px;
+				margin-left: 16px;
+			}
+			.nav-links a {
+				display: inline-flex;
+				align-items: center;
+				padding: 6px 10px;
+				border-radius: 4px;
+				font-size: 0.75rem;
+				color: var(--slate-400);
+				text-decoration: none;
+			}
+			.nav-links a:hover {
+				color: var(--slate-200);
+			}
+			.nav-links a.active {
+				color: var(--sky);
+				background: var(--space-700);
+			}
+
+			.nav-spacer {
+				flex: 1;
+			}
+
+			.status {
+				display: inline-flex;
+				align-items: center;
+				gap: 8px;
+				margin-right: 16px;
+				font-size: 0.75rem;
+				color: var(--slate-400);
+			}
+			.status .dot {
+				width: 8px;
+				height: 8px;
+				border-radius: 50%;
+				background: var(--emerald);
+				box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.5);
+				animation: pulse 2s infinite;
+			}
+			@keyframes pulse {
+				0% {
+					box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.6);
+				}
+				70% {
+					box-shadow: 0 0 0 6px rgba(16, 185, 129, 0);
+				}
+				100% {
+					box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+				}
+			}
+
+			.user-chip {
+				display: inline-flex;
+				align-items: center;
+				gap: 8px;
+				padding: 4px 8px;
+				border-radius: 4px;
+				color: var(--slate-200);
+				cursor: pointer;
+				background: transparent;
+				border: 0;
+				font: inherit;
+			}
+			.user-chip:hover {
+				background: var(--space-700);
+			}
+			.user-chip img {
+				width: 24px;
+				height: 24px;
+				border-radius: 50%;
+				display: block;
+			}
+			.user-chip .name {
+				font-size: 0.75rem;
+			}
+			.user-chip .caret {
+				color: var(--slate-500);
+			}
+
+			/* ─────────────── Body ─────────────── */
+
+			.body {
+				flex: 1;
+				overflow: auto;
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				padding: 24px;
+			}
+
+			.content {
+				width: 100%;
+				max-width: 480px;
+				display: flex;
+				flex-direction: column;
+				align-items: center;
+				text-align: center;
+			}
+
+			.main-character {
+				align-items: center;
+			}
+
+			.welcome {
+				margin: 0 0 32px;
+				font-size: 1.5rem;
+				font-weight: 600;
+				color: var(--sky);
+			}
+
+			.main-character {
+				display: flex;
+				flex-direction: column;
+				gap: 4px;
+			}
+
+			.main-character .name-row {
+				display: flex;
+				align-items: center;
+				gap: 8px;
+				font-size: 0.875rem;
+				color: var(--slate-100);
+				font-weight: 600;
+			}
+			.main-character .name-row .sep {
+				color: var(--slate-500);
+				font-weight: 400;
+			}
+			.main-character .name-row .role {
+				color: var(--slate-300);
+				font-weight: 400;
+			}
+			.main-character .corp,
+			.main-character .alliance {
+				font-size: 0.875rem;
+				color: var(--slate-400);
+			}
+		</style>
+	</head>
+	<body>
+		<div class="app">
+			<!-- GlobalNav -->
+			<header class="global-nav">
+				<a href="/" class="brand">
+					<svg
+						width="18"
+						height="18"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="1.5"
+						aria-hidden="true"
+					>
+						<circle cx="12" cy="12" r="3"></circle>
+						<path d="M12 2v4M12 18v4M2 12h4M18 12h4"></path>
+						<path d="M5.6 5.6l2.8 2.8M15.6 15.6l2.8 2.8M18.4 5.6l-2.8 2.8M8.4 15.6l-2.8 2.8"></path>
+					</svg>
+					<span class="brand-name">E-R BRIDGE</span>
+				</a>
+				<nav class="nav-links">
+					<a href="/maps">maps</a>
+					<a href="/characters">characters</a>
+				</nav>
+				<div class="nav-spacer"></div>
+				<div class="status" aria-live="polite">
+					<span class="dot" aria-hidden="true"></span>
+					<span>connected</span>
+				</div>
+				<button class="user-chip" type="button" aria-haspopup="menu" aria-expanded="false">
+					<img
+						src="https://images.evetech.net/characters/2117314396/portrait?size=64"
+						alt=""
+					/>
+					<span class="name">Wasp 223</span>
+					<svg
+						class="caret"
+						width="12"
+						height="12"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2"
+						aria-hidden="true"
+					>
+						<polyline points="6 9 12 15 18 9"></polyline>
+					</svg>
+				</button>
+			</header>
+
+			<!-- Body -->
+			<main class="body">
+				<div class="content">
+					<h1 class="welcome">Welcome, Wasp 223</h1>
+
+					<section class="main-character" aria-label="Main character">
+						<div class="name-row">
+							<span>Wasp 223</span>
+							<span class="sep">·</span>
+							<span class="role">main</span>
+						</div>
+						<div class="corp">Exit-Strategy</div>
+						<div class="alliance">Unchained Alliance</div>
+					</section>
+				</div>
+			</main>
+		</div>
+	</body>
+</html>

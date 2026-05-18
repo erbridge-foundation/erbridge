@@ -4,7 +4,7 @@ All `/api/*` request and response bodies in this capability conform to the `api-
 
 ### Requirement: GET /api/v1/me returns the caller's account and characters
 
-`GET /api/v1/me` SHALL return the authenticated account's identity and the full list of `eve_character` rows belonging to it. The response SHALL NOT include any token material (`encrypted_access_token`, `encrypted_refresh_token`, `esi_token_expires_at`, `esi_client_id`).
+`GET /api/v1/me` SHALL return the authenticated account's identity and the full list of `eve_character` rows belonging to it. The response SHALL NOT include any raw token material (`encrypted_access_token`, `encrypted_refresh_token`, `esi_token_expires_at`, `esi_client_id`). The response MAY include fields *derived* from those columns where the derivation does not reveal the underlying value — `token_status` (defined below) is such a derivation.
 
 The `data` payload SHALL have the shape:
 
@@ -26,7 +26,8 @@ The `data` payload SHALL have the shape:
       "alliance_id": <bigint> | null,
       "alliance_name": "<string> | null",
       "is_main": true | false,
-      "portrait_url": "<string>"
+      "portrait_url": "<string>",
+      "token_status": "active" | "expired"
     }
   ]
 }
@@ -34,13 +35,23 @@ The `data` payload SHALL have the shape:
 
 `portrait_url` SHALL be the EVE image server URL of the form `https://images.evetech.net/characters/<eve_character_id>/portrait?size=128`. `corporation_name` and `alliance_name` SHALL be fetched from ESI public-info endpoints; the backend MAY cache these lookups in process memory for the request lifetime.
 
+`token_status` SHALL be `"active"` when the row's `esi_token_expires_at > now()` and `"expired"` when `esi_token_expires_at` is in the past or NULL. It is a **string enum**, not a boolean; future scope-set or revocation states (e.g. `"missing_scopes"`) MAY be added without a breaking change. The raw `esi_token_expires_at` timestamp SHALL NOT be returned.
+
 #### Scenario: Authenticated caller fetches their account
 - **WHEN** an authenticated caller `GET /api/v1/me`
 - **THEN** the response is `200` with `data.account.id` equal to the caller's account ID and `data.characters` containing every `eve_character` row where `account_id` matches
 
-#### Scenario: Response excludes token material
+#### Scenario: Response excludes raw token material
 - **WHEN** `GET /api/v1/me` returns characters
 - **THEN** no element of `data.characters` contains `encrypted_access_token`, `encrypted_refresh_token`, `esi_token_expires_at`, or `esi_client_id`
+
+#### Scenario: token_status reflects refresh-token expiry
+- **WHEN** a character row has `esi_token_expires_at > now()`
+- **THEN** that character's `token_status` is `"active"`
+
+#### Scenario: token_status is expired when the refresh token has lapsed
+- **WHEN** a character row has `esi_token_expires_at` NULL or `<= now()`
+- **THEN** that character's `token_status` is `"expired"`
 
 #### Scenario: Exactly one character is flagged main
 - **WHEN** the account has at least one linked character

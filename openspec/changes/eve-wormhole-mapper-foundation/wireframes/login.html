@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>E-R Bridge — Login</title>
+		<style>
+			@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap");
+
+			:root {
+				--space-950: #05080f;
+				--space-900: #080d1a;
+				--space-800: #0d1526;
+				--space-700: #152238;
+				--space-600: #1e3352;
+
+				--slate-100: #f1f5f9;
+				--slate-200: #e2e8f0;
+				--slate-300: #cbd5e1;
+				--slate-400: #94a3b8;
+				--slate-500: #64748b;
+				--slate-600: #475569;
+				--slate-700: #334155;
+
+				--sky: #38bdf8;
+				--emerald: #10b981;
+				--amber: #f59e0b;
+				--red: #ef4444;
+			}
+
+			*,
+			*::before,
+			*::after {
+				box-sizing: border-box;
+			}
+
+			html {
+				font-size: 100%;
+			}
+
+			body {
+				margin: 0;
+				padding: 0;
+				min-height: 100vh;
+				background: var(--space-950);
+				color: var(--slate-100);
+				font-family: "JetBrains Mono", ui-monospace, monospace;
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.viewport {
+				min-height: 100vh;
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				padding: 24px;
+			}
+
+			.card {
+				width: 360px;
+				background: var(--space-900);
+				border: 1px solid var(--space-700);
+				border-radius: 8px;
+				padding: 32px 24px;
+				display: flex;
+				flex-direction: column;
+				align-items: center;
+				gap: 16px;
+			}
+
+			.logo {
+				color: var(--sky);
+			}
+
+			.brand-name {
+				margin: 8px 0 0;
+				font-size: 0.875rem;
+				font-weight: 600;
+				letter-spacing: 0.2em;
+				color: var(--slate-100);
+			}
+
+			.subtitle {
+				margin: 0;
+				font-size: 0.75rem;
+				font-weight: 400;
+				color: var(--slate-400);
+			}
+
+			hr.divider {
+				width: 100%;
+				margin: 16px 0 8px;
+				border: 0;
+				border-top: 1px solid var(--space-700);
+			}
+
+			.sso-link {
+				display: inline-block;
+				line-height: 0;
+			}
+
+			.sso-link img {
+				display: block;
+				height: auto;
+				max-width: 100%;
+			}
+
+			.disclaimer {
+				margin: 8px 0 0;
+				font-size: 0.75rem;
+				color: var(--slate-500);
+				text-align: center;
+				line-height: 1.6;
+			}
+		</style>
+	</head>
+	<body>
+		<div class="viewport">
+			<div class="card" role="main">
+				<svg
+					class="logo"
+					width="28"
+					height="28"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="1.5"
+					aria-hidden="true"
+				>
+					<circle cx="12" cy="12" r="3"></circle>
+					<path d="M12 2v4M12 18v4M2 12h4M18 12h4"></path>
+					<path d="M5.6 5.6l2.8 2.8M15.6 15.6l2.8 2.8M18.4 5.6l-2.8 2.8M8.4 15.6l-2.8 2.8"></path>
+				</svg>
+
+				<h1 class="brand-name">E-R BRIDGE</h1>
+				<p class="subtitle">Wormhole Mapper</p>
+
+				<hr class="divider" />
+
+				<a href="/auth/login" class="sso-link" aria-label="Log in with EVE Online">
+					<img
+						src="https://web.ccpgamescdn.com/eveonlineassets/developers/eve-sso-login-white-large.png"
+						alt="LOG IN with EVE Online"
+						width="270"
+					/>
+				</a>
+
+				<p class="disclaimer">
+					Authentication is handled by EVE Online.<br />
+					No password is stored by this service.
+				</p>
+			</div>
+		</div>
+	</body>
+</html>

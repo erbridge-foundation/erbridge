@@ -1,0 +1,881 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>E-R Bridge — Characters</title>
+		<style>
+			@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap");
+
+			:root {
+				--space-950: #05080f;
+				--space-900: #080d1a;
+				--space-800: #0d1526;
+				--space-700: #152238;
+				--space-600: #1e3352;
+
+				--slate-100: #f1f5f9;
+				--slate-200: #e2e8f0;
+				--slate-300: #cbd5e1;
+				--slate-400: #94a3b8;
+				--slate-500: #64748b;
+				--slate-600: #475569;
+				--slate-700: #334155;
+
+				--sky: #38bdf8;
+				--emerald: #10b981;
+				--amber: #f59e0b;
+				--red: #ef4444;
+			}
+
+			*,
+			*::before,
+			*::after {
+				box-sizing: border-box;
+			}
+
+			html {
+				font-size: 100%;
+			}
+
+			body {
+				margin: 0;
+				padding: 0;
+				background: var(--space-950);
+				color: var(--slate-100);
+				font-family: "JetBrains Mono", ui-monospace, monospace;
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.app {
+				display: flex;
+				flex-direction: column;
+				min-height: 100vh;
+			}
+
+			/* ─────────────── GlobalNav ─────────────── */
+
+			.global-nav {
+				height: 48px;
+				display: flex;
+				align-items: center;
+				padding: 0 16px;
+				background: var(--space-900);
+				border-bottom: 1px solid var(--space-700);
+				flex-shrink: 0;
+			}
+
+			.brand {
+				display: flex;
+				align-items: center;
+				gap: 8px;
+				padding-right: 16px;
+				border-right: 1px solid var(--space-700);
+				text-decoration: none;
+				color: var(--slate-100);
+			}
+			.brand svg {
+				color: var(--sky);
+			}
+			.brand-name {
+				font-size: 0.75rem;
+				font-weight: 600;
+				letter-spacing: 0.2em;
+			}
+
+			.nav-links {
+				display: flex;
+				align-items: center;
+				gap: 4px;
+				margin-left: 16px;
+			}
+			.nav-links a {
+				display: inline-flex;
+				align-items: center;
+				padding: 6px 10px;
+				border-radius: 4px;
+				font-size: 0.75rem;
+				color: var(--slate-400);
+				text-decoration: none;
+			}
+			.nav-links a:hover {
+				color: var(--slate-200);
+			}
+			.nav-links a.active {
+				color: var(--sky);
+				background: var(--space-700);
+			}
+
+			.nav-spacer {
+				flex: 1;
+			}
+
+			.status {
+				display: inline-flex;
+				align-items: center;
+				gap: 8px;
+				margin-right: 16px;
+				font-size: 0.75rem;
+				color: var(--slate-400);
+			}
+			.status .dot {
+				width: 8px;
+				height: 8px;
+				border-radius: 50%;
+				background: var(--emerald);
+				box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.5);
+				animation: pulse 2s infinite;
+			}
+			@keyframes pulse {
+				0% {
+					box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.6);
+				}
+				70% {
+					box-shadow: 0 0 0 6px rgba(16, 185, 129, 0);
+				}
+				100% {
+					box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+				}
+			}
+
+			.user-chip {
+				display: inline-flex;
+				align-items: center;
+				gap: 8px;
+				padding: 4px 8px;
+				border-radius: 4px;
+				color: var(--slate-200);
+				cursor: pointer;
+				background: transparent;
+				border: 0;
+				font: inherit;
+			}
+			.user-chip:hover {
+				background: var(--space-700);
+			}
+			.user-chip img {
+				width: 24px;
+				height: 24px;
+				border-radius: 50%;
+				display: block;
+			}
+			.user-chip .name {
+				font-size: 0.75rem;
+			}
+			.user-chip .caret {
+				color: var(--slate-500);
+			}
+
+			/* ─────────────── Body ─────────────── */
+
+			.body {
+				flex: 1;
+				display: flex;
+				justify-content: center;
+				padding: 32px 24px 48px;
+			}
+
+			.content {
+				width: 100%;
+				max-width: 960px;
+			}
+
+			.page-header {
+				display: flex;
+				align-items: center;
+				justify-content: space-between;
+				gap: 16px;
+				margin-bottom: 16px;
+				flex-wrap: wrap;
+			}
+			.page-header h1 {
+				margin: 0;
+				font-size: 0.75rem;
+				font-weight: 600;
+				letter-spacing: 0.2em;
+				color: var(--slate-500);
+			}
+
+			.header-actions {
+				display: flex;
+				align-items: center;
+				gap: 12px;
+			}
+
+			/* ─────────────── Search box ─────────────── */
+
+			.search {
+				position: relative;
+				width: 260px;
+			}
+			.search input {
+				width: 100%;
+				padding: 8px 12px 8px 32px;
+				background: var(--space-900);
+				border: 1px solid var(--space-700);
+				border-radius: 4px;
+				color: var(--slate-100);
+				font: inherit;
+				font-size: 0.75rem;
+			}
+			.search input::placeholder {
+				color: var(--slate-500);
+			}
+			.search input:focus {
+				outline: none;
+				border-color: var(--sky);
+			}
+			.search svg {
+				position: absolute;
+				left: 10px;
+				top: 50%;
+				transform: translateY(-50%);
+				color: var(--slate-500);
+				pointer-events: none;
+			}
+
+			.btn {
+				display: inline-flex;
+				align-items: center;
+				gap: 6px;
+				padding: 8px 16px;
+				background: transparent;
+				border: 1px solid var(--space-700);
+				border-radius: 4px;
+				color: var(--sky);
+				font: inherit;
+				font-size: 0.75rem;
+				text-decoration: none;
+				cursor: pointer;
+				white-space: nowrap;
+			}
+			.btn:hover {
+				background: var(--space-700);
+			}
+
+			/* ─────────────── Character grid ─────────────── */
+
+			.grid {
+				display: grid;
+				grid-template-columns: repeat(2, 1fr);
+				gap: 16px;
+			}
+
+			.grid .empty {
+				display: none;
+				grid-column: 1 / -1;
+				padding: 32px;
+				text-align: center;
+				color: var(--slate-500);
+				font-size: 0.75rem;
+			}
+			.grid[data-empty="true"] .empty {
+				display: block;
+			}
+
+			.card {
+				display: flex;
+				flex-direction: column;
+				gap: 12px;
+				padding: 16px;
+				background: var(--space-900);
+				border: 1px solid var(--space-700);
+				border-radius: 6px;
+			}
+
+			.card-top {
+				display: flex;
+				gap: 12px;
+				align-items: flex-start;
+			}
+
+			.card .portrait {
+				width: 56px;
+				height: 56px;
+				border-radius: 4px;
+				flex-shrink: 0;
+				display: block;
+			}
+
+			.card .info {
+				flex: 1;
+				min-width: 0;
+				display: flex;
+				flex-direction: column;
+				gap: 4px;
+			}
+
+			.card .name-row {
+				display: flex;
+				align-items: center;
+				gap: 8px;
+				font-size: 0.875rem;
+				font-weight: 600;
+				color: var(--slate-100);
+			}
+			.card .name-row .name {
+				overflow: hidden;
+				text-overflow: ellipsis;
+				white-space: nowrap;
+			}
+
+			.badge-main {
+				display: inline-flex;
+				align-items: center;
+				padding: 1px 6px;
+				border-radius: 4px;
+				background: rgba(56, 189, 248, 0.12);
+				border: 1px solid rgba(56, 189, 248, 0.35);
+				color: var(--sky);
+				font-size: 0.625rem;
+				font-weight: 500;
+				letter-spacing: 0.05em;
+				flex-shrink: 0;
+			}
+
+			.affiliation {
+				display: flex;
+				align-items: center;
+				gap: 8px;
+				font-size: 0.75rem;
+				color: var(--slate-300);
+				min-width: 0;
+			}
+			.affiliation .label {
+				overflow: hidden;
+				text-overflow: ellipsis;
+				white-space: nowrap;
+			}
+			.affiliation .marker {
+				width: 12px;
+				height: 12px;
+				display: inline-flex;
+				align-items: center;
+				justify-content: center;
+				flex-shrink: 0;
+			}
+			.affiliation.alliance {
+				color: var(--slate-400);
+			}
+
+			/* ─────────────── Token-status dot ─────────────── */
+
+			.token-status {
+				display: inline-flex;
+				align-items: center;
+				gap: 6px;
+				font-size: 0.6875rem;
+				color: var(--slate-400);
+			}
+			.token-status .dot {
+				width: 7px;
+				height: 7px;
+				border-radius: 50%;
+				flex-shrink: 0;
+			}
+			.token-status[data-state="active"] .dot {
+				background: var(--emerald);
+			}
+			.token-status[data-state="expired"] .dot {
+				background: var(--red);
+			}
+			.token-status[data-state="expired"] {
+				color: var(--red);
+			}
+
+			.card-footer {
+				display: flex;
+				align-items: center;
+				justify-content: space-between;
+				gap: 12px;
+				padding-top: 8px;
+				border-top: 1px solid var(--space-700);
+			}
+
+			.card .actions {
+				display: flex;
+				align-items: center;
+				gap: 16px;
+				color: var(--slate-300);
+				font-size: 0.75rem;
+			}
+			.card .actions button {
+				background: transparent;
+				border: 0;
+				padding: 0;
+				font: inherit;
+				color: inherit;
+				cursor: pointer;
+			}
+			.card .actions button:hover {
+				color: var(--slate-100);
+			}
+			.card .actions .danger {
+				color: var(--slate-400);
+			}
+			.card .actions .danger:hover {
+				color: var(--red);
+			}
+			.card .actions .reauth {
+				color: var(--amber);
+				text-decoration: none;
+			}
+			.card .actions .reauth:hover {
+				color: var(--slate-100);
+			}
+
+			/* ─────────────── Inline error (design.md §14) ─────────────── */
+
+			.inline-error {
+				margin: 8px 0 0;
+				color: var(--red);
+				font-size: 0.75rem;
+			}
+
+			/* ─────────────── Divider + DANGER ZONE ─────────────── */
+
+			.divider {
+				margin: 32px 0 24px;
+				border: 0;
+				border-top: 1px solid var(--space-700);
+			}
+
+			.danger-zone-title {
+				margin: 0 0 16px;
+				font-size: 0.75rem;
+				font-weight: 600;
+				letter-spacing: 0.2em;
+				color: var(--slate-500);
+			}
+
+			.danger-btn {
+				background: transparent;
+				border: 0;
+				padding: 0;
+				font: inherit;
+				font-size: 0.875rem;
+				color: var(--red);
+				cursor: pointer;
+			}
+			.danger-btn:hover {
+				text-decoration: underline;
+			}
+
+			/* Section header used for the example error-state block. */
+			.example-label {
+				margin: 24px 0 8px;
+				font-size: 0.6875rem;
+				font-weight: 500;
+				letter-spacing: 0.1em;
+				color: var(--slate-600);
+				text-transform: uppercase;
+			}
+
+			.example-grid {
+				display: grid;
+				grid-template-columns: repeat(2, 1fr);
+				gap: 16px;
+			}
+		</style>
+	</head>
+	<body>
+		<div class="app">
+			<!-- GlobalNav -->
+			<header class="global-nav">
+				<a href="/" class="brand">
+					<svg
+						width="18"
+						height="18"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="1.5"
+						aria-hidden="true"
+					>
+						<circle cx="12" cy="12" r="3"></circle>
+						<path d="M12 2v4M12 18v4M2 12h4M18 12h4"></path>
+						<path d="M5.6 5.6l2.8 2.8M15.6 15.6l2.8 2.8M18.4 5.6l-2.8 2.8M8.4 15.6l-2.8 2.8"></path>
+					</svg>
+					<span class="brand-name">E-R BRIDGE</span>
+				</a>
+				<nav class="nav-links">
+					<a href="/maps">maps</a>
+					<a href="/characters" class="active">characters</a>
+				</nav>
+				<div class="nav-spacer"></div>
+				<div class="status" aria-live="polite">
+					<span class="dot" aria-hidden="true"></span>
+					<span>connected</span>
+				</div>
+				<button class="user-chip" type="button" aria-haspopup="menu" aria-expanded="false">
+					<img
+						src="https://images.evetech.net/characters/2117314396/portrait?size=64"
+						alt=""
+					/>
+					<span class="name">Wasp 223</span>
+					<svg
+						class="caret"
+						width="12"
+						height="12"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2"
+						aria-hidden="true"
+					>
+						<polyline points="6 9 12 15 18 9"></polyline>
+					</svg>
+				</button>
+			</header>
+
+			<!-- Body -->
+			<main class="body">
+				<div class="content">
+					<div class="page-header">
+						<h1>CHARACTERS</h1>
+						<div class="header-actions">
+							<label class="search">
+								<svg
+									width="14"
+									height="14"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									stroke-width="2"
+									aria-hidden="true"
+								>
+									<circle cx="11" cy="11" r="7"></circle>
+									<line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+								</svg>
+								<input
+									id="character-search"
+									type="search"
+									placeholder="search characters…"
+									aria-label="Search characters by name"
+									autocomplete="off"
+								/>
+							</label>
+							<a class="btn" href="/auth/characters/add?return_to=/characters">+ add character</a>
+						</div>
+					</div>
+
+					<div class="grid" id="character-grid">
+						<p class="empty" role="status">No characters match your search.</p>
+
+						<!-- Main character card (no actions). -->
+						<article class="card" data-name="Wasp 223">
+							<div class="card-top">
+								<img
+									class="portrait"
+									src="https://images.evetech.net/characters/2117314396/portrait?size=128"
+									alt=""
+								/>
+								<div class="info">
+									<div class="name-row">
+										<span class="name">Wasp 223</span>
+										<span class="badge-main">main</span>
+									</div>
+									<div class="affiliation">
+										<span class="marker" aria-hidden="true">
+											<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--red)" stroke-width="2.5">
+												<line x1="6" y1="6" x2="18" y2="18"></line>
+												<line x1="18" y1="6" x2="6" y2="18"></line>
+											</svg>
+										</span>
+										<span class="label">Exit-Strategy</span>
+									</div>
+									<div class="affiliation alliance">
+										<span class="marker" aria-hidden="true">
+											<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--amber)" stroke-width="2">
+												<circle cx="12" cy="12" r="9"></circle>
+												<path d="M12 3v18M3 12h18"></path>
+											</svg>
+										</span>
+										<span class="label">Unchained Alliance</span>
+									</div>
+								</div>
+							</div>
+							<div class="card-footer">
+								<span class="token-status" data-state="active" title="Refresh token expires 2026-08-14">
+									<span class="dot" aria-hidden="true"></span>
+									<span>token active</span>
+								</span>
+							</div>
+						</article>
+
+						<!-- Non-main character with actions, active token. -->
+						<article class="card" data-name="Artemisia de'Halicarnass">
+							<div class="card-top">
+								<img
+									class="portrait"
+									src="https://images.evetech.net/characters/91316135/portrait?size=128"
+									alt=""
+								/>
+								<div class="info">
+									<div class="name-row">
+										<span class="name">Artemisia de'Halicarnass</span>
+									</div>
+									<div class="affiliation">
+										<span class="marker" aria-hidden="true">
+											<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--amber)" stroke-width="2">
+												<polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5"></polygon>
+											</svg>
+										</span>
+										<span class="label">Space Construction and Research</span>
+									</div>
+								</div>
+							</div>
+							<div class="card-footer">
+								<span class="token-status" data-state="active" title="Refresh token expires 2026-08-02">
+									<span class="dot" aria-hidden="true"></span>
+									<span>token active</span>
+								</span>
+								<div class="actions">
+									<button type="button">set main</button>
+									<button type="button" class="danger">remove</button>
+								</div>
+							</div>
+						</article>
+
+						<!-- Non-main character with expired token. -->
+						<article class="card" data-name="Mira Sentinel">
+							<div class="card-top">
+								<img
+									class="portrait"
+									src="https://images.evetech.net/characters/95465499/portrait?size=128"
+									alt=""
+								/>
+								<div class="info">
+									<div class="name-row">
+										<span class="name">Mira Sentinel</span>
+									</div>
+									<div class="affiliation">
+										<span class="marker" aria-hidden="true">
+											<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--red)" stroke-width="2.5">
+												<line x1="6" y1="6" x2="18" y2="18"></line>
+												<line x1="18" y1="6" x2="6" y2="18"></line>
+											</svg>
+										</span>
+										<span class="label">Hard Knocks Inc.</span>
+									</div>
+									<div class="affiliation alliance">
+										<span class="marker" aria-hidden="true">
+											<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--amber)" stroke-width="2">
+												<circle cx="12" cy="12" r="9"></circle>
+												<path d="M12 3v18M3 12h18"></path>
+											</svg>
+										</span>
+										<span class="label">Hard Knocks Citizens</span>
+									</div>
+								</div>
+							</div>
+							<div class="card-footer">
+								<span class="token-status" data-state="expired" title="Refresh token expired 2026-04-29">
+									<span class="dot" aria-hidden="true"></span>
+									<span>token expired</span>
+								</span>
+								<div class="actions">
+									<a class="reauth" href="/auth/characters/add?return_to=/characters">re-auth</a>
+									<button type="button" class="danger">remove</button>
+								</div>
+							</div>
+						</article>
+
+						<!-- Filler cards so the grid is reviewable at scale. -->
+						<article class="card" data-name="Jaakko Volk">
+							<div class="card-top">
+								<img
+									class="portrait"
+									src="https://images.evetech.net/characters/97411793/portrait?size=128"
+									alt=""
+								/>
+								<div class="info">
+									<div class="name-row">
+										<span class="name">Jaakko Volk</span>
+									</div>
+									<div class="affiliation">
+										<span class="marker" aria-hidden="true">
+											<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--red)" stroke-width="2.5">
+												<line x1="6" y1="6" x2="18" y2="18"></line>
+												<line x1="18" y1="6" x2="6" y2="18"></line>
+											</svg>
+										</span>
+										<span class="label">Lazerhawks</span>
+									</div>
+								</div>
+							</div>
+							<div class="card-footer">
+								<span class="token-status" data-state="active" title="Refresh token expires 2026-07-11">
+									<span class="dot" aria-hidden="true"></span>
+									<span>token active</span>
+								</span>
+								<div class="actions">
+									<button type="button">set main</button>
+									<button type="button" class="danger">remove</button>
+								</div>
+							</div>
+						</article>
+
+						<article class="card" data-name="Korvin Locke">
+							<div class="card-top">
+								<img
+									class="portrait"
+									src="https://images.evetech.net/characters/93847264/portrait?size=128"
+									alt=""
+								/>
+								<div class="info">
+									<div class="name-row">
+										<span class="name">Korvin Locke</span>
+									</div>
+									<div class="affiliation">
+										<span class="marker" aria-hidden="true">
+											<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--amber)" stroke-width="2">
+												<polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5"></polygon>
+											</svg>
+										</span>
+										<span class="label">Wormhole Holders</span>
+									</div>
+									<div class="affiliation alliance">
+										<span class="marker" aria-hidden="true">
+											<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--amber)" stroke-width="2">
+												<circle cx="12" cy="12" r="9"></circle>
+												<path d="M12 3v18M3 12h18"></path>
+											</svg>
+										</span>
+										<span class="label">No Vacancies.</span>
+									</div>
+								</div>
+							</div>
+							<div class="card-footer">
+								<span class="token-status" data-state="active" title="Refresh token expires 2026-06-20">
+									<span class="dot" aria-hidden="true"></span>
+									<span>token active</span>
+								</span>
+								<div class="actions">
+									<button type="button">set main</button>
+									<button type="button" class="danger">remove</button>
+								</div>
+							</div>
+						</article>
+
+						<article class="card" data-name="Sable Indi">
+							<div class="card-top">
+								<img
+									class="portrait"
+									src="https://images.evetech.net/characters/96120048/portrait?size=128"
+									alt=""
+								/>
+								<div class="info">
+									<div class="name-row">
+										<span class="name">Sable Indi</span>
+									</div>
+									<div class="affiliation">
+										<span class="marker" aria-hidden="true">
+											<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--red)" stroke-width="2.5">
+												<line x1="6" y1="6" x2="18" y2="18"></line>
+												<line x1="18" y1="6" x2="6" y2="18"></line>
+											</svg>
+										</span>
+										<span class="label">Pandemic Horde Inc.</span>
+									</div>
+									<div class="affiliation alliance">
+										<span class="marker" aria-hidden="true">
+											<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--amber)" stroke-width="2">
+												<circle cx="12" cy="12" r="9"></circle>
+												<path d="M12 3v18M3 12h18"></path>
+											</svg>
+										</span>
+										<span class="label">Pandemic Horde</span>
+									</div>
+								</div>
+							</div>
+							<div class="card-footer">
+								<span class="token-status" data-state="expired" title="Refresh token expired 2026-03-12">
+									<span class="dot" aria-hidden="true"></span>
+									<span>token expired</span>
+								</span>
+								<div class="actions">
+									<a class="reauth" href="/auth/characters/add?return_to=/characters">re-auth</a>
+									<button type="button" class="danger">remove</button>
+								</div>
+							</div>
+						</article>
+					</div>
+
+					<!-- Divider + DANGER ZONE. -->
+					<hr class="divider" />
+
+					<h2 class="danger-zone-title">DANGER ZONE</h2>
+					<button type="button" class="danger-btn">delete account</button>
+
+					<!--
+						Example error state (design.md §14): when a `remove` action fails
+						the inline error is anchored directly below the card it came from.
+						Re-rendered here so the visual treatment is locked in.
+					-->
+					<p class="example-label">Example error state</p>
+					<div class="example-grid">
+						<article class="card" data-name="Artemisia de'Halicarnass">
+							<div class="card-top">
+								<img
+									class="portrait"
+									src="https://images.evetech.net/characters/91316135/portrait?size=128"
+									alt=""
+								/>
+								<div class="info">
+									<div class="name-row">
+										<span class="name">Artemisia de'Halicarnass</span>
+									</div>
+									<div class="affiliation">
+										<span class="marker" aria-hidden="true">
+											<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--amber)" stroke-width="2">
+												<polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5"></polygon>
+											</svg>
+										</span>
+										<span class="label">Space Construction and Research</span>
+									</div>
+								</div>
+							</div>
+							<div class="card-footer">
+								<span class="token-status" data-state="active" title="Refresh token expires 2026-08-02">
+									<span class="dot" aria-hidden="true"></span>
+									<span>token active</span>
+								</span>
+								<div class="actions">
+									<button type="button">set main</button>
+									<button type="button" class="danger">remove</button>
+								</div>
+							</div>
+							<p class="inline-error" role="alert" data-error-code="cannot_remove_main">
+								Couldn't remove character: cannot_remove_main
+							</p>
+						</article>
+					</div>
+				</div>
+			</main>
+		</div>
+
+		<script>
+			(function () {
+				const input = document.getElementById("character-search");
+				const grid = document.getElementById("character-grid");
+				if (!input || !grid) return;
+
+				const cards = Array.from(grid.querySelectorAll(".card[data-name]"));
+
+				input.addEventListener("input", () => {
+					const q = input.value.trim().toLowerCase();
+					let visible = 0;
+					for (const card of cards) {
+						const name = (card.getAttribute("data-name") || "").toLowerCase();
+						const match = q === "" || name.includes(q);
+						card.style.display = match ? "" : "none";
+						if (match) visible++;
+					}
+					grid.dataset.empty = visible === 0 ? "true" : "false";
+				});
+			})();
+		</script>
+	</body>
+</html>
