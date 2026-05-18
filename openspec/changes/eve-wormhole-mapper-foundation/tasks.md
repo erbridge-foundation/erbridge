@@ -17,7 +17,7 @@ A previous Sonnet session implemented §2b but introduced two `rust-rest-api` sk
 
 2. **Conflict detection MUST match on a typed `DbError` variant, not on `e.to_string().contains("unique")`.** String-matching SQL error messages is fragile and was explicitly fixed. The `DbError::UniqueViolation { constraint }` variant in `src/db/mod.rs` is the canonical pattern; `sqlx::Error` already converts into it via the `From` impl in the same file. New DB functions that can hit a unique constraint SHOULD return `Result<_, DbError>` and let the conversion handle the mapping.
 
-A third class of issue — missing `backend/tests/` scaffolding (integration + HURL per the `rust-rest-api` skill) — has not yet been addressed and is still open. It will be picked up by a future change; do NOT bundle it into §2c work. Each new handler added under §2c SHOULD still have its `#[cfg(test)]` unit tests per the skill's coverage rules.
+A third class of issue — missing `backend/tests/` scaffolding (integration + HURL per the `rust-rest-api` skill) — has since been addressed: `backend/tests/openapi_strict.rs` and `backend/tests/api_keys.rs` cover integration via `#[sqlx::test]`, and `backend/tests/hurl/` holds live HTTP contract tests (`me.hurl`, `keys.hurl`, `characters.hurl`, `account.hurl`). New handlers SHALL extend this scaffolding rather than ship without integration coverage.
 
 Mechanical enforcement of these rules (clippy + CI) is queued as the `backend-enforcement-layer` change — see `openspec/changes/backend-enforcement-layer/`. Until it lands, the gate is review + this notice.
 
