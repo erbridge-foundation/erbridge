@@ -123,7 +123,9 @@ mod tests {
     #[sqlx::test]
     async fn refresh_advances_last_seen_and_expires_at(pool: PgPool) {
         let account_id = make_account(&pool).await;
-        insert(&pool, "sess1", account_id, None, false).await.unwrap();
+        insert(&pool, "sess1", account_id, None, false)
+            .await
+            .unwrap();
 
         // Manually rewind both timestamps so the refresh has somewhere to advance to.
         sqlx::query!(
@@ -154,7 +156,9 @@ mod tests {
     #[sqlx::test]
     async fn refresh_of_expired_row_returns_none_and_leaves_row_untouched(pool: PgPool) {
         let account_id = make_account(&pool).await;
-        insert(&pool, "sess1", account_id, None, false).await.unwrap();
+        insert(&pool, "sess1", account_id, None, false)
+            .await
+            .unwrap();
 
         sqlx::query!(
             "UPDATE session SET expires_at = now() - interval '1 second' WHERE session_id = $1",
@@ -196,7 +200,9 @@ mod tests {
     #[sqlx::test]
     async fn delete_removes_row(pool: PgPool) {
         let account_id = make_account(&pool).await;
-        insert(&pool, "sess1", account_id, None, false).await.unwrap();
+        insert(&pool, "sess1", account_id, None, false)
+            .await
+            .unwrap();
         delete(&pool, "sess1").await.unwrap();
         assert!(refresh_and_get(&pool, "sess1").await.unwrap().is_none());
     }
@@ -204,8 +210,12 @@ mod tests {
     #[sqlx::test]
     async fn list_ids_for_account_excludes_expired(pool: PgPool) {
         let account_id = make_account(&pool).await;
-        insert(&pool, "active", account_id, None, false).await.unwrap();
-        insert(&pool, "expired", account_id, None, false).await.unwrap();
+        insert(&pool, "active", account_id, None, false)
+            .await
+            .unwrap();
+        insert(&pool, "expired", account_id, None, false)
+            .await
+            .unwrap();
         sqlx::query!(
             "UPDATE session SET expires_at = now() - interval '1 second' WHERE session_id = $1",
             "expired",
@@ -230,14 +240,21 @@ mod tests {
         assert_eq!(removed, 2);
 
         assert!(list_ids_for_account(&pool, a).await.unwrap().is_empty());
-        assert_eq!(list_ids_for_account(&pool, b).await.unwrap(), vec!["b1".to_string()]);
+        assert_eq!(
+            list_ids_for_account(&pool, b).await.unwrap(),
+            vec!["b1".to_string()]
+        );
     }
 
     #[sqlx::test]
     async fn delete_expired_removes_only_expired(pool: PgPool) {
         let account_id = make_account(&pool).await;
-        insert(&pool, "active", account_id, None, false).await.unwrap();
-        insert(&pool, "expired", account_id, None, false).await.unwrap();
+        insert(&pool, "active", account_id, None, false)
+            .await
+            .unwrap();
+        insert(&pool, "expired", account_id, None, false)
+            .await
+            .unwrap();
         sqlx::query!(
             "UPDATE session SET expires_at = now() - interval '1 second' WHERE session_id = $1",
             "expired",

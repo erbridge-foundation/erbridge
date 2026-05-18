@@ -53,8 +53,14 @@ impl SessionStore {
         csrf_state: Option<&str>,
         add_character_mode: bool,
     ) -> Result<()> {
-        db_sessions::insert(&self.pool, session_id, account_id, csrf_state, add_character_mode)
-            .await
+        db_sessions::insert(
+            &self.pool,
+            session_id,
+            account_id,
+            csrf_state,
+            add_character_mode,
+        )
+        .await
     }
 
     /// Reads the session for `session_id`, atomically advancing `last_seen_at`

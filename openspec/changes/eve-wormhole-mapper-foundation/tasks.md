@@ -19,7 +19,7 @@ A previous Sonnet session implemented §2b but introduced two `rust-rest-api` sk
 
 A third class of issue — missing `backend/tests/` scaffolding (integration + HURL per the `rust-rest-api` skill) — has since been addressed: `backend/tests/openapi_strict.rs` and `backend/tests/api_keys.rs` cover integration via `#[sqlx::test]`, and `backend/tests/hurl/` holds live HTTP contract tests (`me.hurl`, `keys.hurl`, `characters.hurl`, `account.hurl`). New handlers SHALL extend this scaffolding rather than ship without integration coverage.
 
-Mechanical enforcement of these rules (clippy + CI) is queued as the `backend-enforcement-layer` change — see `openspec/changes/backend-enforcement-layer/`. Until it lands, the gate is review + this notice.
+The CI quality gate (fmt / clippy / sqlx-prepare-check / test on every backend push and PR) shipped via the `backend-enforcement-layer` change — see `openspec/changes/archive/2026-05-18-backend-enforcement-layer/` for the original proposal and the three deferred options (module restructure, dylint, workspace split) for the mechanical *layering* gate. The layering rules remain review-enforced until that future change lands; default clippy lints catch a non-trivial fraction of drift in the meantime.
 
 ## 1. Repository Scaffold
 

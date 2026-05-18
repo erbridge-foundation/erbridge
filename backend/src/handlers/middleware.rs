@@ -91,8 +91,8 @@ where
         // slot installed by `refresh_session_cookie`. If the slot is absent
         // (e.g. unit test with no wrapping middleware) the refresh is
         // silently a no-op — the auth itself still succeeds.
-        let fresh_jwt = crypto::sign_session_jwt(&session_id, &key_bytes)
-            .map_err(AppError::Internal)?;
+        let fresh_jwt =
+            crypto::sign_session_jwt(&session_id, &key_bytes).map_err(AppError::Internal)?;
         if let Some(slot) = parts.extensions.get::<RefreshedJwtSlot>() {
             #[allow(clippy::unwrap_used)]
             {

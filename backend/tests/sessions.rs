@@ -124,7 +124,10 @@ async fn session_survives_backend_restart(pool: PgPool) {
 
     assert_eq!(resp.status(), StatusCode::OK);
     let body = json_body(resp).await;
-    assert_eq!(body["data"]["account"]["id"].as_str().unwrap(), account_id.to_string());
+    assert_eq!(
+        body["data"]["account"]["id"].as_str().unwrap(),
+        account_id.to_string()
+    );
 }
 
 // ── 2. Expired row is rejected with 401 ───────────────────────────────────────

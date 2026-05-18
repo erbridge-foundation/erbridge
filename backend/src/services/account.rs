@@ -222,10 +222,7 @@ mod tests {
     fn token_status_active_when_expires_in_future() {
         let now = Utc::now();
         let expires = now + Duration::days(1);
-        assert_eq!(
-            derive_token_status(Some(expires), now),
-            TokenStatus::Active
-        );
+        assert_eq!(derive_token_status(Some(expires), now), TokenStatus::Active);
     }
 
     #[test]

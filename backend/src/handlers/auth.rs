@@ -306,7 +306,8 @@ pub async fn extract_session(
     let Some(jwt) = cookie::extract_session_jwt(headers) else {
         return Ok(None);
     };
-    let key = crypto::jwt_signing_key(&state.config.encryption_secret).map_err(AppError::Internal)?;
+    let key =
+        crypto::jwt_signing_key(&state.config.encryption_secret).map_err(AppError::Internal)?;
     let Ok(session_id) = crypto::verify_session_jwt(&jwt, &key) else {
         return Ok(None);
     };
