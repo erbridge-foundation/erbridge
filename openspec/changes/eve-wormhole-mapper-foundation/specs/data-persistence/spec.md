@@ -86,13 +86,16 @@ CREATE TABLE eve_character (
     eve_character_id        BIGINT      NOT NULL UNIQUE,
     name                    TEXT        NOT NULL,
     corporation_id          BIGINT      NOT NULL,
+    corporation_name        TEXT        NOT NULL,
     alliance_id             BIGINT,
+    alliance_name           TEXT,
     is_main                 BOOLEAN     NOT NULL DEFAULT false,
     is_online               BOOLEAN,
     esi_client_id           TEXT,
     encrypted_access_token  BYTEA,
     encrypted_refresh_token BYTEA,
-    esi_token_expires_at    TIMESTAMPTZ,
+    access_token_expires_at TIMESTAMPTZ,
+    scopes                  TEXT[]      NOT NULL DEFAULT '{}',
     created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -106,12 +109,13 @@ CREATE INDEX eve_character_account_id_idx ON eve_character (account_id);
 
 - `account_id` is NULLABLE. A NULL value means the row is an **orphan**: a public-info cache populated by flows like map-ACL pre-claim, before any pilot has signed in as this character. Such rows have NULL token columns.
 - `eve_character_id` is the BIGINT EVE character ID from ESI; `UNIQUE` prevents duplicates.
-- `name`, `corporation_id`, `alliance_id` mirror current ESI public info. `corporation_id` is NOT NULL (all EVE characters belong to a corp); `alliance_id` is NULL when the corp is not in an alliance.
+- `name`, `corporation_id`, `corporation_name`, `alliance_id`, `alliance_name` mirror ESI public info **at the time the row was last written**. `corporation_id` and `corporation_name` are NOT NULL (all EVE characters belong to a corp); `alliance_id` and `alliance_name` are NULL together when the corp is not in an alliance. These columns are **denormalised** so that `GET /api/v1/me` is a pure DB read; they are refreshed on every SSO callback (login, add-character, re-auth) and by a future background job that polls active accounts, neither of which is on the request hot path.
 - `is_main` marks one character per account as primary. The partial unique index permits any number of `false`/NULL rows but at most one `true` per `account_id`.
 - `is_online` mirrors `esi-location.read_online.v1`; NULL until first poll.
 - `esi_client_id` records which ESI client ID issued the stored tokens (for future credential rotation).
 - `encrypted_access_token` and `encrypted_refresh_token` are AES-256-GCM ciphertexts (nonce + ciphertext + auth tag); both NULL for orphans.
-- `esi_token_expires_at` records the access token's expiry.
+- `access_token_expires_at` records the **access** token's expiry (typically ~20 minutes after issue). It is an implementation detail used by a future refresh-on-demand flow to decide whether to refresh before the next ESI call; it is NOT the refresh token's expiry, and it does NOT determine `token_status` in `GET /api/v1/me` (per account-management).
+- `scopes` is the array of ESI scope identifiers the user granted during SSO, parsed from the access-token JWT's `scp` claim. Stored as a `TEXT[]` (Postgres array) so subset checks (`required ⊆ granted`) are a single SQL operation when a future change introduces required-scope-set drift detection. `NOT NULL DEFAULT '{}'` — orphan rows have an empty array, which correctly means "no scopes granted yet". The current foundation change does not read this column from any handler; it exists so the future capability that does (e.g. detecting `missing_scopes` for `token_status`) does not require a migration.
 
 #### Scenario: New character linked to a session adds a row
 - **WHEN** a user completes a login or add-character flow with an `eve_character_id` not present in `eve_character`
@@ -119,7 +123,7 @@ CREATE INDEX eve_character_account_id_idx ON eve_character (account_id);
 
 #### Scenario: Re-login overwrites tokens on an existing row
 - **WHEN** a user completes any login flow with an `eve_character_id` already present in `eve_character` whose `account_id` matches the session's account (or is NULL — orphan claim)
-- **THEN** the existing row is updated: `encrypted_access_token`, `encrypted_refresh_token`, `esi_token_expires_at`, `esi_client_id`, refreshed `name` / `corporation_id` / `alliance_id`, and `updated_at`; `account_id` is set to the session's account if it was previously NULL
+- **THEN** the existing row is updated: `encrypted_access_token`, `encrypted_refresh_token`, `access_token_expires_at`, `esi_client_id`, `scopes`, refreshed `name` / `corporation_id` / `corporation_name` / `alliance_id` / `alliance_name`, and `updated_at`; `account_id` is set to the session's account if it was previously NULL
 
 #### Scenario: Orphan character is claimed on first login
 - **WHEN** an SSO login completes for an `eve_character_id` that already exists with `account_id = NULL`
@@ -199,7 +203,7 @@ Both ESI access tokens and refresh tokens SHALL be encrypted with AES-256-GCM us
 
 #### Scenario: Orphan rows have no token material
 - **WHEN** an `eve_character` row is created via an orphan flow (no associated session)
-- **THEN** `encrypted_access_token`, `encrypted_refresh_token`, `esi_token_expires_at`, `esi_client_id`, and `account_id` are all NULL
+- **THEN** `encrypted_access_token`, `encrypted_refresh_token`, `access_token_expires_at`, `esi_client_id`, and `account_id` are all NULL (and `scopes` is the empty array `'{}'`, the column default)
 
 ### Requirement: Postgres runs as a Compose service
 The `docker-compose.yml` SHALL include a `postgres` service using the official `postgres:16` image. The service SHALL use a named volume for `/var/lib/postgresql/data` so data persists across `docker compose down`. The `backend` service SHALL depend on `postgres` being healthy before it starts.

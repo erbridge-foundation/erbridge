@@ -4,7 +4,7 @@ All `/api/*` request and response bodies in this capability conform to the `api-
 
 ### Requirement: GET /api/v1/me returns the caller's account and characters
 
-`GET /api/v1/me` SHALL return the authenticated account's identity and the full list of `eve_character` rows belonging to it. The response SHALL NOT include any raw token material (`encrypted_access_token`, `encrypted_refresh_token`, `esi_token_expires_at`, `esi_client_id`). The response MAY include fields *derived* from those columns where the derivation does not reveal the underlying value — `token_status` (defined below) is such a derivation.
+`GET /api/v1/me` SHALL return the authenticated account's identity and the full list of `eve_character` rows belonging to it. The response SHALL NOT include any raw token material (`encrypted_access_token`, `encrypted_refresh_token`, `access_token_expires_at`, `esi_client_id`, `scopes`). The response MAY include fields *derived* from those columns where the derivation does not reveal the underlying value — `token_status` (defined below) is such a derivation.
 
 The `data` payload SHALL have the shape:
 
@@ -33,9 +33,11 @@ The `data` payload SHALL have the shape:
 }
 ```
 
-`portrait_url` SHALL be the EVE image server URL of the form `https://images.evetech.net/characters/<eve_character_id>/portrait?size=128`. `corporation_name` and `alliance_name` SHALL be fetched from ESI public-info endpoints; the backend MAY cache these lookups in process memory for the request lifetime.
+`portrait_url` SHALL be the EVE image server URL of the form `https://images.evetech.net/characters/<eve_character_id>/portrait?size=128`. `corporation_name` and `alliance_name` SHALL be read directly from the corresponding columns on the `eve_character` row; `GET /api/v1/me` SHALL NOT make any ESI calls. Those columns are populated and refreshed by the SSO callback (per the `eve-sso-auth` capability) and by a future background job; the displayed name therefore reflects the value at the time of the most recent write, not necessarily live ESI state. Accepting that staleness is a deliberate trade — `GET /api/v1/me` is called on every authenticated frontend page load and MUST be cheap.
 
-`token_status` SHALL be `"active"` when the row's `esi_token_expires_at > now()` and `"expired"` when `esi_token_expires_at` is in the past or NULL. It is a **string enum**, not a boolean; future scope-set or revocation states (e.g. `"missing_scopes"`) MAY be added without a breaking change. The raw `esi_token_expires_at` timestamp SHALL NOT be returned.
+`token_status` SHALL be `"active"` when the row's `encrypted_refresh_token IS NOT NULL` and `"expired"` when `encrypted_refresh_token IS NULL`. It is a **string enum**, not a boolean; future scope-set or revocation states (e.g. `"missing_scopes"` once required-scope-set drift detection lands, or a non-`"active"` state set by a future refresh-on-demand flow when ESI returns `invalid_grant`) MAY be added without a breaking change. Neither `access_token_expires_at` nor `scopes` SHALL be returned.
+
+**Why this rule, not the access-token expiry.** The access token's expiry (~20 minutes after login) is an implementation detail of the EVE SSO contract. Deriving `token_status` from it would flip every character to `"expired"` 20 minutes after every login even though the refresh token is still good, producing a noisy `re-auth` prompt the user does not need. The refresh token's usability is the real signal: while we hold one, we can transparently obtain a fresh access token; when we don't, the user must re-do SSO. Until a future change adds refresh-on-demand (which will NULL out `encrypted_refresh_token` on ESI `invalid_grant`), `token_status` will not surface refresh tokens that ESI has revoked server-side — the foundation change does not make ESI calls on the user's behalf, so a revoked refresh token has no user-visible consequence yet. This trade is documented in `design.md` Risks/Trade-offs.
 
 #### Scenario: Authenticated caller fetches their account
 - **WHEN** an authenticated caller `GET /api/v1/me`
@@ -43,14 +45,14 @@ The `data` payload SHALL have the shape:
 
 #### Scenario: Response excludes raw token material
 - **WHEN** `GET /api/v1/me` returns characters
-- **THEN** no element of `data.characters` contains `encrypted_access_token`, `encrypted_refresh_token`, `esi_token_expires_at`, or `esi_client_id`
+- **THEN** no element of `data.characters` contains `encrypted_access_token`, `encrypted_refresh_token`, `access_token_expires_at`, `esi_client_id`, or `scopes`
 
-#### Scenario: token_status reflects refresh-token expiry
-- **WHEN** a character row has `esi_token_expires_at > now()`
-- **THEN** that character's `token_status` is `"active"`
+#### Scenario: token_status is active when a refresh token is held
+- **WHEN** a character row has `encrypted_refresh_token IS NOT NULL`
+- **THEN** that character's `token_status` is `"active"`, regardless of the value of `access_token_expires_at`
 
-#### Scenario: token_status is expired when the refresh token has lapsed
-- **WHEN** a character row has `esi_token_expires_at` NULL or `<= now()`
+#### Scenario: token_status is expired when no refresh token is held
+- **WHEN** a character row has `encrypted_refresh_token IS NULL` (e.g. an orphan that has never been signed-in-as)
 - **THEN** that character's `token_status` is `"expired"`
 
 #### Scenario: Exactly one character is flagged main
@@ -64,6 +66,10 @@ The `data` payload SHALL have the shape:
 #### Scenario: Unauthenticated caller is rejected
 - **WHEN** a request to `GET /api/v1/me` has no session cookie and no valid bearer key
 - **THEN** the response is HTTP 401 with the standard error envelope
+
+#### Scenario: Handler makes no ESI calls
+- **WHEN** `GET /api/v1/me` is served
+- **THEN** the handler resolves `corporation_name` and `alliance_name` from `eve_character` columns only and makes zero outbound HTTPS requests to `esi.evetech.net` (or any ESI host) for the duration of the request
 
 ### Requirement: POST /api/v1/characters/:id/set-main promotes a character
 

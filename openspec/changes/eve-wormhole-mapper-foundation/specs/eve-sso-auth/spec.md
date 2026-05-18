@@ -34,14 +34,16 @@ The system SHALL redirect the browser to the EVE ESI authorization endpoint when
 - **THEN** the value is rejected during validation and the callback redirects to `/`
 
 ### Requirement: OAuth2 callback exchanges code and persists character
-The system SHALL handle `GET /auth/callback` by exchanging the authorization code for access and refresh tokens via the ESI token endpoint, parsing the JWT access token to extract `eve_character_id` and `name`, and fetching `corporation_id` / `alliance_id` from ESI public-info endpoints.
+The system SHALL handle `GET /auth/callback` by exchanging the authorization code for access and refresh tokens via the ESI token endpoint, parsing the JWT access token to extract `eve_character_id`, `name`, and `scp` (the granted ESI scopes), and fetching `corporation_id` / `corporation_name` / `alliance_id` / `alliance_name` from ESI public-info endpoints. The corp and alliance **names** are persisted alongside the IDs on the `eve_character` row so that downstream reads (notably `GET /api/v1/me`) do not need to call ESI.
+
+The `scp` claim in the EVE access-token JWT MAY be either a single string (when one scope was granted) or an array of strings (when multiple scopes were granted). Implementations SHALL accept both shapes and normalise to a `TEXT[]` for persistence in `eve_character.scopes`.
 
 On success the backend SHALL:
 
 1. Look up `eve_character` by `eve_character_id`:
-   - **If no row exists**: create a new `account` row (when not in add-character mode) or use the current session's `account_id` (add-character mode); insert a new `eve_character` row with `account_id` set, encrypted access and refresh tokens, `esi_token_expires_at`, `esi_client_id`, and the public-info fields.
-   - **If an orphan row exists** (`account_id IS NULL`): claim it by setting `account_id` to the resolved account, writing the encrypted tokens, `esi_token_expires_at`, `esi_client_id`, and refreshing the public-info fields.
-   - **If a row exists with `account_id` set**: overwrite `encrypted_access_token`, `encrypted_refresh_token`, `esi_token_expires_at`, `esi_client_id`, refresh public-info fields, bump `updated_at`. The row's `account_id` is the session's account.
+   - **If no row exists**: create a new `account` row (when not in add-character mode) or use the current session's `account_id` (add-character mode); insert a new `eve_character` row with `account_id` set, encrypted access and refresh tokens, `access_token_expires_at`, `esi_client_id`, `scopes`, and the public-info fields.
+   - **If an orphan row exists** (`account_id IS NULL`): claim it by setting `account_id` to the resolved account, writing the encrypted tokens, `access_token_expires_at`, `esi_client_id`, `scopes`, and refreshing the public-info fields.
+   - **If a row exists with `account_id` set**: overwrite `encrypted_access_token`, `encrypted_refresh_token`, `access_token_expires_at`, `esi_client_id`, `scopes`, refresh public-info fields, bump `updated_at`. The row's `account_id` is the session's account.
 2. If the resolved account has no character flagged `is_main = TRUE` after the row is written/claimed (this is true for any account that just gained its first character, including via orphan-claim), the same transaction SHALL set `is_main = TRUE` on the just-written character. There SHALL always be exactly one main per account that has any characters.
 3. If the resolved `account.status` is `'soft_deleted'`, atomically reactivate it: `status = 'active'`, `delete_requested_at = NULL`.
 4. Establish or update a session: an in-memory entry keyed by session ID, pointing to the resolved `account_id`. The session entry does NOT hold token material; tokens live only in Postgres.
