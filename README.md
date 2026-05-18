@@ -1,5 +1,8 @@
 # E-R Bridge
 
+[![Build](https://github.com/erbridge-foundation/erbridge/actions/workflows/backend.yml/badge.svg)](https://github.com/erbridge-foundation/erbridge/actions/workflows/backend.yml)
+
+
 ---
 
 > **⚠️ Work in progress — not usable yet.**
