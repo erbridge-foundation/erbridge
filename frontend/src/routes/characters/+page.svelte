@@ -20,13 +20,19 @@
 	let formError = $derived(form as FormError | null);
 </script>
 
+<svelte:head>
+	<title>E-R Bridge — Characters</title>
+</svelte:head>
+
 <main class="body">
 	<div class="content">
 		<div class="page-header">
 			<h1>CHARACTERS</h1>
 			<div class="header-actions">
+				<!-- TODO: extract a SearchInput component on the second use. -->
 				<label class="search">
 					<svg
+						class="search-icon"
 						width="14"
 						height="14"
 						viewBox="0 0 24 24"
@@ -45,6 +51,27 @@
 						autocomplete="off"
 						bind:value={query}
 					/>
+					{#if query !== ''}
+						<button
+							type="button"
+							class="search-clear"
+							aria-label="Clear search"
+							onclick={() => (query = '')}
+						>
+							<svg
+								width="12"
+								height="12"
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								stroke-width="2.5"
+								aria-hidden="true"
+							>
+								<line x1="6" y1="6" x2="18" y2="18"></line>
+								<line x1="18" y1="6" x2="6" y2="18"></line>
+							</svg>
+						</button>
+					{/if}
 				</label>
 				<a class="btn" href="/auth/characters/add?return_to=/characters">+ add character</a>
 			</div>
@@ -181,7 +208,7 @@
 	}
 	.search input {
 		width: 100%;
-		padding: 8px 12px 8px 32px;
+		padding: 8px 32px 8px 32px;
 		background: var(--space-900);
 		border: 1px solid var(--space-700);
 		border-radius: 4px;
@@ -196,13 +223,48 @@
 		outline: none;
 		border-color: var(--sky);
 	}
-	.search svg {
+
+	/* Hide the browser-native cancel button on type=search so our custom X
+	   is the only one shown. */
+	.search input::-webkit-search-cancel-button,
+	.search input::-webkit-search-decoration {
+		appearance: none;
+		-webkit-appearance: none;
+	}
+
+	.search-icon {
 		position: absolute;
 		left: 10px;
 		top: 50%;
 		transform: translateY(-50%);
 		color: var(--slate-500);
 		pointer-events: none;
+	}
+
+	.search-clear {
+		position: absolute;
+		right: 6px;
+		top: 50%;
+		transform: translateY(-50%);
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 20px;
+		height: 20px;
+		padding: 0;
+		background: transparent;
+		border: 0;
+		border-radius: 3px;
+		color: var(--slate-500);
+		cursor: pointer;
+	}
+	.search-clear:hover {
+		color: var(--slate-100);
+		background: var(--space-700);
+	}
+	.search-clear:focus-visible {
+		outline: 1px solid var(--sky);
+		outline-offset: 1px;
 	}
 
 	.btn {

@@ -1,3 +1,7 @@
+<svelte:head>
+	<title>E-R Bridge — Login</title>
+</svelte:head>
+
 <div class="card" role="main">
 	<svg
 		class="logo"

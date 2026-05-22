@@ -1,6 +1,5 @@
 <script lang="ts">
 	import '../app.css';
-	import favicon from '$lib/assets/favicon.svg';
 	import { page } from '$app/stores';
 	import GlobalNav from '$lib/components/GlobalNav.svelte';
 	import type { LayoutData } from './$types';
@@ -9,10 +8,6 @@
 
 	let isLoginRoute = $derived($page.url.pathname === '/login');
 </script>
-
-<svelte:head>
-	<link rel="icon" href={favicon} />
-</svelte:head>
 
 <div class="app" class:login={isLoginRoute}>
 	{#if !isLoginRoute}

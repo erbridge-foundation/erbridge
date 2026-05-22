@@ -1,3 +1,7 @@
+<svelte:head>
+	<title>E-R Bridge — Maps</title>
+</svelte:head>
+
 <main class="body">
 	<p class="placeholder">Map view coming soon.</p>
 </main>
