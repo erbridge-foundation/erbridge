@@ -319,7 +319,9 @@
 		background: var(--space-900);
 		border: 1px solid var(--space-700);
 		border-radius: 6px;
+		height: 100%;
 	}
+
 
 	.card-top {
 		display: flex;
@@ -418,6 +420,9 @@
 		gap: 12px;
 		padding-top: 8px;
 		border-top: 1px solid var(--space-700);
+		/* Push the footer to the bottom so cards in a row line up even when
+		   their content (alliance row, etc.) differs in height. */
+		margin-top: auto;
 	}
 
 	.actions {
