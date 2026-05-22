@@ -31,6 +31,38 @@ impl ErrorEnvelope {
     }
 }
 
+#[derive(Debug)]
+pub enum ConflictKind {
+    CannotRemoveLastCharacter,
+    CannotRemoveMain,
+    CannotRemoveLastServerAdmin,
+    ApiKeyNameAlreadyExists,
+}
+
+impl ConflictKind {
+    pub fn code(&self) -> &'static str {
+        match self {
+            ConflictKind::CannotRemoveLastCharacter => "cannot_remove_last_character",
+            ConflictKind::CannotRemoveMain => "cannot_remove_main",
+            ConflictKind::CannotRemoveLastServerAdmin => "cannot_remove_last_server_admin",
+            ConflictKind::ApiKeyNameAlreadyExists => "api_key_name_already_exists",
+        }
+    }
+
+    pub fn message(&self) -> &'static str {
+        match self {
+            ConflictKind::CannotRemoveLastCharacter => {
+                "Cannot remove the last character on this account"
+            }
+            ConflictKind::CannotRemoveMain => "Cannot remove the main character",
+            ConflictKind::CannotRemoveLastServerAdmin => {
+                "Cannot remove the last server administrator; promote another admin first"
+            }
+            ConflictKind::ApiKeyNameAlreadyExists => "A key with this name already exists",
+        }
+    }
+}
+
 #[derive(thiserror::Error, Debug)]
 pub enum AppError {
     #[error("unauthorized")]
@@ -45,8 +77,8 @@ pub enum AppError {
     #[error("not found")]
     NotFound,
 
-    #[error("conflict: {0}")]
-    Conflict(String),
+    #[error("conflict: {0:?}")]
+    Conflict(ConflictKind),
 
     #[error("bad request: {0}")]
     BadRequest(String),
@@ -81,7 +113,11 @@ impl IntoResponse for AppError {
                 "not_found",
                 "Resource not found".to_string(),
             ),
-            AppError::Conflict(msg) => (StatusCode::CONFLICT, "conflict", msg.clone()),
+            AppError::Conflict(kind) => (
+                StatusCode::CONFLICT,
+                kind.code(),
+                kind.message().to_string(),
+            ),
             AppError::BadRequest(msg) => (StatusCode::BAD_REQUEST, "bad_request", msg.clone()),
             AppError::BadGateway(msg) => (StatusCode::BAD_GATEWAY, "bad_gateway", msg.clone()),
             AppError::Internal(e) => {
@@ -134,7 +170,7 @@ mod tests {
     #[test]
     fn conflict_maps_to_409() {
         assert_eq!(
-            status(AppError::Conflict("test".to_string())),
+            status(AppError::Conflict(ConflictKind::CannotRemoveMain)),
             StatusCode::CONFLICT
         );
     }

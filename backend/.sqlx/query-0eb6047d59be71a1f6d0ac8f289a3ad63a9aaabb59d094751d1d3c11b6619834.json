@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO account (is_server_admin)\n         VALUES (NOT EXISTS (SELECT 1 FROM account))\n         RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "0eb6047d59be71a1f6d0ac8f289a3ad63a9aaabb59d094751d1d3c11b6619834"
+}

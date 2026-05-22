@@ -94,12 +94,29 @@ pub async fn resolve_or_create(
         return Ok(account_id);
     }
 
-    // No account found — create a new one.
-    let row = sqlx::query!("INSERT INTO account DEFAULT VALUES RETURNING id")
-        .fetch_one(&mut **tx)
-        .await
-        .context("failed to create account")?;
+    // No account found — create a new one. The very first account on a server
+    // is promoted to server admin so there is always at least one bootstrap
+    // administrator.
+    let row = sqlx::query!(
+        "INSERT INTO account (is_server_admin)
+         VALUES (NOT EXISTS (SELECT 1 FROM account))
+         RETURNING id"
+    )
+    .fetch_one(&mut **tx)
+    .await
+    .context("failed to create account")?;
     Ok(row.id)
+}
+
+pub async fn count_server_admins(pool: &PgPool) -> Result<i64> {
+    let row = sqlx::query!(
+        "SELECT COUNT(*) AS \"count!\" FROM account
+         WHERE is_server_admin = TRUE AND status = 'active'"
+    )
+    .fetch_one(pool)
+    .await
+    .context("failed to count server admins")?;
+    Ok(row.count)
 }
 
 #[cfg(test)]
@@ -158,6 +175,56 @@ mod tests {
 
         let account = get_account(&pool, id).await.unwrap().unwrap();
         assert_eq!(account.status, "active");
+    }
+
+    #[sqlx::test]
+    async fn resolve_or_create_promotes_first_account_to_server_admin(pool: PgPool) {
+        let mut tx = pool.begin().await.unwrap();
+        let id = resolve_or_create(&mut tx, None, 1001).await.unwrap();
+        tx.commit().await.unwrap();
+
+        let account = get_account(&pool, id).await.unwrap().unwrap();
+        assert!(account.is_server_admin);
+    }
+
+    #[sqlx::test]
+    async fn resolve_or_create_does_not_promote_subsequent_accounts(pool: PgPool) {
+        let mut tx = pool.begin().await.unwrap();
+        let _first = resolve_or_create(&mut tx, None, 1001).await.unwrap();
+        let second = resolve_or_create(&mut tx, None, 1002).await.unwrap();
+        tx.commit().await.unwrap();
+
+        let account = get_account(&pool, second).await.unwrap().unwrap();
+        assert!(!account.is_server_admin);
+    }
+
+    #[sqlx::test]
+    async fn resolve_or_create_skips_bootstrap_when_soft_deleted_admin_exists(pool: PgPool) {
+        let mut tx = pool.begin().await.unwrap();
+        let first = resolve_or_create(&mut tx, None, 1001).await.unwrap();
+        tx.commit().await.unwrap();
+
+        soft_delete(&pool, first).await.unwrap();
+
+        let mut tx = pool.begin().await.unwrap();
+        let second = resolve_or_create(&mut tx, None, 1002).await.unwrap();
+        tx.commit().await.unwrap();
+
+        let account = get_account(&pool, second).await.unwrap().unwrap();
+        assert!(!account.is_server_admin);
+    }
+
+    #[sqlx::test]
+    async fn count_server_admins_counts_only_active_admins(pool: PgPool) {
+        let mut tx = pool.begin().await.unwrap();
+        let first = resolve_or_create(&mut tx, None, 1001).await.unwrap();
+        let _second = resolve_or_create(&mut tx, None, 1002).await.unwrap();
+        tx.commit().await.unwrap();
+
+        assert_eq!(count_server_admins(&pool).await.unwrap(), 1);
+
+        soft_delete(&pool, first).await.unwrap();
+        assert_eq!(count_server_admins(&pool).await.unwrap(), 0);
     }
 
     #[sqlx::test]

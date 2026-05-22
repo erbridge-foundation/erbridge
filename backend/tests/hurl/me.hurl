@@ -1,12 +1,9 @@
 # GET /api/v1/me
 #
 # Run with:
-#   hurl --test --variable base_url=http://localhost:3000 \
-#               --variable session=<jwt-from-cookie> \
+#   hurl --test --variable base_url=http://localhost:5000 \
+#               --secret    erb_api_key=$ERB_API_KEY \
 #               me.hurl
-#
-# The session JWT is the value of the `session` cookie issued after SSO login.
-# Extract it from browser devtools (Application → Cookies → session).
 
 # ── 1. Unauthenticated → 401 ─────────────────────────────────────────────────
 
@@ -18,10 +15,10 @@ jsonpath "$.error.code" == "unauthenticated"
 jsonpath "$.error.message" isString
 jsonpath "$.data" not exists
 
-# ── 2. Authenticated via session cookie → 200 with expected shape ─────────────
+# ── 2. Authenticated via API key → 200 with expected shape ───────────────────
 
 GET {{base_url}}/api/v1/me
-Cookie: session={{session}}
+Authorization: Bearer {{erb_api_key}}
 
 HTTP 200
 [Asserts]
@@ -43,6 +40,7 @@ jsonpath "$.data.characters[0].token_status" matches "^(active|expired)$"
 # Sensitive fields must be absent
 jsonpath "$.data.characters[0].encrypted_access_token" not exists
 jsonpath "$.data.characters[0].encrypted_refresh_token" not exists
+jsonpath "$.data.characters[0].access_token_expires_at" not exists
 jsonpath "$.data.characters[0].esi_token_expires_at" not exists
 jsonpath "$.data.characters[0].esi_client_id" not exists
 # Envelope: no extraneous top-level keys

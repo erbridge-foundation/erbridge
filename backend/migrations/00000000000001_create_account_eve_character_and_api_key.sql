@@ -17,13 +17,16 @@ CREATE TABLE eve_character (
     eve_character_id        BIGINT      NOT NULL UNIQUE,
     name                    TEXT        NOT NULL,
     corporation_id          BIGINT      NOT NULL,
+    corporation_name        TEXT        NOT NULL,
     alliance_id             BIGINT,
+    alliance_name           TEXT,
     is_main                 BOOLEAN     NOT NULL DEFAULT false,
     is_online               BOOLEAN,
     esi_client_id           TEXT,
     encrypted_access_token  BYTEA,
     encrypted_refresh_token BYTEA,
-    esi_token_expires_at    TIMESTAMPTZ,
+    access_token_expires_at TIMESTAMPTZ,
+    scopes                  TEXT[]      NOT NULL DEFAULT '{}',
     created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 );

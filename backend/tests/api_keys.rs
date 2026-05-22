@@ -59,7 +59,7 @@ fn build_state(pool: PgPool) -> AppState {
         esi_metadata: test_esi_metadata(),
         session_store: SessionStore::new(pool),
         inflight_store: InflightStore::new(),
-        http_client: reqwest::Client::new(),
+        http_client: reqwest::Client::new().into(),
     }
 }
 

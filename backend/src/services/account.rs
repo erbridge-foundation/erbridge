@@ -1,12 +1,10 @@
-use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
     db::{accounts, characters},
     dto::account::TokenStatus,
-    error::AppError,
-    esi::public_info,
+    error::{AppError, ConflictKind},
 };
 
 pub struct CharacterInfo {
@@ -22,10 +20,31 @@ pub struct CharacterInfo {
     pub token_status: TokenStatus,
 }
 
-fn derive_token_status(expires_at: Option<DateTime<Utc>>, now: DateTime<Utc>) -> TokenStatus {
-    match expires_at {
-        Some(t) if t > now => TokenStatus::Active,
-        _ => TokenStatus::Expired,
+fn derive_token_status(has_refresh_token: bool) -> TokenStatus {
+    if has_refresh_token {
+        TokenStatus::Active
+    } else {
+        TokenStatus::Expired
+    }
+}
+
+fn character_to_info(c: characters::Character) -> CharacterInfo {
+    let portrait_url = format!(
+        "https://images.evetech.net/characters/{}/portrait?size=128",
+        c.eve_character_id
+    );
+    let token_status = derive_token_status(c.encrypted_refresh_token.is_some());
+    CharacterInfo {
+        id: c.id,
+        eve_character_id: c.eve_character_id,
+        name: c.name,
+        corporation_id: c.corporation_id,
+        corporation_name: c.corporation_name,
+        alliance_id: c.alliance_id,
+        alliance_name: c.alliance_name,
+        is_main: c.is_main,
+        portrait_url,
+        token_status,
     }
 }
 
@@ -34,11 +53,7 @@ pub struct MeInfo {
     pub characters: Vec<CharacterInfo>,
 }
 
-pub async fn get_me(
-    pool: &PgPool,
-    http: &reqwest::Client,
-    account_id: Uuid,
-) -> Result<MeInfo, AppError> {
+pub async fn get_me(pool: &PgPool, account_id: Uuid) -> Result<MeInfo, AppError> {
     let account = accounts::get_account(pool, account_id)
         .await
         .map_err(AppError::Internal)?
@@ -48,52 +63,14 @@ pub async fn get_me(
         .await
         .map_err(AppError::Internal)?;
 
-    let now = Utc::now();
-    let mut character_infos = Vec::with_capacity(chars.len());
-    for c in chars {
-        let corporation_name = public_info::fetch_corporation_name(http, c.corporation_id)
-            .await
-            .map_err(AppError::Internal)?;
-
-        let alliance_name = match c.alliance_id {
-            Some(id) => Some(
-                public_info::fetch_alliance_name(http, id)
-                    .await
-                    .map_err(AppError::Internal)?,
-            ),
-            None => None,
-        };
-
-        let portrait_url = format!(
-            "https://images.evetech.net/characters/{}/portrait?size=128",
-            c.eve_character_id
-        );
-
-        let token_status = derive_token_status(c.esi_token_expires_at, now);
-
-        character_infos.push(CharacterInfo {
-            id: c.id,
-            eve_character_id: c.eve_character_id,
-            name: c.name,
-            corporation_id: c.corporation_id,
-            corporation_name,
-            alliance_id: c.alliance_id,
-            alliance_name,
-            is_main: c.is_main,
-            portrait_url,
-            token_status,
-        });
-    }
-
     Ok(MeInfo {
         account,
-        characters: character_infos,
+        characters: chars.into_iter().map(character_to_info).collect(),
     })
 }
 
 pub async fn set_main_character(
     pool: &PgPool,
-    http: &reqwest::Client,
     account_id: Uuid,
     character_id: Uuid,
 ) -> Result<CharacterInfo, AppError> {
@@ -118,7 +95,7 @@ pub async fn set_main_character(
         .await
         .map_err(|e| AppError::Internal(e.into()))?;
 
-    // Reload the updated character.
+    // Reload the updated character from DB — no ESI call needed.
     let chars = characters::list_for_account(pool, account_id)
         .await
         .map_err(AppError::Internal)?;
@@ -128,38 +105,31 @@ pub async fn set_main_character(
         .find(|c| c.id == character_id)
         .ok_or(AppError::NotFound)?;
 
-    let corporation_name = public_info::fetch_corporation_name(http, c.corporation_id)
+    Ok(character_to_info(c))
+}
+
+pub async fn delete_account(pool: &PgPool, account_id: Uuid) -> Result<(), AppError> {
+    let account = accounts::get_account(pool, account_id)
+        .await
+        .map_err(AppError::Internal)?
+        .ok_or(AppError::NotFound)?;
+
+    if account.is_server_admin {
+        let admin_count = accounts::count_server_admins(pool)
+            .await
+            .map_err(AppError::Internal)?;
+        if admin_count <= 1 {
+            return Err(AppError::Conflict(
+                ConflictKind::CannotRemoveLastServerAdmin,
+            ));
+        }
+    }
+
+    accounts::soft_delete(pool, account_id)
         .await
         .map_err(AppError::Internal)?;
 
-    let alliance_name = match c.alliance_id {
-        Some(id) => Some(
-            public_info::fetch_alliance_name(http, id)
-                .await
-                .map_err(AppError::Internal)?,
-        ),
-        None => None,
-    };
-
-    let portrait_url = format!(
-        "https://images.evetech.net/characters/{}/portrait?size=128",
-        c.eve_character_id
-    );
-
-    let token_status = derive_token_status(c.esi_token_expires_at, Utc::now());
-
-    Ok(CharacterInfo {
-        id: c.id,
-        eve_character_id: c.eve_character_id,
-        name: c.name,
-        corporation_id: c.corporation_id,
-        corporation_name,
-        alliance_id: c.alliance_id,
-        alliance_name,
-        is_main: c.is_main,
-        portrait_url,
-        token_status,
-    })
+    Ok(())
 }
 
 pub async fn delete_character(
@@ -185,13 +155,11 @@ pub async fn delete_character(
         .map_err(AppError::Internal)?;
 
     if count <= 1 {
-        return Err(AppError::Conflict(
-            "cannot_remove_last_character".to_string(),
-        ));
+        return Err(AppError::Conflict(ConflictKind::CannotRemoveLastCharacter));
     }
 
     if is_main {
-        return Err(AppError::Conflict("cannot_remove_main".to_string()));
+        return Err(AppError::Conflict(ConflictKind::CannotRemoveMain));
     }
 
     characters::delete_character(pool, character_id)
@@ -204,7 +172,6 @@ pub async fn delete_character(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Duration;
 
     #[test]
     fn portrait_url_format() {
@@ -219,32 +186,62 @@ mod tests {
     }
 
     #[test]
-    fn token_status_active_when_expires_in_future() {
-        let now = Utc::now();
-        let expires = now + Duration::days(1);
-        assert_eq!(derive_token_status(Some(expires), now), TokenStatus::Active);
+    fn token_status_active_when_has_refresh_token() {
+        assert_eq!(derive_token_status(true), TokenStatus::Active);
     }
 
     #[test]
-    fn token_status_expired_when_expires_in_past() {
-        let now = Utc::now();
-        let expires = now - Duration::days(1);
-        assert_eq!(
-            derive_token_status(Some(expires), now),
-            TokenStatus::Expired
-        );
+    fn token_status_expired_when_no_refresh_token() {
+        assert_eq!(derive_token_status(false), TokenStatus::Expired);
     }
 
-    #[test]
-    fn token_status_expired_when_null() {
-        let now = Utc::now();
-        assert_eq!(derive_token_status(None, now), TokenStatus::Expired);
+    #[sqlx::test]
+    async fn delete_account_blocks_last_server_admin(pool: PgPool) {
+        let mut tx = pool.begin().await.unwrap();
+        let admin_id = accounts::resolve_or_create(&mut tx, None, 1001).await.unwrap();
+        tx.commit().await.unwrap();
+
+        let err = delete_account(&pool, admin_id).await.unwrap_err();
+        assert!(matches!(
+            err,
+            AppError::Conflict(ConflictKind::CannotRemoveLastServerAdmin)
+        ));
+
+        let account = accounts::get_account(&pool, admin_id).await.unwrap().unwrap();
+        assert_eq!(account.status, "active");
     }
 
-    #[test]
-    fn token_status_expired_when_exactly_now() {
-        let now = Utc::now();
-        // Boundary: `t > now` is strict, so equality is expired.
-        assert_eq!(derive_token_status(Some(now), now), TokenStatus::Expired);
+    #[sqlx::test]
+    async fn delete_account_allows_admin_when_another_admin_exists(pool: PgPool) {
+        let mut tx = pool.begin().await.unwrap();
+        let first = accounts::resolve_or_create(&mut tx, None, 1001).await.unwrap();
+        let second = accounts::resolve_or_create(&mut tx, None, 1002).await.unwrap();
+        tx.commit().await.unwrap();
+
+        sqlx::query!(
+            "UPDATE account SET is_server_admin = TRUE WHERE id = $1",
+            second
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        delete_account(&pool, first).await.unwrap();
+
+        let account = accounts::get_account(&pool, first).await.unwrap().unwrap();
+        assert_eq!(account.status, "soft_deleted");
+    }
+
+    #[sqlx::test]
+    async fn delete_account_allows_non_admin(pool: PgPool) {
+        let mut tx = pool.begin().await.unwrap();
+        let _admin = accounts::resolve_or_create(&mut tx, None, 1001).await.unwrap();
+        let user = accounts::resolve_or_create(&mut tx, None, 1002).await.unwrap();
+        tx.commit().await.unwrap();
+
+        delete_account(&pool, user).await.unwrap();
+
+        let account = accounts::get_account(&pool, user).await.unwrap().unwrap();
+        assert_eq!(account.status, "soft_deleted");
     }
 }

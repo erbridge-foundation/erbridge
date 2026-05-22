@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
 use anyhow::Context;
+use reqwest_middleware::ClientBuilder;
+use reqwest_tracing::TracingMiddleware;
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
 use backend::{
@@ -21,12 +23,17 @@ async fn main() -> anyhow::Result<()> {
     let config = config::Config::from_env().context("failed to load configuration")?;
     let config = Arc::new(config);
 
-    let http_client = reqwest::Client::new();
+    let base_client = reqwest::Client::new();
 
     tracing::info!("fetching ESI discovery document");
-    let esi_metadata = esi::discover(&http_client)
+    let esi_metadata = esi::discover(&base_client)
         .await
         .context("failed to discover ESI metadata")?;
+
+    // RUST_LOG=erbridge=debug,reqwest_tracing=info to observe ESI call spans.
+    let http_client = ClientBuilder::new(base_client)
+        .with(TracingMiddleware::default())
+        .build();
     let esi_metadata = Arc::new(esi_metadata);
 
     tracing::info!("connecting to database and running migrations");

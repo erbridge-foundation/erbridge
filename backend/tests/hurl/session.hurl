@@ -5,9 +5,12 @@
 # lifetime tracks the server-side session row's `expires_at`.
 #
 # Run with:
-#   hurl --test --variable base_url=http://localhost:3000 \
+#   hurl --test --variable base_url=http://localhost:5000 \
 #               --variable session=<jwt-from-cookie> \
 #               session.hurl
+#
+# Note: this file intentionally uses a session cookie (not an API key) because
+# it is testing the cookie-reissue behaviour of the session middleware.
 
 # ── 1. Cookie-auth GET reissues the session cookie ────────────────────────────
 

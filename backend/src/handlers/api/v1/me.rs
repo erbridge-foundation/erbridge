@@ -24,7 +24,7 @@ pub async fn get_me(
     State(state): State<AppState>,
     AuthenticatedAccount(account_id): AuthenticatedAccount,
 ) -> Result<Json<ApiResponse<MeDto>>, AppError> {
-    let me = svc::get_me(&state.db, &state.http_client, account_id).await?;
+    let me = svc::get_me(&state.db, account_id).await?;
 
     let dto = MeDto {
         account: AccountDto::from(me.account),

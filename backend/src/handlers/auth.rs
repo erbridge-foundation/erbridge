@@ -86,6 +86,29 @@ struct TokenResponse {
 struct EsiJwtClaims {
     sub: String,
     name: String,
+    #[serde(default)]
+    scp: Scp,
+}
+
+/// EVE's `scp` claim is a single string when one scope is granted, or an array
+/// when multiple scopes are granted.
+#[derive(Deserialize, Default)]
+#[serde(untagged)]
+enum Scp {
+    #[default]
+    None,
+    One(String),
+    Many(Vec<String>),
+}
+
+impl Scp {
+    fn into_vec(self) -> Vec<String> {
+        match self {
+            Scp::None => vec![],
+            Scp::One(s) => vec![s],
+            Scp::Many(v) => v,
+        }
+    }
 }
 
 pub async fn callback(
@@ -140,6 +163,7 @@ pub async fn callback(
         .ok_or_else(|| AppError::BadGateway("unexpected ESI JWT sub format".to_string()))?;
 
     let character_name = claims.name;
+    let scopes = claims.scp.into_vec();
 
     // Fetch corporation and alliance IDs from ESI public info.
     let (corporation_id, alliance_id) =
@@ -147,8 +171,29 @@ pub async fn callback(
             .await
             .map_err(|e| AppError::BadGateway(format!("ESI public info error: {e}")))?;
 
+    // Fetch corp and (optionally) alliance names concurrently.
+    use crate::esi::public_info;
+    let corp_name_fut = public_info::fetch_corporation_name(&state.http_client, corporation_id);
+    let alliance_name = match alliance_id {
+        Some(aid) => {
+            let (corp_name, alliance_name) = tokio::try_join!(
+                corp_name_fut,
+                public_info::fetch_alliance_name(&state.http_client, aid)
+            )
+            .map_err(|e| AppError::BadGateway(format!("ESI public info error: {e}")))?;
+            (corp_name, Some(alliance_name))
+        }
+        None => {
+            let corp_name = corp_name_fut
+                .await
+                .map_err(|e| AppError::BadGateway(format!("ESI public info error: {e}")))?;
+            (corp_name, None)
+        }
+    };
+    let (corporation_name, alliance_name) = alliance_name;
+
     let encryption_key = crypto::token_encryption_key(&state.config.encryption_secret)?;
-    let expires_at = Utc::now() + Duration::seconds(token_resp.expires_in);
+    let access_token_expires_at = Utc::now() + Duration::seconds(token_resp.expires_in);
 
     // Single Postgres transaction composing the DB steps.
     let mut tx = state.db.begin().await.map_err(anyhow::Error::from)?;
@@ -164,11 +209,14 @@ pub async fn callback(
         eve_character_id,
         &character_name,
         corporation_id,
+        &corporation_name,
         alliance_id,
+        alliance_name.as_deref(),
         &state.config.esi_client_id,
         &token_resp.access_token,
         &token_resp.refresh_token,
-        expires_at,
+        access_token_expires_at,
+        &scopes,
         &encryption_key,
     )
     .await?;
@@ -223,7 +271,7 @@ fn parse_esi_jwt_claims(token: &str) -> anyhow::Result<EsiJwtClaims> {
 }
 
 async fn fetch_character_public_info(
-    client: &reqwest::Client,
+    client: &reqwest_middleware::ClientWithMiddleware,
     eve_character_id: i64,
 ) -> anyhow::Result<(i64, Option<i64>)> {
     #[derive(Deserialize)]
@@ -236,7 +284,8 @@ async fn fetch_character_public_info(
     let info: PublicInfo = client
         .get(&url)
         .send()
-        .await?
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?
         .error_for_status()?
         .json()
         .await?;

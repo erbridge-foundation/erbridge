@@ -1,22 +1,30 @@
 # HURL tests
 
-Live-server HTTP contract tests. Run against a backend started with `cargo run` (or `docker compose up`).
+Live-server HTTP contract tests. Run against the dev stack with `docker compose -f docker-compose.dev.yml up --build`.
 
 ## Prerequisites
 
 - `hurl` ≥ 8.0 installed (`hurl --version`)
-- Backend running and reachable at `BASE_URL`
-- A valid session JWT (value of the `session` cookie after SSO login — copy from browser devtools: Application → Cookies → `session`)
+- Dev stack running and reachable at `BASE_URL` (default `http://localhost:5000`)
+- An API key for your account — create one after SSO login:
+
+```sh
+export ERB_API_KEY=$(curl -s -X POST $BASE_URL/api/v1/keys \
+  -H "Cookie: session=$SESSION" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"hurl-testing","expires_at":null}' | jq -r '.data.key')
+```
+
+Most tests authenticate via `Authorization: Bearer $ERB_API_KEY`. The `session` variable is only needed for `session.hurl` (cookie-reissue behaviour) and `account.hurl` step 3 (asserts the `Set-Cookie` clearing header on delete).
 
 ## Run all tests
 
 ```sh
-BASE_URL=http://localhost:3000
-SESSION=<paste jwt here>
+export BASE_URL=http://localhost:5000
 
 hurl --test \
      --variable base_url=$BASE_URL \
-     --variable session=$SESSION \
+     --secret    erb_api_key=$ERB_API_KEY \
      tests/hurl/me.hurl \
      tests/hurl/keys.hurl
 ```
@@ -25,23 +33,23 @@ hurl --test \
 
 ### me.hurl
 
-Tests `GET /api/v1/me`. No extra variables beyond `base_url` and `session`.
+Tests `GET /api/v1/me`.
 
 ```sh
 hurl --test \
      --variable base_url=$BASE_URL \
-     --variable session=$SESSION \
+     --secret    erb_api_key=$ERB_API_KEY \
      tests/hurl/me.hurl
 ```
 
 ### keys.hurl
 
-Tests the full API-key lifecycle (`POST`, `GET`, `DELETE /api/v1/keys`). Auth is exercised via both session cookie and bearer token — no extra variables needed beyond `base_url` and `session`.
+Tests the full API-key lifecycle (`POST`, `GET`, `DELETE /api/v1/keys`). Creates and deletes a temporary key during the run; `ERB_API_KEY` is used for auth on the steps that create/delete it.
 
 ```sh
 hurl --test \
      --variable base_url=$BASE_URL \
-     --variable session=$SESSION \
+     --secret    erb_api_key=$ERB_API_KEY \
      tests/hurl/keys.hurl
 ```
 
@@ -54,15 +62,16 @@ Tests `POST /api/v1/characters/:id/set-main` and `DELETE /api/v1/characters/:id`
 Get the character UUIDs from `GET /api/v1/me`:
 
 ```sh
-curl -s $BASE_URL/api/v1/me -H "Cookie: session=$SESSION" | jq '.data.characters[] | {id, name, is_main}'
+curl -s $BASE_URL/api/v1/me -H "Authorization: Bearer $ERB_API_KEY" \
+  | jq '.data.characters[] | {id, name, is_main}'
 ```
 
 ```sh
 hurl --test \
      --variable base_url=$BASE_URL \
-     --variable session=$SESSION \
-     --variable main_character_id=<uuid-of-main> \
-     --variable non_main_character_id=<uuid-of-non-main> \
+     --secret    erb_api_key=$ERB_API_KEY \
+     --variable  main_character_id=<uuid-of-main> \
+     --variable  non_main_character_id=<uuid-of-non-main> \
      tests/hurl/characters.hurl
 ```
 
@@ -72,18 +81,13 @@ hurl --test \
 
 Tests `DELETE /api/v1/account` and the `account_soft_deleted` bearer rejection.
 
-**Requires an API key issued before running** (so step 5 can verify it is rejected after soft-delete):
+Requires both `ERB_API_KEY` (belonging to the account being deleted) and a `SESSION` cookie (for step 3, which asserts the `Set-Cookie` clearing header):
 
 ```sh
-API_KEY=$(curl -s -X POST $BASE_URL/api/v1/keys \
-               -H "Cookie: session=$SESSION" \
-               -H "Content-Type: application/json" \
-               -d '{"name":"soft-delete-test","expires_at":null}' | jq -r '.data.key')
-
 hurl --test \
      --variable base_url=$BASE_URL \
      --variable session=$SESSION \
-     --secret    api_key=$API_KEY \
+     --secret    erb_api_key=$ERB_API_KEY \
      tests/hurl/account.hurl
 ```
 
@@ -91,7 +95,7 @@ hurl --test \
 
 ### session.hurl
 
-Tests that a cookie-authenticated request reissues the session cookie and an unauthenticated request does not. No extra variables beyond `base_url` and `session`.
+Tests that a cookie-authenticated request reissues the session cookie and that an unauthenticated request does not. Intentionally uses a session cookie — this is the only file that requires `SESSION`.
 
 ```sh
 hurl --test \

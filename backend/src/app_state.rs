@@ -1,3 +1,4 @@
+use reqwest_middleware::ClientWithMiddleware;
 use sqlx::PgPool;
 use std::sync::Arc;
 
@@ -14,5 +15,5 @@ pub struct AppState {
     pub esi_metadata: Arc<EsiMetadata>,
     pub session_store: SessionStore,
     pub inflight_store: InflightStore,
-    pub http_client: reqwest::Client,
+    pub http_client: ClientWithMiddleware,
 }

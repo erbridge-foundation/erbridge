@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use crate::{
     db::{DbError, api_keys as db},
-    error::AppError,
+    error::{AppError, ConflictKind},
     handlers::api_key,
 };
 
@@ -31,7 +31,7 @@ pub async fn create_key(
         .await
         .map_err(|e| match e {
             DbError::UniqueViolation { .. } => {
-                AppError::Conflict("a key with this name already exists".to_string())
+                AppError::Conflict(ConflictKind::ApiKeyNameAlreadyExists)
             }
             DbError::Other(err) => AppError::Internal(err),
         })?;

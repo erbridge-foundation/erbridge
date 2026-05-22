@@ -31,8 +31,7 @@ pub async fn set_main(
     AuthenticatedAccount(account_id): AuthenticatedAccount,
     Path(character_id): Path<Uuid>,
 ) -> Result<Json<ApiResponse<CharacterDto>>, AppError> {
-    let character =
-        svc::set_main_character(&state.db, &state.http_client, account_id, character_id).await?;
+    let character = svc::set_main_character(&state.db, account_id, character_id).await?;
     Ok(Json(ApiResponse::data(CharacterDto::from(character))))
 }
 

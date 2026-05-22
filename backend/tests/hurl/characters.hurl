@@ -5,10 +5,10 @@
 # via /auth/characters/add before running this file.
 #
 # Run with:
-#   hurl --test --variable base_url=http://localhost:3000 \
-#               --variable session=<jwt-from-cookie> \
-#               --variable non_main_character_id=<uuid-of-non-main-character> \
-#               --variable main_character_id=<uuid-of-main-character> \
+#   hurl --test --variable base_url=http://localhost:5000 \
+#               --secret    erb_api_key=$ERB_API_KEY \
+#               --variable  non_main_character_id=<uuid-of-non-main-character> \
+#               --variable  main_character_id=<uuid-of-main-character> \
 #               characters.hurl
 #
 # Both character UUIDs are the internal `id` field from GET /api/v1/me.
@@ -16,7 +16,7 @@
 # ── 1. set-main: unknown id → 404 ────────────────────────────────────────────
 
 POST {{base_url}}/api/v1/characters/00000000-0000-0000-0000-000000000000/set-main
-Cookie: session={{session}}
+Authorization: Bearer {{erb_api_key}}
 
 HTTP 404
 [Asserts]
@@ -33,7 +33,7 @@ jsonpath "$.error.code" == "unauthenticated"
 # ── 3. set-main: promote non-main character → 200 ────────────────────────────
 
 POST {{base_url}}/api/v1/characters/{{non_main_character_id}}/set-main
-Cookie: session={{session}}
+Authorization: Bearer {{erb_api_key}}
 
 HTTP 200
 [Asserts]
@@ -48,7 +48,7 @@ jsonpath "$.error" not exists
 # (after step 3, non_main_character_id is now the main)
 
 POST {{base_url}}/api/v1/characters/{{non_main_character_id}}/set-main
-Cookie: session={{session}}
+Authorization: Bearer {{erb_api_key}}
 
 HTTP 200
 [Asserts]
@@ -59,7 +59,7 @@ jsonpath "$.data.is_main" == true
 # Attempt to delete the current main (non_main_character_id).
 
 DELETE {{base_url}}/api/v1/characters/{{non_main_character_id}}
-Cookie: session={{session}}
+Authorization: Bearer {{erb_api_key}}
 
 HTTP 409
 [Asserts]
@@ -69,7 +69,7 @@ jsonpath "$.error.code" == "cannot_remove_main"
 # main_character_id is no longer main; it is safe to remove.
 
 DELETE {{base_url}}/api/v1/characters/{{main_character_id}}
-Cookie: session={{session}}
+Authorization: Bearer {{erb_api_key}}
 
 HTTP 204
 
@@ -77,7 +77,7 @@ HTTP 204
 # Only non_main_character_id remains now.
 
 DELETE {{base_url}}/api/v1/characters/{{non_main_character_id}}
-Cookie: session={{session}}
+Authorization: Bearer {{erb_api_key}}
 
 HTTP 409
 [Asserts]

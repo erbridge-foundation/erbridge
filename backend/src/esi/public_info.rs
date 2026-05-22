@@ -3,7 +3,7 @@
 const ESI_BASE: &str = "https://esi.evetech.net/latest";
 
 pub async fn fetch_corporation_name(
-    http: &reqwest::Client,
+    http: &reqwest_middleware::ClientWithMiddleware,
     corporation_id: i64,
 ) -> anyhow::Result<String> {
     #[derive(serde::Deserialize)]
@@ -27,7 +27,7 @@ pub async fn fetch_corporation_name(
 }
 
 pub async fn fetch_alliance_name(
-    http: &reqwest::Client,
+    http: &reqwest_middleware::ClientWithMiddleware,
     alliance_id: i64,
 ) -> anyhow::Result<String> {
     #[derive(serde::Deserialize)]

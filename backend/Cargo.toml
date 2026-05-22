@@ -27,6 +27,8 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 utoipa = { version = "5", features = ["axum_extras", "chrono", "uuid"] }
 utoipa-swagger-ui = { version = "9", features = ["axum"] }
+reqwest-middleware = "0.4"
+reqwest-tracing = "0.5"
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

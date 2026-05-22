@@ -11,11 +11,15 @@ pub struct Character {
     pub eve_character_id: i64,
     pub name: String,
     pub corporation_id: i64,
+    pub corporation_name: String,
     pub alliance_id: Option<i64>,
+    pub alliance_name: Option<String>,
     pub is_main: bool,
     pub is_online: Option<bool>,
     pub esi_client_id: Option<String>,
-    pub esi_token_expires_at: Option<DateTime<Utc>>,
+    pub encrypted_refresh_token: Option<Vec<u8>>,
+    pub access_token_expires_at: Option<DateTime<Utc>>,
+    pub scopes: Vec<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -27,11 +31,14 @@ pub async fn upsert_tokens(
     eve_character_id: i64,
     name: &str,
     corporation_id: i64,
+    corporation_name: &str,
     alliance_id: Option<i64>,
+    alliance_name: Option<&str>,
     esi_client_id: &str,
     access_token_plaintext: &str,
     refresh_token_plaintext: &str,
-    expires_at: DateTime<Utc>,
+    access_token_expires_at: DateTime<Utc>,
+    scopes: &[String],
     encryption_key: &[u8],
 ) -> Result<Uuid> {
     let encrypted_access = crypto::encrypt_token(access_token_plaintext, encryption_key)
@@ -42,9 +49,10 @@ pub async fn upsert_tokens(
     let row = sqlx::query!(
         r#"
         INSERT INTO eve_character (
-            account_id, eve_character_id, name, corporation_id, alliance_id,
-            esi_client_id, encrypted_access_token, encrypted_refresh_token, esi_token_expires_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            account_id, eve_character_id, name, corporation_id, corporation_name,
+            alliance_id, alliance_name, esi_client_id, encrypted_access_token,
+            encrypted_refresh_token, access_token_expires_at, scopes
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         ON CONFLICT (eve_character_id) DO UPDATE SET
             account_id = CASE
                 WHEN eve_character.account_id IS NULL THEN excluded.account_id
@@ -53,11 +61,14 @@ pub async fn upsert_tokens(
             END,
             name = excluded.name,
             corporation_id = excluded.corporation_id,
+            corporation_name = excluded.corporation_name,
             alliance_id = excluded.alliance_id,
+            alliance_name = excluded.alliance_name,
             esi_client_id = excluded.esi_client_id,
             encrypted_access_token = excluded.encrypted_access_token,
             encrypted_refresh_token = excluded.encrypted_refresh_token,
-            esi_token_expires_at = excluded.esi_token_expires_at,
+            access_token_expires_at = excluded.access_token_expires_at,
+            scopes = excluded.scopes,
             updated_at = now()
         RETURNING id
         "#,
@@ -65,11 +76,14 @@ pub async fn upsert_tokens(
         eve_character_id,
         name,
         corporation_id,
+        corporation_name,
         alliance_id,
+        alliance_name,
         esi_client_id,
         encrypted_access.as_slice(),
         encrypted_refresh.as_slice(),
-        expires_at,
+        access_token_expires_at,
+        scopes,
     )
     .fetch_one(&mut **tx)
     .await
@@ -107,18 +121,25 @@ pub async fn create_orphan(
     eve_character_id: i64,
     name: &str,
     corporation_id: i64,
+    corporation_name: &str,
     alliance_id: Option<i64>,
+    alliance_name: Option<&str>,
 ) -> Result<Uuid> {
     let row = sqlx::query!(
         r#"
-        INSERT INTO eve_character (eve_character_id, name, corporation_id, alliance_id)
-        VALUES ($1, $2, $3, $4)
+        INSERT INTO eve_character (
+            eve_character_id, name, corporation_id, corporation_name,
+            alliance_id, alliance_name
+        )
+        VALUES ($1, $2, $3, $4, $5, $6)
         RETURNING id
         "#,
         eve_character_id,
         name,
         corporation_id,
+        corporation_name,
         alliance_id,
+        alliance_name,
     )
     .fetch_one(pool)
     .await
@@ -130,8 +151,10 @@ pub async fn create_orphan(
 pub async fn list_for_account(pool: &PgPool, account_id: Uuid) -> Result<Vec<Character>> {
     let rows = sqlx::query!(
         r#"
-        SELECT id, account_id, eve_character_id, name, corporation_id, alliance_id,
-               is_main, is_online, esi_client_id, esi_token_expires_at, created_at, updated_at
+        SELECT id, account_id, eve_character_id, name,
+               corporation_id, corporation_name, alliance_id, alliance_name,
+               is_main, is_online, esi_client_id, encrypted_refresh_token,
+               access_token_expires_at, scopes, created_at, updated_at
         FROM eve_character
         WHERE account_id = $1
         ORDER BY created_at ASC
@@ -150,11 +173,15 @@ pub async fn list_for_account(pool: &PgPool, account_id: Uuid) -> Result<Vec<Cha
             eve_character_id: r.eve_character_id,
             name: r.name,
             corporation_id: r.corporation_id,
+            corporation_name: r.corporation_name,
             alliance_id: r.alliance_id,
+            alliance_name: r.alliance_name,
             is_main: r.is_main,
             is_online: r.is_online,
             esi_client_id: r.esi_client_id,
-            esi_token_expires_at: r.esi_token_expires_at,
+            encrypted_refresh_token: r.encrypted_refresh_token,
+            access_token_expires_at: r.access_token_expires_at,
+            scopes: r.scopes,
             created_at: r.created_at,
             updated_at: r.updated_at,
         })
@@ -228,7 +255,7 @@ mod tests {
 
     #[sqlx::test]
     async fn create_orphan_inserts_row(pool: PgPool) {
-        let id = create_orphan(&pool, 12345, "Test Pilot", 1000001, None)
+        let id = create_orphan(&pool, 12345, "Test Pilot", 1000001, "Test Corp", None, None)
             .await
             .unwrap();
         assert!(!id.is_nil());
@@ -244,11 +271,14 @@ mod tests {
             99001,
             "Pilot One",
             1000001,
+            "Corp One",
+            None,
             None,
             "client1",
             "access_tok",
             "refresh_tok",
             chrono::Utc::now() + chrono::Duration::hours(1),
+            &[],
             &test_key(),
         )
         .await
@@ -267,11 +297,14 @@ mod tests {
             99002,
             "Pilot Two",
             1000001,
+            "Corp One",
+            None,
             None,
             "client1",
             "access_tok_v1",
             "refresh_tok_v1",
             chrono::Utc::now() + chrono::Duration::hours(1),
+            &[],
             &test_key(),
         )
         .await
@@ -285,11 +318,14 @@ mod tests {
             99002,
             "Pilot Two Updated",
             1000002,
+            "Corp Two",
+            None,
             None,
             "client1",
             "access_tok_v2",
             "refresh_tok_v2",
             chrono::Utc::now() + chrono::Duration::hours(1),
+            &[],
             &test_key(),
         )
         .await
@@ -300,6 +336,7 @@ mod tests {
         let chars = list_for_account(&pool, account_id).await.unwrap();
         assert_eq!(chars.len(), 1);
         assert_eq!(chars[0].name, "Pilot Two Updated");
+        assert_eq!(chars[0].corporation_name, "Corp Two");
     }
 
     #[sqlx::test]
@@ -312,11 +349,14 @@ mod tests {
             99003,
             "Main Pilot",
             1000001,
+            "Corp One",
+            None,
             None,
             "client1",
             "access",
             "refresh",
             chrono::Utc::now() + chrono::Duration::hours(1),
+            &[],
             &test_key(),
         )
         .await
@@ -341,11 +381,14 @@ mod tests {
             99004,
             "First",
             1000001,
+            "Corp One",
+            None,
             None,
             "client1",
             "a",
             "r",
             chrono::Utc::now() + chrono::Duration::hours(1),
+            &[],
             &test_key(),
         )
         .await
@@ -359,11 +402,14 @@ mod tests {
             99005,
             "Second",
             1000001,
+            "Corp One",
+            None,
             None,
             "client1",
             "a",
             "r",
             chrono::Utc::now() + chrono::Duration::hours(1),
+            &[],
             &test_key(),
         )
         .await
@@ -382,7 +428,7 @@ mod tests {
 
     #[sqlx::test]
     async fn delete_character_returns_true_when_deleted(pool: PgPool) {
-        let id = create_orphan(&pool, 99006, "To Delete", 1000001, None)
+        let id = create_orphan(&pool, 99006, "To Delete", 1000001, "Corp", None, None)
             .await
             .unwrap();
         let deleted = delete_character(&pool, id).await.unwrap();
@@ -405,11 +451,14 @@ mod tests {
             99010,
             "A",
             1000001,
+            "Corp One",
+            None,
             None,
             "c",
             "a",
             "r",
             chrono::Utc::now() + chrono::Duration::hours(1),
+            &[],
             &test_key(),
         )
         .await
