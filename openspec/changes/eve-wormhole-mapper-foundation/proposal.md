@@ -41,7 +41,7 @@ EVE Online wormhole space requires constant spatial awareness — pilots need to
 ## Impact
 
 - New top-level directories: `/frontend`, `/backend`, `openspec/`
-- New files: `docker-compose.yml`, `traefik.yml` (static config), `.env.example`, `Dockerfile`s for both services, `backend/migrations/*.sql`, HTML wireframes under `openspec/changes/eve-wormhole-mapper-foundation/wireframes/`
+- New files: `docker-compose.yml`, `traefik.yml` (static config), `.env.example`, `Dockerfile`s for both services, `backend/migrations/*.sql`, HTML wireframes under `frontend/wireframes/` (authored under `openspec/changes/eve-wormhole-mapper-foundation/wireframes/` and moved per §7.29 at archival time)
 - Dependencies introduced: Axum, tokio, reqwest, sqlx (postgres + uuid + chrono features), aes-gcm, jsonwebtoken, thiserror, anyhow, utoipa, utoipa-swagger-ui (Rust); SvelteKit, @sveltejs/adapter-node, Svelte 5 (Node)
 - New Postgres container in the Compose stack; persistent named volume for database data
 - No existing code affected — this is a greenfield project
