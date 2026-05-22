@@ -1,6 +1,7 @@
 set dotenv-load
 
-repo := "erbridge-foundation/erbridge"
+# Image names match the GHCR registry layout: ghcr.io/erbridge-foundation/{api,ui}
+registry := "ghcr.io/erbridge-foundation"
 
 # ─── default: list available recipes ─────────────────────────────────────────
 default:
@@ -62,11 +63,11 @@ docker-build: docker-build-backend docker-build-frontend
 
 # Build the backend Docker image locally
 docker-build-backend:
-    docker build -t {{repo}}-backend:latest ./backend
+    docker build -t {{registry}}/erbridge-api:latest ./backend
 
 # Build the frontend Docker image locally
 docker-build-frontend:
-    docker build -t {{repo}}-frontend:latest ./frontend
+    docker build -t {{registry}}/erbridge-web:latest ./frontend
 
 # ─── maintenance ─────────────────────────────────────────────────────────────
 
