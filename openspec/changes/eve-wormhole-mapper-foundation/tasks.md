@@ -325,14 +325,14 @@ All tasks in this section are blocked on §4a approval. Each task SHALL produce 
 
 ## 6. Traefik + Postgres Configuration
 
-- [ ] 6.1 Write `traefik.yml` (static config): enable Docker provider, set entrypoint on port 80, disable dashboard in production
-- [ ] 6.2 Write `docker-compose.yml` with four services:
+- [x] 6.1 Write `traefik.yml` (static config): enable Docker provider, set entrypoint on port 80, disable dashboard in production
+- [x] 6.2 Write `docker-compose.yml` with four services:
   - `traefik`: mounts `/var/run/docker.sock` and `traefik.yml`; publishes port 80
-  - `postgres`: `postgres:16` image; env vars `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` from `.env`; named volume `postgres-data:/var/lib/postgresql/data`; healthcheck using `pg_isready`
+  - `postgres`: `postgres:18` image (bumped from the task-spec's `postgres:16` — `:18` is what the dev compose has been running on and what migrations were verified against); env vars `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` from `.env`; named volume `postgres-data:/var/lib/postgresql/data`; healthcheck using `pg_isready`
   - `backend`: built from `./backend`; env vars from `.env` including `DATABASE_URL=postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}`; `depends_on: postgres: condition: service_healthy`; Traefik labels routing `/auth/` and `/api/` to it
-  - `frontend`: built from `./frontend`; Traefik label routing all other requests to it
-- [ ] 6.3 Declare the `postgres-data` named volume at the top level of `docker-compose.yml`
-- [ ] 6.4 Confirm routing rules use `PathPrefix` matchers and that backend rule has higher priority than frontend catch-all
+  - `frontend`: built from `./frontend`; env vars `BACKEND_INTERNAL_URL=http://backend:3000` and `ORIGIN=${APP_URL}`; Traefik label routing all other requests to it
+- [x] 6.3 Declare the `postgres-data` named volume at the top level of `docker-compose.yml`
+- [x] 6.4 Confirm routing rules use `PathPrefix` matchers and that backend rule has higher priority than frontend catch-all
 
 ## 7. Integration Verification
 

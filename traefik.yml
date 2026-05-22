@@ -1,0 +1,22 @@
+# Traefik v3 static configuration for E-R Bridge production deployment.
+# Dev runs Traefik via CLI args inside docker-compose.dev.yml; production
+# uses this file mounted into the container.
+
+providers:
+  docker:
+    exposedByDefault: false
+    network: erbridge
+
+entryPoints:
+  web:
+    address: ":80"
+
+# Dashboard intentionally disabled in production. To enable for debugging,
+# add `api: { dashboard: true }` and expose entrypoint :8080 behind auth.
+api:
+  dashboard: false
+
+log:
+  level: INFO
+
+accessLog: {}
