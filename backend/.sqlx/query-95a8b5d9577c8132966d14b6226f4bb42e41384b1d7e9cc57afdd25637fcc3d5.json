@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE session\n         SET last_seen_at = now() - interval '1 hour',\n             expires_at   = now() + interval '6 days'\n         WHERE session_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "95a8b5d9577c8132966d14b6226f4bb42e41384b1d7e9cc57afdd25637fcc3d5"
+}

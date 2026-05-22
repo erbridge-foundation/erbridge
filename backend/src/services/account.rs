@@ -198,7 +198,9 @@ mod tests {
     #[sqlx::test]
     async fn delete_account_blocks_last_server_admin(pool: PgPool) {
         let mut tx = pool.begin().await.unwrap();
-        let admin_id = accounts::resolve_or_create(&mut tx, None, 1001).await.unwrap();
+        let admin_id = accounts::resolve_or_create(&mut tx, None, 1001)
+            .await
+            .unwrap();
         tx.commit().await.unwrap();
 
         let err = delete_account(&pool, admin_id).await.unwrap_err();
@@ -207,15 +209,22 @@ mod tests {
             AppError::Conflict(ConflictKind::CannotRemoveLastServerAdmin)
         ));
 
-        let account = accounts::get_account(&pool, admin_id).await.unwrap().unwrap();
+        let account = accounts::get_account(&pool, admin_id)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(account.status, "active");
     }
 
     #[sqlx::test]
     async fn delete_account_allows_admin_when_another_admin_exists(pool: PgPool) {
         let mut tx = pool.begin().await.unwrap();
-        let first = accounts::resolve_or_create(&mut tx, None, 1001).await.unwrap();
-        let second = accounts::resolve_or_create(&mut tx, None, 1002).await.unwrap();
+        let first = accounts::resolve_or_create(&mut tx, None, 1001)
+            .await
+            .unwrap();
+        let second = accounts::resolve_or_create(&mut tx, None, 1002)
+            .await
+            .unwrap();
         tx.commit().await.unwrap();
 
         sqlx::query!(
@@ -235,8 +244,12 @@ mod tests {
     #[sqlx::test]
     async fn delete_account_allows_non_admin(pool: PgPool) {
         let mut tx = pool.begin().await.unwrap();
-        let _admin = accounts::resolve_or_create(&mut tx, None, 1001).await.unwrap();
-        let user = accounts::resolve_or_create(&mut tx, None, 1002).await.unwrap();
+        let _admin = accounts::resolve_or_create(&mut tx, None, 1001)
+            .await
+            .unwrap();
+        let user = accounts::resolve_or_create(&mut tx, None, 1002)
+            .await
+            .unwrap();
         tx.commit().await.unwrap();
 
         delete_account(&pool, user).await.unwrap();
