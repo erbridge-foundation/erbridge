@@ -1,5 +1,5 @@
-import { redirect } from '@sveltejs/kit';
-import { env } from '$env/dynamic/private';
+import { redirect, isRedirect } from '@sveltejs/kit';
+import { backend_internal_url } from '$lib/server/env';
 import { getMe, ApiError } from '$lib/api';
 import type { LayoutServerLoad } from './$types';
 
@@ -8,7 +8,7 @@ export const load: LayoutServerLoad = async ({ fetch, url, locals, request }) =>
 	const cookie = request.headers.get('cookie') ?? '';
 
 	try {
-		const me = await getMe(fetch, env.BACKEND_INTERNAL_URL, cookie);
+		const me = await getMe(fetch, backend_internal_url(), cookie);
 		locals.me = me;
 
 		if (isLoginRoute) {
@@ -17,6 +17,8 @@ export const load: LayoutServerLoad = async ({ fetch, url, locals, request }) =>
 
 		return { me, meError: null };
 	} catch (e) {
+		if (isRedirect(e)) throw e;
+
 		locals.me = null;
 
 		if (e instanceof ApiError && e.status === 401) {

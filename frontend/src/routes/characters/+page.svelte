@@ -13,6 +13,11 @@
 					c.name.toLowerCase().includes(query.trim().toLowerCase())
 				)
 	);
+
+	// The form result's characterId is present on setMain/remove failures but
+	// not on deleteAccount; widen the type so the template can branch on it.
+	type FormError = { code: string; message: string; characterId?: string };
+	let formError = $derived(form as FormError | null);
 </script>
 
 <main class="body">
@@ -111,9 +116,9 @@
 						</div>
 					</article>
 
-					{#if form?.characterId === character.id && form?.code}
-						<p class="inline-error" role="alert" data-error-code={form.code}>
-							{form.message}
+					{#if formError?.characterId === character.id && formError?.code}
+						<p class="inline-error" role="alert" data-error-code={formError.code}>
+							{formError.message}
 						</p>
 					{/if}
 				</div>
@@ -126,9 +131,9 @@
 		<form method="POST" action="?/deleteAccount" use:enhance>
 			<button type="submit" class="danger-btn">delete account</button>
 		</form>
-		{#if form && !form.characterId && form.code}
-			<p class="inline-error" role="alert" data-error-code={form.code}>
-				{form.message}
+		{#if formError && !formError.characterId && formError.code}
+			<p class="inline-error" role="alert" data-error-code={formError.code}>
+				{formError.message}
 			</p>
 		{/if}
 	</div>

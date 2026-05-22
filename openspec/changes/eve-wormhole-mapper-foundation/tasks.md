@@ -320,8 +320,8 @@ All tasks in this section are blocked on §4a approval. Each task SHALL produce 
 
 ## 5. Frontend: Dockerfile
 
-- [ ] 5.1 Write `frontend/Dockerfile`: multi-stage build — `node:lts` builder stage running `npm ci && npm run build`, then slim runtime stage running `node build`
-- [ ] 5.2 Ensure `EXPOSE 3000` (or chosen port) and `CMD ["node", "build"]` are set
+- [x] 5.1 Write `frontend/Dockerfile`: multi-stage build — `node:lts` builder stage running `npm ci && npm run build`, then slim runtime stage running `node build`
+- [x] 5.2 Ensure `EXPOSE 3000` (or chosen port) and `CMD ["node", "build"]` are set
 
 ## 6. Traefik + Postgres Configuration
 

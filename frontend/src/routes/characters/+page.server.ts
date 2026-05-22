@@ -1,5 +1,5 @@
 import { redirect, fail } from '@sveltejs/kit';
-import { env } from '$env/dynamic/private';
+import { backend_internal_url } from '$lib/server/env';
 import { setMainCharacter, deleteCharacter, deleteAccount, ApiError } from '$lib/api';
 import type { PageServerLoad, Actions } from './$types';
 
@@ -16,7 +16,7 @@ export const actions: Actions = {
 		if (typeof characterId !== 'string') return fail(400, { code: 'bad_request', message: 'Missing character_id' });
 
 		try {
-			await setMainCharacter(fetch, env.BACKEND_INTERNAL_URL, characterId, cookie);
+			await setMainCharacter(fetch, backend_internal_url(), characterId, cookie);
 		} catch (e) {
 			if (e instanceof ApiError) {
 				return fail(e.status, { code: e.code, message: e.message, characterId });
@@ -32,7 +32,7 @@ export const actions: Actions = {
 		if (typeof characterId !== 'string') return fail(400, { code: 'bad_request', message: 'Missing character_id' });
 
 		try {
-			await deleteCharacter(fetch, env.BACKEND_INTERNAL_URL, characterId, cookie);
+			await deleteCharacter(fetch, backend_internal_url(), characterId, cookie);
 		} catch (e) {
 			if (e instanceof ApiError) {
 				return fail(e.status, { code: e.code, message: e.message, characterId });
@@ -44,7 +44,7 @@ export const actions: Actions = {
 	deleteAccount: async ({ request, fetch }) => {
 		const cookie = request.headers.get('cookie') ?? '';
 		try {
-			await deleteAccount(fetch, env.BACKEND_INTERNAL_URL, cookie);
+			await deleteAccount(fetch, backend_internal_url(), cookie);
 		} catch (e) {
 			if (e instanceof ApiError) {
 				return fail(e.status, { code: e.code, message: e.message });
