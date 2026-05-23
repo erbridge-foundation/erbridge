@@ -1,12 +1,21 @@
 /**
  * Minimal HTTP mock for the backend API used by E2E tests.
  *
- * Listens on http://127.0.0.1:9 — matching the BACKEND_INTERNAL_URL set in
+ * Listens on http://127.0.0.1:9100 — matching the BACKEND_INTERNAL_URL set in
  * playwright.config.ts. Playwright's globalSetup starts this server before
  * the SvelteKit webServer process so the app can make authenticated requests
  * during the test run.
  *
- * Seeded data:
+ * Authentication model:
+ *   The mock returns 401 for /api/v1/me by default. Tests that need an
+ *   authenticated session SHALL set a cookie via page.context().addCookies
+ *   with name=session and any non-empty value before navigating; the mock
+ *   accepts any cookie whose value is non-empty as a valid session. This
+ *   lets login.spec.ts (which expects an unauthenticated state) and
+ *   characters-confirm-dialog.spec.ts (which needs auth) share the same
+ *   mock without interfering.
+ *
+ * Seeded data (returned when authenticated):
  *   - Account: id "acc1", active
  *   - Characters:
  *       "char-main"  — Main Pilot   (is_main: true,  token_status: active)
@@ -67,11 +76,27 @@ function notFound(res: http.ServerResponse) {
 	json(res, 404, { error: { code: 'not_found', message: 'Not found' } });
 }
 
+function unauthorised(res: http.ServerResponse) {
+	json(res, 401, { error: { code: 'unauthorised', message: 'No session' } });
+}
+
+function hasValidSession(req: http.IncomingMessage): boolean {
+	const cookieHeader = req.headers['cookie'] ?? '';
+	const match = cookieHeader.split(/;\s*/).find((c) => c.startsWith('session='));
+	if (!match) return false;
+	const value = match.slice('session='.length);
+	return value.length > 0;
+}
+
 const server = http.createServer((req, res) => {
 	const url = req.url ?? '/';
 	const method = req.method ?? 'GET';
 
 	if (method === 'GET' && url === '/api/v1/me') {
+		if (!hasValidSession(req)) {
+			unauthorised(res);
+			return;
+		}
 		json(res, 200, ME_RESPONSE);
 		return;
 	}
@@ -94,7 +119,7 @@ const server = http.createServer((req, res) => {
 
 export default async function globalSetup() {
 	await new Promise<void>((resolve, reject) => {
-		server.listen(9, '127.0.0.1', () => resolve());
+		server.listen(9100, '127.0.0.1', () => resolve());
 		server.once('error', reject);
 	});
 

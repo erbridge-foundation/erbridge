@@ -4,7 +4,7 @@
  * These tests spin up the built SvelteKit app against a lightweight mock
  * backend (started in globalSetup via tests/e2e/mock-backend.ts) that
  * serves canned /api/v1/me data and accepts DELETE requests. The mock
- * listens on http://127.0.0.1:9 — matching the BACKEND_INTERNAL_URL used
+ * listens on http://127.0.0.1:9100 — matching the BACKEND_INTERNAL_URL used
  * by the playwright.config.ts webServer command.
  *
  * Manual verification steps (deferred from §6 — cannot be automated here):
@@ -20,7 +20,21 @@ const MAIN_CHARACTER_NAME = 'Main Pilot';
 const ALT_CHARACTER_NAME = 'Jita Trader';
 
 test.describe('/characters confirm-dialog', () => {
-	test.beforeEach(async ({ page }) => {
+	test.beforeEach(async ({ page, context }) => {
+		// The mock backend (tests/e2e/mock-backend.ts) returns 401 for /api/v1/me
+		// unless a non-empty session cookie is present. Add one for this suite.
+		await context.addCookies([
+			{
+				name: 'session',
+				value: 'test-session-token',
+				domain: 'localhost',
+				path: '/',
+				httpOnly: false,
+				secure: false,
+				sameSite: 'Lax'
+			}
+		]);
+
 		await page.goto('/characters');
 		// Verify the page loaded (not redirected to /login due to missing auth).
 		await expect(page).toHaveURL(/\/characters/);
