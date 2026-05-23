@@ -1,3 +1,4 @@
+// Modal confirmation is client-side; ConfirmDialog is tested in src/lib/components/ConfirmDialog.test.ts. Server actions remain testable in isolation here.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('$lib/api', async (importOriginal) => {

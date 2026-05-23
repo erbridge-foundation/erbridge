@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import type { PageData, ActionData } from './$types';
+	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -18,6 +19,21 @@
 	// not on deleteAccount; widen the type so the template can branch on it.
 	type FormError = { code: string; message: string; characterId?: string };
 	let formError = $derived(form as FormError | null);
+
+	// Per-character remove confirmation state. A single pair covers all cards;
+	// only one modal is open at a time.
+	type Character = (typeof data.characters)[0];
+	let removeState = $state<{ open: boolean; character: Character | null }>({
+		open: false,
+		character: null
+	});
+
+	// Map of character id → form element, populated via bind:this in the template.
+	let removeForms = $state<Record<string, HTMLFormElement>>({});
+
+	// Delete-account confirmation state.
+	let deleteAccountOpen = $state(false);
+	let deleteAccountForm = $state<HTMLFormElement | null>(null);
 </script>
 
 <svelte:head>
@@ -130,9 +146,22 @@
 									{:else}
 										<a class="reauth" href="/auth/characters/add?return_to=/characters">re-auth</a>
 									{/if}
-									<form method="POST" action="?/remove" use:enhance>
+									<form
+										bind:this={removeForms[character.id]}
+										method="POST"
+										action="?/remove"
+										use:enhance
+									>
 										<input type="hidden" name="character_id" value={character.id} />
-										<button type="submit" class="danger">remove</button>
+										<!-- type="button": no-JS users get no confirmation and no submit (§3.5).
+										     Per design.md decision 8, this regression is accepted for v1. -->
+										<button
+											type="button"
+											class="danger"
+											onclick={() => {
+												removeState = { open: true, character };
+											}}
+										>remove</button>
 									</form>
 								</div>
 							{:else if character.token_status === 'expired'}
@@ -155,8 +184,12 @@
 		<hr class="divider" />
 
 		<h2 class="danger-zone-title">DANGER ZONE</h2>
-		<form method="POST" action="?/deleteAccount" use:enhance>
-			<button type="submit" class="danger-btn">delete account</button>
+		<form bind:this={deleteAccountForm} method="POST" action="?/deleteAccount" use:enhance>
+			<!-- type="button": no-JS users get no confirmation and no submit (§3.5).
+			     Per design.md decision 8, this regression is accepted for v1. -->
+			<button type="button" class="danger-btn" onclick={() => (deleteAccountOpen = true)}>
+				delete account
+			</button>
 		</form>
 		{#if formError && !formError.characterId && formError.code}
 			<p class="inline-error" role="alert" data-error-code={formError.code}>
@@ -165,6 +198,44 @@
 		{/if}
 	</div>
 </main>
+
+<!-- Per-character remove confirmation modal (§3.2). -->
+<ConfirmDialog
+	open={removeState.open}
+	tone="danger"
+	onCancel={() => (removeState = { open: false, character: null })}
+	onConfirm={() => {
+		if (removeState.character) {
+			removeForms[removeState.character.id]?.requestSubmit();
+		}
+		removeState = { open: false, character: null };
+	}}
+>
+	{#snippet title()}Remove {removeState.character?.name}?{/snippet}
+	{#snippet body()}
+		This character will be removed from your account. You can add them again at any time
+		via add character and performing an EVE login.
+	{/snippet}
+	{#snippet confirmLabel()}remove character{/snippet}
+</ConfirmDialog>
+
+<!-- Delete-account confirmation modal (§3.3). -->
+<ConfirmDialog
+	open={deleteAccountOpen}
+	tone="danger"
+	onCancel={() => (deleteAccountOpen = false)}
+	onConfirm={() => {
+		deleteAccountForm?.requestSubmit();
+		deleteAccountOpen = false;
+	}}
+>
+	{#snippet title()}Delete account?{/snippet}
+	{#snippet body()}
+		Your account will be deactivated. To restore it, log back in within 30 days; after
+		that, your data is permanently removed.
+	{/snippet}
+	{#snippet confirmLabel()}delete account{/snippet}
+</ConfirmDialog>
 
 <style>
 	.body {

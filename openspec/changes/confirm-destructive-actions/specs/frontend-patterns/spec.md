@@ -51,7 +51,7 @@ Every invocation of `ConfirmDialog` for a destructive action SHALL follow this c
 Examples that conform:
 
 - Title `Delete account?` · body `Your account will be deactivated. To restore it, log back in within 30 days; after that, your data is permanently removed.` · confirm `delete account` · cancel `cancel`.
-- Title `Remove Jita Trader?` · body `Stored EVE SSO tokens for this character will be removed. To add the character again, you'll need to run EVE SSO from the start.` · confirm `remove character` · cancel `cancel`.
+- Title `Remove Jita Trader?` · body `This character will be removed from your account. You can add them again at any time via add character and performing an EVE login.` · confirm `remove character` · cancel `cancel`.
 
 #### Scenario: Generic confirm labels are rejected in review
 - **WHEN** a frontend change proposes destructive-action copy with a generic confirm label (`confirm`, `yes`, `OK`, `proceed`)

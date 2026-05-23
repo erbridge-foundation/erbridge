@@ -477,6 +477,121 @@
 				grid-template-columns: repeat(2, 1fr);
 				gap: 16px;
 			}
+
+			/* ─────────────── ConfirmDialog wireframe variants ─────────────── */
+
+			/* Wireframe section wrapper — used to show each open-state variant
+			   in its own scrollable block so the page itself doesn't scroll away. */
+			.wf-section {
+				margin-top: 48px;
+				border-top: 1px dashed var(--slate-700);
+				padding-top: 24px;
+			}
+			.wf-section-label {
+				margin: 0 0 16px;
+				font-size: 0.6875rem;
+				font-weight: 500;
+				letter-spacing: 0.1em;
+				color: var(--slate-600);
+				text-transform: uppercase;
+			}
+
+			/* The live component uses position:fixed; here we use position:absolute
+			   within a bounded preview container so the backdrop doesn't escape. */
+			.wf-preview {
+				position: relative;
+				height: 480px;
+				border: 1px solid var(--space-700);
+				border-radius: 6px;
+				overflow: hidden;
+				background: var(--space-950);
+			}
+
+			/* Simulated page content behind the backdrop. */
+			.wf-page-bg {
+				position: absolute;
+				inset: 0;
+				display: flex;
+				align-items: flex-start;
+				justify-content: center;
+				padding: 32px 24px;
+				pointer-events: none;
+				user-select: none;
+				opacity: 0.4;
+			}
+
+			/* Backdrop — mirrors live component .backdrop (rgba, flex, centered). */
+			.wf-backdrop {
+				position: absolute;
+				inset: 0;
+				z-index: 10;
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				padding: 24px;
+				background: rgba(0, 0, 0, 0.6);
+			}
+
+			/* Dialog body — mirrors live component .dialog exactly. */
+			.wf-dialog {
+				width: 100%;
+				max-width: 440px;
+				display: flex;
+				flex-direction: column;
+				gap: 16px;
+				padding: 24px;
+				background: var(--space-800);
+				border: 1px solid var(--space-700);
+				border-radius: 6px;
+				box-shadow: 0 24px 48px rgba(0, 0, 0, 0.5);
+			}
+
+			.wf-dialog-title {
+				margin: 0;
+				font-size: 0.9375rem;
+				font-weight: 600;
+				color: var(--slate-100);
+			}
+
+			.wf-dialog-body {
+				margin: 0;
+				font-size: 0.8125rem;
+				line-height: 1.55;
+				color: var(--slate-300);
+			}
+
+			.wf-dialog-actions {
+				display: flex;
+				justify-content: flex-end;
+				align-items: center;
+				gap: 12px;
+				margin-top: 8px;
+			}
+
+			.wf-btn-cancel {
+				padding: 8px 16px;
+				font: inherit;
+				font-size: 0.75rem;
+				border-radius: 4px;
+				cursor: pointer;
+				background: transparent;
+				border: 1px solid var(--space-700);
+				color: var(--slate-300);
+				/* Cancel button receives initial focus; show focus ring in wireframe. */
+				outline: 2px solid var(--sky);
+				outline-offset: 2px;
+			}
+
+			.wf-btn-confirm {
+				padding: 8px 16px;
+				font: inherit;
+				font-size: 0.75rem;
+				border-radius: 4px;
+				cursor: pointer;
+				background: transparent;
+				border: 1px solid var(--red);
+				color: var(--red);
+			}
 		</style>
 	</head>
 	<body>
@@ -852,6 +967,112 @@
 							</p>
 						</article>
 					</div>
+				<!-- ── Wireframe variant: modal open — remove character ── -->
+					<div class="wf-section">
+						<p class="wf-section-label">Open state — remove character</p>
+						<div class="wf-preview">
+							<!-- Dimmed page content behind backdrop -->
+							<div class="wf-page-bg">
+								<div style="width:100%;max-width:960px">
+									<div class="page-header">
+										<h1>CHARACTERS</h1>
+									</div>
+									<div class="grid">
+										<article class="card" data-name="Wasp 223">
+											<div class="card-top">
+												<img class="portrait" src="https://images.evetech.net/characters/2117314396/portrait?size=128" alt="" />
+												<div class="info">
+													<div class="name-row"><span class="name">Wasp 223</span><span class="badge-main">main</span></div>
+													<div class="affiliation"><span class="label">Exit-Strategy</span></div>
+												</div>
+											</div>
+											<div class="card-footer">
+												<span class="token-status" data-state="active"><span class="dot" aria-hidden="true"></span><span>token active</span></span>
+											</div>
+										</article>
+										<article class="card" data-name="Jita Trader">
+											<div class="card-top">
+												<img class="portrait" src="https://images.evetech.net/characters/91316135/portrait?size=128" alt="" />
+												<div class="info">
+													<div class="name-row"><span class="name">Jita Trader</span></div>
+													<div class="affiliation"><span class="label">Space Construction and Research</span></div>
+												</div>
+											</div>
+											<div class="card-footer">
+												<span class="token-status" data-state="active"><span class="dot" aria-hidden="true"></span><span>token active</span></span>
+												<div class="actions">
+													<button type="button">set main</button>
+													<button type="button" class="danger">remove</button>
+												</div>
+											</div>
+										</article>
+									</div>
+								</div>
+							</div>
+							<!-- Backdrop + dialog -->
+							<div class="wf-backdrop" role="presentation">
+								<div class="wf-dialog" role="alertdialog" aria-modal="true">
+									<h2 class="wf-dialog-title">Remove Jita Trader?</h2>
+									<p class="wf-dialog-body">
+										This character will be removed from your account. You can add them again at any time
+										via add character and performing an EVE login.
+									</p>
+									<div class="wf-dialog-actions">
+										<!-- Cancel button shown with focus ring — it receives focus on open. -->
+										<button type="button" class="wf-btn-cancel">cancel</button>
+										<button type="button" class="wf-btn-confirm">remove character</button>
+									</div>
+								</div>
+							</div>
+						</div>
+					</div>
+
+					<!-- ── Wireframe variant: modal open — delete account ── -->
+					<div class="wf-section">
+						<p class="wf-section-label">Open state — delete account</p>
+						<div class="wf-preview">
+							<!-- Dimmed page content behind backdrop -->
+							<div class="wf-page-bg">
+								<div style="width:100%;max-width:960px">
+									<div class="page-header">
+										<h1>CHARACTERS</h1>
+									</div>
+									<div class="grid">
+										<article class="card" data-name="Wasp 223">
+											<div class="card-top">
+												<img class="portrait" src="https://images.evetech.net/characters/2117314396/portrait?size=128" alt="" />
+												<div class="info">
+													<div class="name-row"><span class="name">Wasp 223</span><span class="badge-main">main</span></div>
+													<div class="affiliation"><span class="label">Exit-Strategy</span></div>
+												</div>
+											</div>
+											<div class="card-footer">
+												<span class="token-status" data-state="active"><span class="dot" aria-hidden="true"></span><span>token active</span></span>
+											</div>
+										</article>
+									</div>
+									<hr class="divider" />
+									<h2 class="danger-zone-title">DANGER ZONE</h2>
+									<button type="button" class="danger-btn">delete account</button>
+								</div>
+							</div>
+							<!-- Backdrop + dialog -->
+							<div class="wf-backdrop" role="presentation">
+								<div class="wf-dialog" role="alertdialog" aria-modal="true">
+									<h2 class="wf-dialog-title">Delete account?</h2>
+									<p class="wf-dialog-body">
+										Your account will be deactivated. To restore it, log back in within 30 days;
+										after that, your data is permanently removed.
+									</p>
+									<div class="wf-dialog-actions">
+										<button type="button" class="wf-btn-cancel">cancel</button>
+										<button type="button" class="wf-btn-confirm">delete account</button>
+									</div>
+								</div>
+							</div>
+						</div>
+					</div>
+
 				</div>
 			</main>
 		</div>
