@@ -1,5 +1,7 @@
 # Environment — never commit secrets
 .env
+.env.dev
+.env.prod
 **/.env
 
 # IDE
