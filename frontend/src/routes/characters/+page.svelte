@@ -7,10 +7,18 @@
 
 	let query = $state('');
 
+	// Main first, then alphabetical by name.
+	let sorted = $derived(
+		[...data.characters].sort((a, b) => {
+			if (a.is_main !== b.is_main) return Number(b.is_main) - Number(a.is_main);
+			return a.name.localeCompare(b.name);
+		})
+	);
+
 	let filtered = $derived(
 		query.trim() === ''
-			? data.characters
-			: data.characters.filter((c) =>
+			? sorted
+			: sorted.filter((c) =>
 					c.name.toLowerCase().includes(query.trim().toLowerCase())
 				)
 	);
