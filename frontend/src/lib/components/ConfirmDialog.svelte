@@ -93,6 +93,9 @@
 
 	let reduceMotion = $state(false);
 
+	// Effect 1: open/close lifecycle — capture the trigger, read the
+	// reduced-motion preference, restore focus on close. This effect runs
+	// once per open→close cycle.
 	$effect(() => {
 		if (!open) {
 			return;
@@ -103,17 +106,25 @@
 		previouslyFocusedEl = (document.activeElement as HTMLElement | null) ?? null;
 		reduceMotion = prefersReducedMotion();
 
-		// Defer focus by one microtask so the cancel button has mounted.
-		queueMicrotask(() => {
-			cancelButtonEl?.focus();
-		});
-
 		return () => {
 			// On close, restore focus to whatever opened us (typically the
 			// destructive trigger button on the caller's page).
 			previouslyFocusedEl?.focus();
 			previouslyFocusedEl = null;
 		};
+	});
+
+	// Effect 2: default focus — runs whenever the dialog is open AND the
+	// cancel button is bound. queueMicrotask isn't enough: Svelte 5 binds
+	// `bind:this` during DOM mount which can land in a later tick than a
+	// microtask, leaving cancelButtonEl null when we'd try to focus it. A
+	// reactive $effect keyed on cancelButtonEl re-runs once the bind fires,
+	// guaranteeing focus lands on cancel before the user can act on the
+	// dialog. (jsdom hides this race, hence the @needs-browser-check tag.)
+	$effect(() => {
+		if (open && cancelButtonEl) {
+			cancelButtonEl.focus();
+		}
 	});
 
 	function onKeydown(event: KeyboardEvent) {
