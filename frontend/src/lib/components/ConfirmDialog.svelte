@@ -81,10 +81,19 @@
 	let confirmButtonEl = $state<HTMLButtonElement | null>(null);
 	let previouslyFocusedEl: HTMLElement | null = null;
 
-	// Read prefers-reduced-motion at runtime. In SSR / test environments where
-	// matchMedia is unavailable, default to "no reduce" (animations on); the
-	// CSS media query layer still disables them for real users in that case.
+	// Resolve whether motion should be reduced, honouring the full tri-state of the
+	// reduce_motion accessibility preference:
+	//   data-reduce-motion="on"  → reduce (explicit override beats the OS)
+	//   data-reduce-motion="off" → do not reduce (explicit opt-out beats the OS)
+	//   absent (auto)            → follow the OS prefers-reduced-motion media query
+	// In SSR / test environments where matchMedia is unavailable, default to "no
+	// reduce"; the CSS media query layer still disables motion for real users.
 	function prefersReducedMotion(): boolean {
+		if (typeof document !== 'undefined') {
+			const override = document.documentElement.getAttribute('data-reduce-motion');
+			if (override === 'on') return true;
+			if (override === 'off') return false;
+		}
 		if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
 			return false;
 		}

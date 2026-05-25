@@ -48,6 +48,17 @@ export interface CreateKeyRequest {
 	expires_at: string | null;
 }
 
+// keep in sync with: backend/src/dto/preferences.rs and lib/preferences/schema.ts
+export interface PreferencesDto {
+	text_size: 'auto' | 'small' | 'regular' | 'large';
+	reduce_motion: 'auto' | 'on' | 'off';
+	high_contrast: 'auto' | 'on' | 'off';
+	large_targets: 'off' | 'on';
+	dyslexia_font: 'off' | 'on';
+}
+
+export type PreferencesPatch = Partial<PreferencesDto>;
+
 // keep in sync with: backend/src/dto/health.rs
 export type HealthStatus = 'ok' | 'degraded';
 
@@ -146,6 +157,29 @@ export function deleteAccount(
 	return request<void>(fetch, `${backendUrl}/api/v1/account`, {
 		method: 'DELETE',
 		headers: { cookie }
+	});
+}
+
+export function getPreferences(
+	fetch: typeof globalThis.fetch,
+	backendUrl: string,
+	cookie: string
+): Promise<PreferencesDto> {
+	return request<PreferencesDto>(fetch, `${backendUrl}/api/v1/me/preferences`, {
+		headers: { cookie }
+	});
+}
+
+export function updatePreferences(
+	fetch: typeof globalThis.fetch,
+	backendUrl: string,
+	patch: PreferencesPatch,
+	cookie: string
+): Promise<PreferencesDto> {
+	return request<PreferencesDto>(fetch, `${backendUrl}/api/v1/me/preferences`, {
+		method: 'PATCH',
+		headers: { cookie, 'content-type': 'application/json' },
+		body: JSON.stringify(patch)
 	});
 }
 

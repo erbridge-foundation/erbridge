@@ -2,15 +2,23 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('$lib/api', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('$lib/api')>();
-	return { ...actual, getMe: vi.fn() };
+	return { ...actual, getMe: vi.fn(), getPreferences: vi.fn() };
 });
 
 vi.mock('$lib/server/env', () => ({
 	backend_internal_url: () => 'http://backend:3000'
 }));
 
-const { getMe, ApiError } = await import('$lib/api');
+const { getMe, getPreferences, ApiError } = await import('$lib/api');
 const { load } = await import('./+layout.server');
+
+const DEFAULT_PREFS = {
+	text_size: 'auto',
+	reduce_motion: 'auto',
+	high_contrast: 'auto',
+	large_targets: 'off',
+	dyslexia_font: 'off'
+} as const;
 
 type LoadEvent = Parameters<typeof load>[0];
 
@@ -27,6 +35,8 @@ function makeEvent(opts: { pathname: string; cookie?: string }): LoadEvent {
 
 beforeEach(() => {
 	vi.mocked(getMe).mockReset();
+	vi.mocked(getPreferences).mockReset();
+	vi.mocked(getPreferences).mockResolvedValue({ ...DEFAULT_PREFS });
 });
 
 describe('+layout.server load', () => {
@@ -40,7 +50,7 @@ describe('+layout.server load', () => {
 
 		const result = await load(event);
 
-		expect(result).toEqual({ me, meError: null });
+		expect(result).toEqual({ me, meError: null, serverPrefs: { ...DEFAULT_PREFS } });
 		expect(event.locals.me).toBe(me);
 	});
 
@@ -90,7 +100,7 @@ describe('+layout.server load', () => {
 
 		const result = await load(makeEvent({ pathname: '/login' }));
 
-		expect(result).toEqual({ me: null, meError: null });
+		expect(result).toEqual({ me: null, meError: null, serverPrefs: null });
 	});
 
 	it('does NOT redirect unauthenticated user on /about (public route)', async () => {
@@ -98,7 +108,7 @@ describe('+layout.server load', () => {
 
 		const result = await load(makeEvent({ pathname: '/about' }));
 
-		expect(result).toEqual({ me: null, meError: null });
+		expect(result).toEqual({ me: null, meError: null, serverPrefs: null });
 	});
 
 	it('does NOT bounce an authenticated user away from /about', async () => {
@@ -111,7 +121,7 @@ describe('+layout.server load', () => {
 		const result = (await load(makeEvent({ pathname: '/about', cookie: 'session=jwt' })))!;
 
 		// Unlike /login, /about renders for authenticated users (no redirect to /).
-		expect(result).toEqual({ me, meError: null });
+		expect(result).toEqual({ me, meError: null, serverPrefs: { ...DEFAULT_PREFS } });
 	});
 
 	it('returns meError on non-401 error so the layout banner can render', async () => {
@@ -137,6 +147,20 @@ describe('+layout.server load', () => {
 
 		const result = await load(makeEvent({ pathname: '/login' }));
 
-		expect(result).toEqual({ me: null, meError: null });
+		expect(result).toEqual({ me: null, meError: null, serverPrefs: null });
+	});
+
+	it('returns serverPrefs:null when the preferences fetch fails (page still renders)', async () => {
+		const me = {
+			account: { id: 'a', status: 'active', is_server_admin: false, created_at: 'now' },
+			characters: []
+		};
+		vi.mocked(getMe).mockResolvedValue(me);
+		vi.mocked(getPreferences).mockRejectedValue(new ApiError('bad_gateway', 'down', 502));
+
+		const result = (await load(makeEvent({ pathname: '/', cookie: 'session=jwt' })))!;
+
+		expect(result.me).toBe(me);
+		expect(result.serverPrefs).toBeNull();
 	});
 });

@@ -52,9 +52,9 @@ describe('/about +page.svelte', () => {
 	it('renders all acknowledgement links opening in new tabs', () => {
 		render(AboutPage, { props: { data: pageData(healthy, null) } });
 		for (const href of [
-			'https://tripwire.eve-apps.com/',
+			'https://tripwiremap.app/',
 			'https://wanderer.ltd/',
-			'https://anokis.info/',
+			'https://anoikis.info/',
 			'https://www.eve-scout.com/'
 		]) {
 			const link = document.querySelector(`a[href="${href}"]`);

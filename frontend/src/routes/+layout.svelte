@@ -2,11 +2,26 @@
 	import '../app.css';
 	import { page } from '$app/stores';
 	import GlobalNav from '$lib/components/GlobalNav.svelte';
+	import { preferences } from '$lib/preferences/store.svelte';
+	import { coercePreferences } from '$lib/preferences/schema';
 	import type { LayoutData } from './$types';
 
 	let { data, children }: { data: LayoutData; children: import('svelte').Snippet } = $props();
 
 	let isLoginRoute = $derived($page.url.pathname === '/login');
+
+	// Hydrate the preference store from localStorage (the app.html inline script
+	// already applied the same values before paint, so this does not re-flash),
+	// then reconcile against the authenticated account's server preferences. Runs
+	// once per session — not on every client navigation.
+	let initialised = false;
+	$effect(() => {
+		if (initialised) return;
+		initialised = true;
+		preferences.hydrate();
+		const serverPrefs = data.serverPrefs ? coercePreferences(data.serverPrefs) : null;
+		void preferences.reconcile(serverPrefs);
+	});
 </script>
 
 <div class="app" class:login={isLoginRoute}>

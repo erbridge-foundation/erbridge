@@ -9,7 +9,7 @@
 	const acknowledgements = [
 		{
 			name: "Tripwire",
-			href: "https://tripwire.eve-apps.com/",
+			href: "https://tripwiremap.app/",
 			desc: "the wormhole-mapping reference for a generation of W-space pilots; pioneered the chain-aware signature workflow.",
 		},
 		{
@@ -18,8 +18,8 @@
 			desc: "modern, open-source, multi-character mapping with strong real-time semantics.",
 		},
 		{
-			name: "Anokis.info",
-			href: "https://anokis.info/",
+			name: "Anoikis.info",
+			href: "https://anoikis.info/",
 			desc: "the institutional encyclopedia of W-space; the static-info source the community has trusted for years.",
 		},
 		{
@@ -109,10 +109,15 @@
 		<ul class="ack-list">
 			{#each acknowledgements as ack (ack.href)}
 				<li class="ack">
-					<a href={ack.href} target="_blank" rel="noopener noreferrer">
+					<a
+						class="ack-card"
+						href={ack.href}
+						target="_blank"
+						rel="noopener noreferrer"
+					>
 						<span class="ack-name">{ack.name}</span>
+						<span class="ack-desc">{ack.desc}</span>
 					</a>
-					<div class="ack-desc">{ack.desc}</div>
 				</li>
 			{/each}
 		</ul>
@@ -121,7 +126,17 @@
 
 <style>
 	.about {
-		max-width: 640px;
+		/* The app shell is a fixed-height (100vh) column with overflow:hidden, so
+		   this page must be its own scroll region or its bottom is clipped with no
+		   scrollbar. `flex: 1; min-height: 0` lets it fill the remaining height and
+		   shrink enough to scroll; `overflow-y: auto` provides the scrollbar. The
+		   content column stays centred via the max-width + auto margins (the flex
+		   box itself is full-width). Matches the characters page's content width. */
+		flex: 1;
+		min-height: 0;
+		overflow-y: auto;
+		width: 100%;
+		max-width: 960px;
 		margin: 0 auto;
 		padding: 48px 24px 64px;
 	}
@@ -179,13 +194,11 @@
 		color: var(--amber);
 	}
 
-	.source-link a,
-	.ack a {
+	.source-link a {
 		color: var(--sky);
 		text-decoration: none;
 	}
-	.source-link a:hover,
-	.ack a:hover {
+	.source-link a:hover {
 		text-decoration: underline;
 	}
 
@@ -200,17 +213,49 @@
 		list-style: none;
 		margin: 0;
 		padding: 0;
-		display: flex;
-		flex-direction: column;
+		display: grid;
+		grid-template-columns: repeat(2, 1fr);
 		gap: 16px;
 	}
+	@media (max-width: 600px) {
+		.ack-list {
+			grid-template-columns: 1fr;
+		}
+	}
+
+	.ack {
+		display: flex;
+	}
+
+	/* The whole card is the link — a larger, clearer target (and it respects the
+	   large-targets accessibility preference, which sizes `a` elements). */
+	.ack-card {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		width: 100%;
+		padding: 16px;
+		background: var(--space-900);
+		border: 1px solid var(--space-700);
+		border-radius: 6px;
+		text-decoration: none;
+	}
+	.ack-card:hover {
+		background: var(--space-800);
+		border-color: var(--space-600);
+	}
+	.ack-card:focus-visible {
+		outline: 2px solid var(--sky);
+		outline-offset: 2px;
+	}
+
 	.ack-name {
 		font-weight: 600;
-		color: var(--slate-200);
+		color: var(--sky);
 	}
 	.ack-desc {
 		color: var(--slate-400);
 		font-size: 0.75rem;
-		margin-top: 2px;
+		line-height: 1.5;
 	}
 </style>

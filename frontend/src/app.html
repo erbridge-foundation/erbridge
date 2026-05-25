@@ -5,6 +5,40 @@
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<link rel="icon" type="image/svg+xml" href="%sveltekit.assets%/favicon.svg" />
 		<title>E-R Bridge</title>
+		<!--
+			No-FOUC accessibility bootstrap. Applies the user's stored preferences to
+			<html> before first paint so large text / high contrast / etc. don't flash
+			the default first. Mirrors lib/preferences/apply.ts + schema.ts in vanilla
+			JS (it runs before any module loads); keep the two in sync.
+		-->
+		<script>
+			(function () {
+				try {
+					var raw = localStorage.getItem('erbridge:preferences');
+					if (!raw) return;
+					var p = JSON.parse(raw);
+					if (!p || typeof p !== 'object') return;
+					var el = document.documentElement;
+					var sizes = { regular: 100, small: 87.5, large: 125 };
+					if (p.text_size && sizes[p.text_size]) {
+						el.style.fontSize = sizes[p.text_size] + '%';
+					}
+					var attrs = {
+						reduce_motion: ['data-reduce-motion', 'auto'],
+						high_contrast: ['data-high-contrast', 'auto'],
+						large_targets: ['data-large-targets', 'off'],
+						dyslexia_font: ['data-dyslexia-font', 'off']
+					};
+					for (var key in attrs) {
+						var v = p[key];
+						var spec = attrs[key];
+						if (v && v !== spec[1]) el.setAttribute(spec[0], v);
+					}
+				} catch (e) {
+					/* never block render on a bad preference value */
+				}
+			})();
+		</script>
 		%sveltekit.head%
 	</head>
 	<body data-sveltekit-preload-data="hover">

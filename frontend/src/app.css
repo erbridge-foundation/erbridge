@@ -1,4 +1,7 @@
 @import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap");
+/* Atkinson Hyperlegible — loaded for the dyslexia-friendly typeface preference
+   (see accessibility-preferences). Designed by the Braille Institute for legibility. */
+@import url("https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&display=swap");
 
 :root {
 	--space-950: #05080f;
@@ -19,6 +22,11 @@
 	--emerald: #10b981;
 	--amber: #f59e0b;
 	--red: #ef4444;
+
+	/* The UI typeface, indirected through a custom property so the dyslexia-font
+	   accessibility preference can swap it in one place (see below). */
+	--font-ui: "JetBrains Mono", ui-monospace, monospace;
+	--font-dyslexic: "Atkinson Hyperlegible", ui-sans-serif, system-ui, sans-serif;
 }
 
 *,
@@ -36,7 +44,136 @@ body {
 	padding: 0;
 	background: var(--space-950);
 	color: var(--slate-100);
-	font-family: "JetBrains Mono", ui-monospace, monospace;
+	font-family: var(--font-ui);
 	font-size: 0.875rem;
 	line-height: 1.5;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Accessibility preferences (see openspec specs/accessibility-preferences).
+
+   Each preference applies via <html>: text_size sets `font-size` directly
+   (the inline app.html bootstrap + lib/preferences/apply.ts set the inline
+   style), the rest set a `data-*` attribute that these rules key off. The
+   default for an OS-backed preference is "auto" → no attribute → the @media
+   rule below decides, so an unconfigured user still gets their OS preference.
+   ────────────────────────────────────────────────────────────────────────── */
+
+/* 4.2 — Reduce motion.
+   CONTRIBUTOR NOTE: any animation or transition you add anywhere in the app is
+   automatically disabled when motion is reduced — the universal selectors below
+   gate all of them. You do not need to special-case new motion. The only place
+   that needs explicit handling is JS-driven animation (e.g. Svelte
+   `transition:` directives), which cannot be killed by CSS duration overrides:
+   read the reduce_motion state in JS (see ConfirmDialog.svelte's
+   prefersReducedMotion(), which honours both the OS query and the
+   data-reduce-motion override) and pass `duration: 0`.
+
+   `auto` (no attribute) follows the OS via the media query; `on` forces it;
+   `off` opts back in even when the OS prefers reduced motion (explicit wins). */
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		animation-duration: 0.001ms !important;
+		animation-iteration-count: 1 !important;
+		transition-duration: 0.001ms !important;
+		scroll-behavior: auto !important;
+	}
+}
+html[data-reduce-motion="on"] *,
+html[data-reduce-motion="on"] *::before,
+html[data-reduce-motion="on"] *::after {
+	animation-duration: 0.001ms !important;
+	animation-iteration-count: 1 !important;
+	transition-duration: 0.001ms !important;
+	scroll-behavior: auto !important;
+}
+/* Explicit "off" overrides the OS preference: re-enable motion. Placed after
+   the media query so it wins on equal specificity for users who opt out. */
+@media (prefers-reduced-motion: reduce) {
+	html[data-reduce-motion="off"] *,
+	html[data-reduce-motion="off"] *::before,
+	html[data-reduce-motion="off"] *::after {
+		animation-duration: revert !important;
+		animation-iteration-count: revert !important;
+		transition-duration: revert !important;
+		scroll-behavior: revert !important;
+	}
+}
+
+/* 4.3 — High contrast. Push the palette hard: pure-black surfaces, pure-white
+   text across every tier (no greyed-out secondary/muted text), brilliant
+   borders, and brightened accents — aiming well past WCAG AAA. `auto` follows
+   the OS via prefers-contrast; `on` forces it; `off` opts out.
+
+   Both the media-query and the explicit `on` selector apply the same overrides,
+   listed together to avoid drift. */
+@media (prefers-contrast: more) {
+	html:not([data-high-contrast="off"]) {
+		--space-950: #000000;
+		--space-900: #000000;
+		--space-800: #0a0a0a;
+		--space-700: #ffffff;
+		--space-600: #ffffff;
+
+		--slate-100: #ffffff;
+		--slate-200: #ffffff;
+		--slate-300: #ffffff;
+		--slate-400: #ffffff;
+		--slate-500: #ffffff;
+		--slate-600: #d4d4d4;
+		--slate-700: #ffffff;
+
+		--sky: #7dd3fc;
+		--emerald: #6ee7b7;
+		--amber: #fcd34d;
+		--red: #fca5a5;
+		--violet: #c4b5fd;
+	}
+}
+html[data-high-contrast="on"] {
+	/* Surfaces → near-black. --space-700/-600 are overloaded as BOTH borders and
+	   hover/active backgrounds, so they cannot go pure-white (white-on-white
+	   hover text). They become a vivid mid-blue: a bright, clearly-visible
+	   border, and a hover background that still carries white text legibly. */
+	--space-950: #000000;
+	--space-900: #000000;
+	--space-800: #0a0a0a;
+	--space-700: #1f5fa8;
+	--space-600: #2f7fd0;
+
+	/* Every text tier → pure white (no greyed secondary/muted text). */
+	--slate-100: #ffffff;
+	--slate-200: #ffffff;
+	--slate-300: #ffffff;
+	--slate-400: #ffffff;
+	--slate-500: #ffffff;
+	--slate-600: #e0e0e0;
+	--slate-700: #ffffff;
+
+	/* Accents brightened for contrast against the black surfaces. */
+	--sky: #7dd3fc;
+	--emerald: #6ee7b7;
+	--amber: #fcd34d;
+	--red: #fca5a5;
+	--violet: #c4b5fd;
+}
+
+/* 4.4 — Larger interactive targets. Enforce a minimum hit area on controls
+   without growing text (spacing stays in px per the design system). */
+html[data-large-targets="on"] button,
+html[data-large-targets="on"] a,
+html[data-large-targets="on"] input,
+html[data-large-targets="on"] select,
+html[data-large-targets="on"] [role="button"],
+html[data-large-targets="on"] [role="menuitem"] {
+	min-height: 44px;
+	min-width: 44px;
+}
+
+/* 4.5 — Dyslexia-friendly typeface. Swaps the UI font everywhere it inherits
+   from --font-ui. */
+html[data-dyslexia-font="on"] {
+	--font-ui: var(--font-dyslexic);
 }
