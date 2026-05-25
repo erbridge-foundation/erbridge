@@ -1,24 +1,34 @@
-## 1. Frontend i18n infrastructure
+## 1. Paraglide setup (per `sveltekit-node` skill)
 
-- [ ] 1.1 Add i18n library dependency to the frontend
-- [ ] 1.2 Create message catalogue structure and key naming convention
-- [ ] 1.3 Wire i18n initialisation into the SvelteKit layout
+- [ ] 1.1 Add `@inlang/paraglide-js` and an inlang project (`project.inlang/settings.json`) with `baseLocale: en` and `locales: [en]`.
+- [ ] 1.2 Wire the Paraglide Vite plugin so messages compile to `$lib/paraglide/messages` (and the runtime to `$lib/paraglide/runtime`); add the generated output to the appropriate ignore rules.
+- [ ] 1.3 Configure the locale resolution strategy `['cookie', 'preferredLanguage', 'baseLocale']`.
+- [ ] 1.4 Add the SvelteKit server hook (`hooks.server.ts`) using Paraglide's `paraglideMiddleware`/`reroute` integration so the active locale is resolved per request and `<html lang>` is server-rendered correctly. (This file does not exist yet — it is introduced here.)
 
-## 2. Locale detection and preference
+## 2. Message catalogue
 
-> Depends on `accessibility-preferences` (preference substrate). Apply that change first.
+- [ ] 2.1 Establish the message catalogue (`messages/en.json`) and a key naming convention (e.g. dotted, feature-scoped keys).
+- [ ] 2.2 Document the convention briefly so new strings are added consistently.
 
-- [ ] 2.1 Implement browser locale detection with `en` fallback (a runtime default; not a stored value until the user chooses)
-- [ ] 2.2 Add `locale` to the recognised + validated keys of the backend preferences service (validate against the supported-locale set); no new column or endpoint — extend `services/preferences.rs` and its tests
-- [ ] 2.3 Read/write locale via the existing frontend preferences store (`preferences.locale`); restore it through the substrate's login reconciliation on authenticated load
-- [ ] 2.4 Extend the `app.html` preference bootstrap to apply `preferences.locale` to `<html lang>` before paint
+## 3. Locale persistence on the account-preferences substrate
 
-## 3. String replacement
+> The substrate ships in the archived `accessibility-preferences` change.
 
-- [ ] 3.1 Replace hardcoded user-facing strings in frontend components with translation keys
-- [ ] 3.2 Populate `en` message catalogue with all extracted strings
+- [ ] 3.1 Add `locale` to the recognised + validated keys of the backend preferences service (validate against the supported-locale set); no new column or endpoint — extend `services/preferences.rs` and its tests, regenerate the sqlx cache if needed.
+- [ ] 3.2 Add `locale` to the frontend preference schema/types and the preferences store, persisted via `preferences.locale` (localStorage + backend sync, login reconciliation) like the other keys.
+- [ ] 3.3 Bridge the store to Paraglide: whenever `locale` changes (Apply, login reconcile), write Paraglide's locale cookie so SSR language always matches the stored preference.
 
-## 4. Locale selection UI
+## 4. String replacement (the bulk of the work)
 
-- [ ] 4.1 Add a locale selector to the `/preferences` page (the account-preferences UI surface)
-- [ ] 4.2 Wire the selector to the preferences store so it persists as `preferences.locale` (localStorage + backend sync); locale is not layout-altering, so it does not need the auto-revert countdown
+- [ ] 4.1 Replace **all** hardcoded user-facing strings across the frontend with Paraglide message calls (`m.*`).
+- [ ] 4.2 Populate `messages/en.json` with every extracted string.
+- [ ] 4.3 Update component tests that assert on literal copy to tolerate message-driven text.
+
+## 5. Locale selection UI
+
+- [ ] 5.1 Add a locale selector to the `/preferences` page, staged like the other preferences (it is not layout-altering, so it does not need the contrast/size-proof recovery treatment, but it commits via the same Apply flow).
+- [ ] 5.2 On commit, persist as `preferences.locale` and set the Paraglide cookie so the new locale takes effect on the next render.
+
+## 6. Verification
+
+- [ ] 6.1 `svelte-check`, `vitest run`, `pnpm build` green; backend `cargo test` + fmt + sqlx cache green if the service was touched.

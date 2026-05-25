@@ -4,12 +4,13 @@ The application currently has no internationalisation (i18n) infrastructure, mea
 
 ## What Changes
 
-- Introduce an i18n library and locale message catalogue to the frontend
-- Replace hardcoded user-facing strings with translation keys
-- Add a locale selection mechanism (defaulting to browser locale)
-- Persist the locale preference as **`preferences.locale`** on the existing account-preferences substrate (the `preferences` JSONB column + `GET`/`PATCH /api/v1/me/preferences`), introduced by the `accessibility-preferences` change. **No new account column and no new endpoint** — locale is one more key in the preference bag, with the same localStorage-first-with-backend-sync behaviour and apply-before-paint handling (`<html lang>`).
+- Adopt **Paraglide** (`@inlang/paraglide-js`) as the i18n library, with its SvelteKit integration and a message catalogue. Paraglide is compile-time (messages become tree-shakeable functions) and resolves the active locale per request server-side, so SSR renders the right language with no hydration flash.
+- Resolve the active locale with strategy **`['cookie', 'preferredLanguage', 'baseLocale']`** — a server-readable cookie (the user's choice), then the browser `Accept-Language` header, then `en`. **No locale in the URL** (no `/en/` path prefixes): E-R Bridge is an authenticated tool, so the SEO/shareable-link benefits don't apply and the routing cost isn't justified for an English-only launch. `'url'` can be added later if the app goes public.
+- Replace **all** hardcoded user-facing strings with Paraglide message keys (the bulk of the work).
+- Persist the locale preference as **`preferences.locale`** on the existing `account-preferences` substrate (the `preferences` JSONB column + `GET`/`PATCH /api/v1/me/preferences`). **No new account column and no new endpoint** — locale is one more validated key in the preference bag, with the same localStorage-first-with-backend-sync behaviour.
+- **Bridge** the preferences store to Paraglide's locale cookie: whenever `locale` changes (commit, login reconcile), the store writes the cookie so the server-rendered language always matches the stored preference. This is the single integration point.
 
-**Depends on `accessibility-preferences`** for the preference substrate (column, endpoint, frontend store). That change should be applied first; if it is not, this change must add the substrate itself rather than a locale-specific column/endpoint.
+**Depends on `accessibility-preferences`** for the preference substrate (column, endpoint, frontend store), now archived. If that substrate were absent, this change would have to add it rather than a locale-specific column/endpoint.
 
 ## Capabilities
 
