@@ -1,6 +1,7 @@
 pub mod accounts;
 pub mod api_keys;
 pub mod characters;
+pub mod preferences;
 pub mod sessions;
 
 use anyhow::{Context, Result};

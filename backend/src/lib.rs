@@ -13,7 +13,7 @@ pub mod session;
 use axum::{
     Router,
     middleware::from_fn,
-    routing::{delete, get, post},
+    routing::{delete, get, patch, post},
 };
 use tower_http::trace::TraceLayer;
 use utoipa::OpenApi;
@@ -25,6 +25,14 @@ use handlers::middleware::refresh_session_cookie;
 pub fn build_router(state: AppState) -> Router {
     let api_v1_routes = Router::new()
         .route("/me", get(handlers::api::v1::me::get_me))
+        .route(
+            "/me/preferences",
+            get(handlers::api::v1::preferences::get_preferences),
+        )
+        .route(
+            "/me/preferences",
+            patch(handlers::api::v1::preferences::update_preferences),
+        )
         .route("/keys", post(handlers::api::v1::keys::create_key))
         .route("/keys", get(handlers::api::v1::keys::list_keys))
         .route("/keys/{id}", delete(handlers::api::v1::keys::delete_key))
@@ -61,6 +69,8 @@ pub fn build_router(state: AppState) -> Router {
 pub fn registered_api_v1_routes() -> Vec<(String, String)> {
     vec![
         ("/api/v1/me".to_string(), "get".to_string()),
+        ("/api/v1/me/preferences".to_string(), "get".to_string()),
+        ("/api/v1/me/preferences".to_string(), "patch".to_string()),
         ("/api/v1/keys".to_string(), "post".to_string()),
         ("/api/v1/keys".to_string(), "get".to_string()),
         ("/api/v1/keys/{id}".to_string(), "delete".to_string()),

@@ -4,6 +4,7 @@ use utoipa::ToSchema;
 use crate::dto::{
     account::{CharacterDto, MeDto},
     keys::{CreatedKeyDto, KeyMetadataDto},
+    preferences::PreferencesDto,
 };
 
 #[derive(Serialize)]
@@ -37,4 +38,9 @@ pub struct KeyListResponse {
 #[derive(Serialize, ToSchema)]
 pub struct CharacterResponse {
     pub data: CharacterDto,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct PreferencesResponse {
+    pub data: PreferencesDto,
 }

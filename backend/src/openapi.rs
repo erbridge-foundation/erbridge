@@ -8,9 +8,12 @@ use crate::{
         account::{AccountDto, CharacterDto, MeDto},
         health::{ComponentHealth, ComponentStatus, HealthResponse, HealthStatus},
         keys::{CreateKeyRequest, CreatedKeyDto, KeyMetadataDto},
+        preferences::{PreferencesDto, PreferencesPatch, TextSize, Toggle, TriState},
     },
     error::{ErrorDetail, ErrorEnvelope},
-    response::{CharacterResponse, CreatedKeyResponse, KeyListResponse, MeResponse},
+    response::{
+        CharacterResponse, CreatedKeyResponse, KeyListResponse, MeResponse, PreferencesResponse,
+    },
 };
 
 #[derive(OpenApi)]
@@ -21,6 +24,8 @@ use crate::{
     ),
     paths(
         crate::handlers::api::v1::me::get_me,
+        crate::handlers::api::v1::preferences::get_preferences,
+        crate::handlers::api::v1::preferences::update_preferences,
         crate::handlers::api::v1::keys::create_key,
         crate::handlers::api::v1::keys::list_keys,
         crate::handlers::api::v1::keys::delete_key,
@@ -38,6 +43,12 @@ use crate::{
         CreatedKeyResponse,
         KeyListResponse,
         CharacterResponse,
+        PreferencesResponse,
+        PreferencesDto,
+        PreferencesPatch,
+        TextSize,
+        TriState,
+        Toggle,
         MeDto,
         AccountDto,
         CharacterDto,
@@ -50,6 +61,7 @@ use crate::{
     modifiers(&SecurityAddon),
     tags(
         (name = "account", description = "Account and character management"),
+        (name = "preferences", description = "Per-account accessibility preferences"),
         (name = "keys", description = "API key management"),
         (name = "characters", description = "EVE character operations"),
         (name = "health", description = "Liveness and component health"),

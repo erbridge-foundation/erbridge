@@ -232,6 +232,92 @@ async fn get_me_401_without_session(pool: PgPool) {
 }
 
 #[sqlx::test]
+async fn get_preferences_200_matches_schema(pool: PgPool) {
+    let state = build_state(pool);
+    let (_account_id, cookie) = create_session(&state).await;
+    let doc = openapi_doc_json();
+
+    let resp = backend::build_router(state)
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/api/v1/me/preferences")
+                .header(header::COOKIE, &cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_schema(
+        &doc,
+        "/api/v1/me/preferences",
+        "get",
+        "200",
+        &json_body(resp).await,
+    );
+}
+
+#[sqlx::test]
+async fn patch_preferences_200_matches_schema(pool: PgPool) {
+    let state = build_state(pool);
+    let (_account_id, cookie) = create_session(&state).await;
+    let doc = openapi_doc_json();
+
+    let resp = backend::build_router(state)
+        .oneshot(
+            Request::builder()
+                .method(Method::PATCH)
+                .uri("/api/v1/me/preferences")
+                .header(header::COOKIE, &cookie)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(json!({"text_size": "large"}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_schema(
+        &doc,
+        "/api/v1/me/preferences",
+        "patch",
+        "200",
+        &json_body(resp).await,
+    );
+}
+
+#[sqlx::test]
+async fn patch_preferences_400_on_unknown_key(pool: PgPool) {
+    let state = build_state(pool);
+    let (_account_id, cookie) = create_session(&state).await;
+    let doc = openapi_doc_json();
+
+    let resp = backend::build_router(state)
+        .oneshot(
+            Request::builder()
+                .method(Method::PATCH)
+                .uri("/api/v1/me/preferences")
+                .header(header::COOKIE, &cookie)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(json!({"bogus_key": "x"}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_schema(
+        &doc,
+        "/api/v1/me/preferences",
+        "patch",
+        "400",
+        &json_body(resp).await,
+    );
+}
+
+#[sqlx::test]
 async fn post_keys_201_matches_schema(pool: PgPool) {
     let state = build_state(pool);
     let (_account_id, cookie) = create_session(&state).await;
