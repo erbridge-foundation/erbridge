@@ -1,6 +1,6 @@
 ## ADDED Requirements
 
-This capability defines the `/api/health` endpoint. It is intentionally exempt from the `api-contract` success envelope (see the `api-contract` MODIFIED requirement in this change) so that orchestration tooling can shallow-parse the response. The endpoint is public — it requires no session cookie and no API key — and is mounted outside the `AuthenticatedAccount` middleware tree, alongside `/api/openapi.json` and `/api/docs`.
+This capability defines the `/api/health` endpoint. It is intentionally exempt from the `api-contract` success envelope (see the `api-contract` MODIFIED requirement in this change) so that orchestration tooling can shallow-parse the response. The endpoint is public — it requires no session cookie and no API key. In this codebase auth is enforced per-handler by the `AuthenticatedAccount` extractor (`backend/src/handlers/middleware.rs`), not by a router-tree middleware split; a handler is public precisely by **not** naming that extractor in its signature. `/api/health` is therefore public by simply omitting the extractor, and is registered in `build_router` (`backend/src/lib.rs`) alongside `/api/openapi.json` and `/api/docs`.
 
 ### Requirement: GET /api/health returns a flat status document
 
@@ -72,3 +72,17 @@ The handler SHALL execute this check on every `GET /api/health` call. It SHALL N
 #### Scenario: Postgres unreachable
 - **WHEN** the backend's Postgres pool cannot execute `SELECT 1` (connection refused, timeout, auth failure, etc.)
 - **THEN** the `db` component reports `status = "degraded"` and the response is still HTTP 200 (the endpoint does not 5xx; "degraded" is the success signal)
+
+### Requirement: Every registered `/api/v1` route declares authentication
+
+Because auth is opt-in per handler (a handler is public by omitting the `AuthenticatedAccount` extractor), an accidentally-omitted extractor would silently expose a versioned business route. Introducing the deliberately-public `/api/health` makes that failure mode newly easy to overlook. To keep the versioned surface fail-closed, every route registered under `/api/v1` SHALL declare an authentication requirement.
+
+Concretely: for every `(path, method)` in `backend::registered_api_v1_routes()`, the OpenAPI document's operation at that path/method SHALL carry a non-empty `security` requirement. A test SHALL enforce this. `/api/health` is **not** a member of `registered_api_v1_routes()` and is therefore out of scope for this requirement — the guard polices the versioned business surface, not the observability carve-outs (`/api/health`, `/api/openapi.json`, `/api/docs`).
+
+#### Scenario: A registered v1 route without declared auth fails the guard
+- **WHEN** a route is registered in `registered_api_v1_routes()` and its OpenAPI operation declares no `security` requirement
+- **THEN** the authentication-coverage test fails, naming the offending route
+
+#### Scenario: The public health route is exempt
+- **WHEN** the authentication-coverage test runs
+- **THEN** `/api/health` is not asserted against (it is not in `registered_api_v1_routes()`), and its lack of a `security` requirement does not fail the test

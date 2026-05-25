@@ -4,7 +4,7 @@ This capability defines the `/about` page in the SvelteKit frontend, its content
 
 ### Requirement: /about route is publicly reachable
 
-The frontend SHALL serve a route at `/about`. The route SHALL be reachable without an authenticated session — `+layout.server.ts`'s redirect-to-`/login` allowlist SHALL include `/about` alongside `/login`. An authenticated user visiting `/about` SHALL see the same content as an unauthenticated visitor (the page is invariant of identity).
+The frontend SHALL serve a route at `/about`. The route SHALL be reachable without an authenticated session — `+layout.server.ts` SHALL treat `/about` as a public route so a `getMe` 401 does not redirect it to `/login` (alongside the existing `/login` exemption). An authenticated user visiting `/about` SHALL see the same content as an unauthenticated visitor (the page is invariant of identity).
 
 #### Scenario: Unauthenticated visitor reaches /about
 - **WHEN** a visitor with no session cookie navigates to `/about`
@@ -61,14 +61,15 @@ The page SHALL display the standard CCP-published EVE Online third-party develop
 
 ### Requirement: /about displays an acknowledgements section
 
-The page SHALL include an **Acknowledgements** section with a short list of inspirations. Each entry SHALL be a project name, an external link (opening in a new tab with `rel="noopener noreferrer"`), and a one-line description. At minimum the section SHALL include the following three entries:
+The page SHALL include an **Acknowledgements** section with a short list of inspirations. Each entry SHALL be a project name, an external link (opening in a new tab with `rel="noopener noreferrer"`), and a one-line description. At minimum the section SHALL include the following entries:
 
 - **Tripwire** — https://tripwire.eve-apps.com/ — "the wormhole-mapping reference for a generation of W-space pilots; pioneered the chain-aware signature workflow."
 - **Wanderer** — https://wanderer.ltd/ — "modern, open-source, multi-character mapping with strong real-time semantics."
 - **Anokis.info** — https://anokis.info/ — "the institutional encyclopedia of W-space; the static-info source the community has trusted for years."
+- **EVE Scout** — https://www.eve-scout.com/ — "the Signal Cartel community effort that scouts and publicly shares the Thera and Turnur connections — open wormhole intel as a free service."
 
-The acknowledgements list is curated by the project maintainers and lives in the Svelte component (or wireframe); editing it is a code change.
+The acknowledgements list is curated by the project maintainers and lives in the Svelte component (or wireframe); editing it is a code change. The list MAY grow beyond these entries.
 
-#### Scenario: All three acknowledgements are present
+#### Scenario: All acknowledgements are present
 - **WHEN** the page renders
-- **THEN** the page contains an `<a href="https://tripwire.eve-apps.com/">`, an `<a href="https://wanderer.ltd/">`, and an `<a href="https://anokis.info/">`, each with `target="_blank"` and `rel="noopener noreferrer"`
+- **THEN** the page contains an `<a href="https://tripwire.eve-apps.com/">`, an `<a href="https://wanderer.ltd/">`, an `<a href="https://anokis.info/">`, and an `<a href="https://www.eve-scout.com/">`, each with `target="_blank"` and `rel="noopener noreferrer"`

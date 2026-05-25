@@ -93,6 +93,27 @@ describe('+layout.server load', () => {
 		expect(result).toEqual({ me: null, meError: null });
 	});
 
+	it('does NOT redirect unauthenticated user on /about (public route)', async () => {
+		vi.mocked(getMe).mockRejectedValue(new ApiError('unauthenticated', 'auth required', 401));
+
+		const result = await load(makeEvent({ pathname: '/about' }));
+
+		expect(result).toEqual({ me: null, meError: null });
+	});
+
+	it('does NOT bounce an authenticated user away from /about', async () => {
+		const me = {
+			account: { id: 'a', status: 'active', is_server_admin: false, created_at: 'now' },
+			characters: []
+		};
+		vi.mocked(getMe).mockResolvedValue(me);
+
+		const result = (await load(makeEvent({ pathname: '/about', cookie: 'session=jwt' })))!;
+
+		// Unlike /login, /about renders for authenticated users (no redirect to /).
+		expect(result).toEqual({ me, meError: null });
+	});
+
 	it('returns meError on non-401 error so the layout banner can render', async () => {
 		vi.mocked(getMe).mockRejectedValue(new ApiError('bad_gateway', 'upstream failed', 502));
 

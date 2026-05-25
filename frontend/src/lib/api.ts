@@ -48,6 +48,22 @@ export interface CreateKeyRequest {
 	expires_at: string | null;
 }
 
+// keep in sync with: backend/src/dto/health.rs
+export type HealthStatus = 'ok' | 'degraded';
+
+export interface ComponentHealth {
+	name: string;
+	status: HealthStatus;
+}
+
+// Flat (unenveloped) document — /api/health is the api-contract carve-out.
+export interface HealthResponse {
+	status: HealthStatus;
+	version: string;
+	commit: string;
+	components: ComponentHealth[];
+}
+
 // keep in sync with: backend/src/error.rs
 export class ApiError extends Error {
 	constructor(
@@ -131,4 +147,17 @@ export function deleteAccount(
 		method: 'DELETE',
 		headers: { cookie }
 	});
+}
+
+// /api/health is public and returns a flat (unenveloped) document, so it does
+// NOT go through request() (which unwraps `body.data`) and forwards no cookie.
+export async function getHealth(
+	fetch: typeof globalThis.fetch,
+	backendUrl: string
+): Promise<HealthResponse> {
+	const res = await fetch(`${backendUrl}/api/health`);
+	if (!res.ok) {
+		throw new ApiError('health_unavailable', `Health check failed: ${res.status}`, res.status);
+	}
+	return (await res.json()) as HealthResponse;
 }

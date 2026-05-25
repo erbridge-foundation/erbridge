@@ -47,6 +47,9 @@ pub fn build_router(state: AppState) -> Router {
         .route("/auth/logout", get(handlers::auth::logout))
         .route("/auth/characters/add", get(handlers::auth::add_character))
         .nest("/api/v1", api_v1_routes)
+        // Public, unenveloped: the documented api-contract carve-out for /api/health.
+        // Public by construction — get_health does not take the AuthenticatedAccount extractor.
+        .route("/api/health", get(handlers::health::get_health))
         // SwaggerUi registers GET /api/openapi.json and GET /api/docs (+ /api/docs/*rest)
         .merge(SwaggerUi::new("/api/docs").url("/api/openapi.json", openapi::ApiDoc::openapi()))
         .layer(from_fn(refresh_session_cookie))

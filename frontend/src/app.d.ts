@@ -12,6 +12,14 @@ declare global {
 		// interface PageState {}
 		// interface Platform {}
 	}
+
+	// UI version inlined from package.json at build time (see vite.config.ts).
+	interface ImportMetaEnv {
+		readonly PUBLIC_UI_VERSION: string;
+	}
+	interface ImportMeta {
+		readonly env: ImportMetaEnv;
+	}
 }
 
 export {};

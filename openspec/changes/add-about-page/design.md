@@ -10,6 +10,8 @@ Three things now want an answer in the same change because they are tightly coup
 
 Goals for this change are therefore both UX (a polished about page) and infra (a real health endpoint). Both are small, but the interaction with the api-contract envelope rule needs a deliberate decision, captured below.
 
+**As-built auth model (correcting an earlier assumption in this change).** Earlier drafts of this change described mounting `/api/health` on a "public router branch" outside an "`AuthenticatedAccount` middleware tree." The foundation did **not** build auth that way. The router is assembled in `backend/src/lib.rs::build_router` (not `main.rs`), and the **only** global middleware layers are `refresh_session_cookie` (cookie-refresh, cross-cutting) and `TraceLayer`. There is no public/authenticated router split. Auth is enforced **per-handler** by the `AuthenticatedAccount` extractor (`backend/src/handlers/middleware.rs`): a handler that names `AuthenticatedAccount(account_id): AuthenticatedAccount` in its signature is authenticated and receives the typed account id; a handler that omits it is public. The auth *logic* is centralised in one place (the extractor's `from_request_parts`); what is per-handler is the one-line *declaration* of the dependency. This makes `/api/health` trivially public — it simply does not name the extractor — and the tasks/specs below are written to that model, not the imagined middleware tree. The one weakness of an opt-in auth model (forgetting the extractor fails *open*) is addressed by Decision §10.
+
 ## Goals / Non-Goals
 
 **Goals:**
@@ -64,10 +66,15 @@ A small consequence: a brand-new component being added in a future change (e.g. 
 
 ### 3. `commit` is captured at build time via `build.rs`
 
-A small `backend/build.rs` runs `git rev-parse --short HEAD` and emits `cargo:rustc-env=GIT_COMMIT_SHA=<sha>`. The handler reads it via `env!("GIT_COMMIT_SHA")`. Two fallback paths matter:
+A small `backend/build.rs` emits `cargo:rustc-env=GIT_COMMIT_SHA=<sha>`; the handler reads it via `env!("GIT_COMMIT_SHA")`. Resolution order in the script: (1) an explicit `GIT_COMMIT_SHA` build-time env var if non-empty, (2) `git rev-parse --short HEAD` against a local `.git/`, (3) the literal `"unknown"`. The script SHALL never panic.
 
-- **Source distribution without `.git/`** (e.g. someone unpacks a tarball): `build.rs` SHALL not panic. It MUST emit `cargo:rustc-env=GIT_COMMIT_SHA=unknown` and exit normally. The handler's behaviour is identical; `/api/health` just returns `"commit": "unknown"`.
-- **Docker build context**: by default, Docker copies `.git/` if the user does not `.dockerignore` it. The backend Dockerfile (foundation §3) does not exclude `.git/`, so production builds will have it. If a future change adds `.git/` to `.dockerignore`, builds will silently fall back to `"unknown"` — acceptable, but worth noting.
+Build environments and the SHA they produce:
+
+- **Local / repo build with `.git/`**: the real short SHA (path 2).
+- **Source distribution without `.git/`** (e.g. an unpacked tarball): falls through to `"unknown"` (path 3). `/api/health` simply returns `"commit": "unknown"`.
+- **Docker build**: the backend Dockerfile is a multi-stage build that copies *named files* into the builder stage — it does **not** copy `.git/`. Two requirements follow, and both were corrected during implementation:
+  1. `build.rs` MUST be copied into the builder stage. Cargo only runs a build script if `build.rs` is present in the crate root; the foundation Dockerfile copied `Cargo.toml`/`src`/`migrations`/`.sqlx` but **not** `build.rs`, so the script never ran and `env!("GIT_COMMIT_SHA")` failed to compile. The Dockerfile's `COPY` line now includes `build.rs`.
+  2. With no `.git/` in the context, the Docker build legitimately resolves to `"unknown"` (path 3) — this is acceptable. If a deployment wants a real SHA in the image, pass it via the `GIT_COMMIT_SHA` build arg (path 1) without any code change; the build script already honours it.
 
 *Alternative considered:* read the commit at runtime via `git2` or by shelling out. Rejected — the handler must be free of process state, and a binary that ships separately from its build tree can't read git history anyway. Build-time injection is the only correct answer.
 
@@ -87,9 +94,9 @@ The page calls `/api/health` from `+page.server.ts` (server-side fetch), so the 
 
 - Avoids a flash of "loading…" on the version + commit fields.
 - Means the page degrades gracefully on health-fetch failure — the server load returns `{ health: null, healthError: { message } }` and the Svelte component renders "API: unreachable" inline. This mirrors the `+layout.server.ts` pattern from the foundation (§4.5).
-- Does NOT use `+layout.server.ts`'s `locals.me` — about must work for unauthenticated users too (you can be redirected to `/login`, but the page itself does not require an account). The auth gate is at the route layer per foundation §11.
+- Does NOT *consume* `+layout.server.ts`'s `locals.me` — about must render for unauthenticated visitors too, so its content is independent of the session. (The layout load still runs and still calls `getMe`; for an anonymous visitor it resolves to `me: null`. The about page simply does not read that value.) The auth gate is the layout's redirect on a 401 from `getMe`, which the change relaxes for `/about` below.
 
-A wrinkle: foundation's `+layout.server.ts` redirects to `/login` on 401 except when the route is `/login`. To make `/about` reachable without auth, the layout's redirect rule SHALL be relaxed to include `/about` in its allowlist (alongside `/login`). The about page is intentionally a public surface; gating it behind login would be a strange UX choice for a page whose entire purpose is "tell the visitor what they are looking at."
+A wrinkle: foundation's `+layout.server.ts` redirects to `/login` whenever `getMe` returns 401, *except* on `/login` itself — and it expresses this with a single boolean `isLoginRoute = url.pathname === '/login'`, **not** an allowlist array (an earlier draft of this change assumed an array). To make `/about` reachable without auth, that single check SHALL be generalised into a public-route test that admits both `/login` and `/about` (e.g. an `isPublicRoute` helper). The about page is intentionally a public surface; gating it behind login would be a strange UX choice for a page whose entire purpose is "tell the visitor what they are looking at."
 
 ### 6. User-menu placement: `about` goes above `preferences`/`settings`
 
@@ -114,6 +121,7 @@ The acknowledgements section is a short hard-coded list in the Svelte component 
 - **Tripwire** (https://tripwire.eve-apps.com/) — the wormhole-mapping reference for a generation of W-space pilots; pioneered the chain-aware signature workflow.
 - **Wanderer** (https://wanderer.ltd/) — modern, open-source, multi-character mapping with strong real-time semantics.
 - **Anokis.info** (https://anokis.info/) — the institutional encyclopedia of W-space; the static-info source the community has trusted for years.
+- **EVE Scout** (https://www.eve-scout.com/) — the Signal Cartel community effort that scouts and publicly shares the Thera and Turnur connections — open wormhole intel as a free service.
 
 Editing this list later is a code change, not a config change. Acceptable because the list rarely changes and a config file would be over-engineering.
 
@@ -130,12 +138,22 @@ The page renders the standard EVE third-party-developer disclaimer text without 
 
 A small consequence: bumping the UI version requires a rebuild (which is true anyway; the version field is metadata for built artefacts).
 
+### 10. A fail-closed drift test guards against accidentally-public `/api/v1` routes
+
+The per-handler `AuthenticatedAccount` extractor (see Context, "As-built auth model") gives us typed account ids and request-data-aware Bearer/cookie resolution, at the cost of one weakness: a new `/api/v1/*` handler that forgets to name the extractor is **silently public** — there is no compiler error, because auth is opt-in. This change is the first to introduce a *deliberately*-public `/api/*` route (`/api/health`), which makes "public by accident" newly easy to confuse with "public on purpose." That is exactly when the guard should land.
+
+We add a test (in `backend/tests/openapi_strict.rs`, sibling to the existing `all_registered_routes_are_documented`) that iterates `backend::registered_api_v1_routes()` and asserts **every** registered `/api/v1/*` route declares a `security` requirement in the OpenAPI document (the `#[utoipa::path(... security(...) ...)]` annotation the foundation already puts on authenticated handlers, e.g. `get_me`). A route registered under `/api/v1` with no `security` entry fails the test. `/api/health` is **not** in `registered_api_v1_routes()` (it is not a v1 route), so it is correctly out of scope — the guard polices the versioned business surface, not the observability carve-outs.
+
+**Why a test and not a middleware?** A route-layer auth middleware over the `/api/v1` nest would make auth fail-*closed* by position, but at the cost of the extractor's typed account id (handlers would dig the id out of request extensions, untyped, with a runtime panic if the middleware were ever detached) and the natural home for Bearer-vs-cookie resolution. The test keeps the ergonomic extractor model and recovers the fail-closed property at CI time. See the auth-architecture discussion captured during exploration.
+
+*Alternative considered:* convert the whole `/api/v1` tree to a `.route_layer()` auth middleware. Rejected — loses the typed `account_id`, weakens the compile-time guarantee on every handler, and the only thing it buys (fail-closed default) is recovered by this test.
+
 ## Risks / Trade-offs
 
 - **`/api/health` exposes the backend version and commit SHA publicly** → Acceptable. Both are already inferable from public GitHub releases / tags once the repo is published; treating them as secrets buys nothing. If a future deployment needs to hide them, the endpoint can be moved behind auth as a configuration option (out of scope here).
 - **DB ping per health call has a cost** → Negligible at this scale. If health probes start coming in at 100+ rps from external monitors, add a 1-second TTL cache to the handler.
 - **`build.rs` running `git` is a small cross-platform footgun** → On systems without `git` installed (rare, but possible in minimal container builders), the script falls back to `"unknown"`. Tested by running the build with `PATH` stripped of `git` — the script catches the error and emits the fallback.
-- **About page is now a publicly-reachable route** → The layout redirect allowlist grows from `["/login"]` to `["/login", "/about"]`. Anyone can read the legal disclaimer and acknowledgements without an account. That is the intended behaviour; the disclaimer's purpose is to be findable.
+- **About page is now a publicly-reachable route** → The foundation's `+layout.server.ts` gates everything except `/login` (a single `isLoginRoute = url.pathname === '/login'` check, not an allowlist array — an earlier draft of this change described an array that does not exist). The change generalises that single check into a public-route test that also admits `/about`. Anyone can then read the legal disclaimer and acknowledgements without an account. That is the intended behaviour; the disclaimer's purpose is to be findable. Note the layout's `getMe` call still runs for `/about` (it runs for every route) and simply resolves to `me: null` for anonymous visitors — the about page does not *consume* `locals.me`, but the layout load is not bypassed.
 - **Carve-outs in `api-contract` can multiply** → After this change, two carve-outs exist (`/auth/*`, `/api/health`). A future temptation to add a third (e.g. `/api/webhooks`) should be resisted absent the same orchestration-tooling justification. Each carve-out makes the contract slightly less uniform; the safeguard is that each MUST be a separate spec amendment, reviewed.
 - **Acknowledgements are a curation surface** → Adding a project means writing copy and a link, which means taste calls. Acceptable for a 3-entry list owned by the project maintainers; if it grows past ~8 entries, consider moving to a JSON file and a small renderer.
 - **No e2e test for the disclaimer text** → The wireframe + Svelte component are reviewed by humans; an automated check that "the disclaimer string contains 'CCP hf.'" is included in the about-page integration test as a guard against accidental deletion.
@@ -145,7 +163,7 @@ A small consequence: bumping the UI version requires a rebuild (which is true an
 This change has no data migration. Deployment is:
 
 1. Merge `eve-wormhole-mapper-foundation` to `main` and archive it (so `openspec/specs/api-contract/spec.md` exists).
-2. Merge this change. The new endpoint is additive; the user-menu change is additive; the layout-redirect allowlist change is additive. No existing endpoint or route changes shape.
+2. Merge this change. The new endpoint is additive; the user-menu change is additive; the layout-redirect change only *widens* the set of routes reachable without auth (adds `/about`), changing no existing behaviour. No existing endpoint or route changes shape.
 3. Verify `/api/health` returns 200 in production. Verify `/about` renders with the live version and commit.
 
 Rollback: revert the merge commit. No DB state changes.

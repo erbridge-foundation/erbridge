@@ -3,4 +3,5 @@ pub mod api_key;
 pub mod auth;
 pub mod cookie;
 pub mod crypto;
+pub mod health;
 pub mod middleware;

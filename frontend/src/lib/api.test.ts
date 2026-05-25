@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { ApiError, getMe, deleteCharacter, deleteAccount, setMainCharacter } from './api';
-import type { MeResponse, CharacterDto } from './api';
+import { ApiError, getMe, getHealth, deleteCharacter, deleteAccount, setMainCharacter } from './api';
+import type { MeResponse, CharacterDto, HealthResponse } from './api';
 
 const BACKEND = 'http://backend:3000';
 const COOKIE = 'session=abc.def.ghi';
@@ -88,6 +88,29 @@ describe('api.request', () => {
 			`${BACKEND}/api/v1/characters/c1/set-main`,
 			expect.objectContaining({ method: 'POST', headers: { cookie: COOKIE } })
 		);
+	});
+});
+
+describe('getHealth', () => {
+	const healthy: HealthResponse = {
+		status: 'ok',
+		version: '0.1.0',
+		commit: 'abc1234',
+		components: [{ name: 'db', status: 'ok' }]
+	};
+
+	it('returns the flat body on 200 (NOT unwrapped from a data envelope)', async () => {
+		const fetch = mockJsonFetch(200, healthy);
+		const result = await getHealth(fetch, BACKEND);
+		expect(result).toEqual(healthy);
+		// URL only — no RequestInit, so no cookie is forwarded.
+		expect(fetch).toHaveBeenCalledWith(`${BACKEND}/api/health`);
+	});
+
+	it('throws ApiError on a non-ok response', async () => {
+		const fetch = mockJsonFetch(503, {});
+		await expect(getHealth(fetch, BACKEND)).rejects.toBeInstanceOf(ApiError);
+		await expect(getHealth(fetch, BACKEND)).rejects.toMatchObject({ status: 503 });
 	});
 });
 

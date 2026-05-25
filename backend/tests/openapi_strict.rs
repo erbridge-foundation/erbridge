@@ -158,6 +158,36 @@ fn all_registered_routes_are_documented() {
     }
 }
 
+// ── fail-closed auth-coverage ──────────────────────────────────────────────────
+//
+// Auth is opt-in per handler (the AuthenticatedAccount extractor), so a new
+// /api/v1 handler that forgets it is silently public. This test makes the
+// versioned surface fail-closed: every registered /api/v1 route MUST declare a
+// non-empty `security` requirement in the OpenAPI document. /api/health is
+// intentionally public and is NOT in registered_api_v1_routes(), so it is
+// correctly out of scope.
+
+#[test]
+fn all_registered_v1_routes_declare_auth() {
+    let doc_json = openapi_doc_json();
+
+    for (path, method) in backend::registered_api_v1_routes() {
+        let pointer = format!("/paths/{}/{}/security", path.replace('/', "~1"), method);
+        let security = doc_json.pointer(&pointer);
+
+        let declares_auth = security
+            .and_then(|v| v.as_array())
+            .is_some_and(|arr| !arr.is_empty());
+
+        assert!(
+            declares_auth,
+            "registered v1 route {method} {path} declares no `security` requirement \
+             in the OpenAPI document — it may be accidentally public (missing the \
+             AuthenticatedAccount extractor / security(...) annotation)"
+        );
+    }
+}
+
 // ── 2d.6 strict-drift ─────────────────────────────────────────────────────────
 
 #[sqlx::test]
@@ -296,4 +326,24 @@ async fn delete_account_204(pool: PgPool) {
 
     // 204 No Content — no body to validate against the schema.
     assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+}
+
+#[sqlx::test]
+async fn get_health_200_matches_schema(pool: PgPool) {
+    let doc = openapi_doc_json();
+
+    // Public route — no session cookie.
+    let resp = backend::build_router(build_state(pool))
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/api/health")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_schema(&doc, "/api/health", "get", "200", &json_body(resp).await);
 }

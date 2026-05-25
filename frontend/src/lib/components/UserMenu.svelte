@@ -3,6 +3,7 @@
 </script>
 
 <div class="user-menu" role="menu" id="user-menu">
+	<a class="item" href="/about" role="menuitem">about</a>
 	<!-- TODO(accessibility-preferences): wire this up — see openspec/changes/accessibility-preferences/ -->
 	<span class="item disabled" role="menuitem" aria-disabled="true" tabindex="-1">preferences</span>
 	<span class="item disabled" role="menuitem" aria-disabled="true" tabindex="-1">settings</span>

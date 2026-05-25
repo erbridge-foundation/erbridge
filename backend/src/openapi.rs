@@ -6,6 +6,7 @@ use utoipa::{
 use crate::{
     dto::{
         account::{AccountDto, CharacterDto, MeDto},
+        health::{ComponentHealth, ComponentStatus, HealthResponse, HealthStatus},
         keys::{CreateKeyRequest, CreatedKeyDto, KeyMetadataDto},
     },
     error::{ErrorDetail, ErrorEnvelope},
@@ -26,8 +27,13 @@ use crate::{
         crate::handlers::api::v1::characters::set_main,
         crate::handlers::api::v1::characters::delete_character,
         crate::handlers::api::v1::account::delete_account,
+        crate::handlers::health::get_health,
     ),
     components(schemas(
+        HealthResponse,
+        HealthStatus,
+        ComponentHealth,
+        ComponentStatus,
         MeResponse,
         CreatedKeyResponse,
         KeyListResponse,
@@ -46,6 +52,7 @@ use crate::{
         (name = "account", description = "Account and character management"),
         (name = "keys", description = "API key management"),
         (name = "characters", description = "EVE character operations"),
+        (name = "health", description = "Liveness and component health"),
     ),
 )]
 pub struct ApiDoc;
