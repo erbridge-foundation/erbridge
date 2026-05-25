@@ -43,21 +43,6 @@ export const DEFAULT_PREFERENCES: Preferences = {
 	dyslexia_font: 'off'
 };
 
-/**
- * Preferences that alter visual layout/rendering and can therefore lock a user
- * out if set badly. These get the auto-reverting confirmation (see §6).
- * `reduce_motion` is deliberately absent — removing motion cannot trap a user.
- */
-export const LAYOUT_ALTERING_KEYS: ReadonlyArray<PreferenceKey> = [
-	'text_size',
-	'high_contrast',
-	'large_targets',
-	'dyslexia_font'
-];
-
-/** How long the live preview of a layout-altering change persists before auto-reverting. */
-export const PREFERENCE_REVERT_SECONDS = 10;
-
 /** localStorage key under which the preference bag is persisted. */
 export const STORAGE_KEY = 'erbridge:preferences';
 

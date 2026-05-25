@@ -117,4 +117,52 @@ describe('preferences store', () => {
 			expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!).text_size).toBe('small');
 		});
 	});
+
+	describe('persisted', () => {
+		it('reflects localStorage, not a live preview', () => {
+			localStorage.setItem(STORAGE_KEY, JSON.stringify(withOverrides({ text_size: 'large' })));
+			preferences.hydrate();
+			// A preview mutates `current` but must NOT change `persisted`.
+			preferences.preview({ text_size: 'small' });
+			expect(preferences.current.text_size).toBe('small');
+			expect(preferences.persisted.text_size).toBe('large');
+		});
+
+		it('is defaults when nothing is stored', () => {
+			expect(preferences.persisted).toEqual(DEFAULT_PREFERENCES);
+		});
+	});
+
+	describe('resetToDefaults', () => {
+		it('sets all preferences to defaults, applies, and persists', async () => {
+			vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+				new Response(JSON.stringify({ data: { ...DEFAULT_PREFERENCES } }), {
+					status: 200,
+					headers: { 'content-type': 'application/json' }
+				})
+			);
+			localStorage.setItem(
+				STORAGE_KEY,
+				JSON.stringify(withOverrides({ text_size: 'large', reduce_motion: 'on' }))
+			);
+			preferences.hydrate();
+
+			await preferences.resetToDefaults();
+
+			expect(preferences.current).toEqual(DEFAULT_PREFERENCES);
+			expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!)).toEqual(DEFAULT_PREFERENCES);
+		});
+
+		it('syncs the full default set so prior server overrides are overwritten', async () => {
+			const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+				new Response(JSON.stringify({ data: { ...DEFAULT_PREFERENCES } }), {
+					status: 200,
+					headers: { 'content-type': 'application/json' }
+				})
+			);
+			await preferences.resetToDefaults();
+			const body = JSON.parse((fetchSpy.mock.calls[0][1] as RequestInit).body as string);
+			expect(body).toEqual(DEFAULT_PREFERENCES);
+		});
+	});
 });

@@ -84,6 +84,15 @@ export const preferences = {
 	},
 
 	/**
+	 * The persisted preference set (from localStorage), independent of any live
+	 * preview held in `current`. The /preferences page diffs its staged set
+	 * against this to decide the dirty/clean state.
+	 */
+	get persisted(): Preferences {
+		return readLocal();
+	},
+
+	/**
 	 * Hydrate from localStorage and apply to the DOM. Call early (e.g. in the root
 	 * layout) — the inline app.html script has already applied the same values
 	 * before paint, so this does not re-flash.
@@ -129,7 +138,8 @@ export const preferences = {
 
 	/**
 	 * Apply a patch as a *preview* only — update in-memory state and the DOM, but
-	 * do NOT persist. Used by the auto-reverting confirmation during the countdown.
+	 * do NOT persist. The /preferences page uses this to stage changes live; they
+	 * persist only on Apply (commit) and are dropped on Discard / navigate-away.
 	 */
 	preview(patch: PreferencesPatch): void {
 		state.current = { ...state.current, ...patch };
@@ -151,5 +161,19 @@ export const preferences = {
 	revertToPersisted(): void {
 		state.current = readLocal();
 		if (browser) applyPreferences(state.current);
+	},
+
+	/**
+	 * Reset every preference to its default, apply to the DOM, persist, and sync.
+	 * The recovery action: always available on /preferences so a user whose
+	 * applied setting broke another page can return and restore a working state.
+	 * Syncs the full default set (not just a diff) so any prior server overrides
+	 * are explicitly overwritten back to default.
+	 */
+	async resetToDefaults(): Promise<void> {
+		state.current = { ...DEFAULT_PREFERENCES };
+		if (browser) applyPreferences(state.current);
+		writeLocal(state.current);
+		await syncToServer({ ...DEFAULT_PREFERENCES });
 	}
 };

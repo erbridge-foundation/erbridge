@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
 	DEFAULT_PREFERENCES,
-	LAYOUT_ALTERING_KEYS,
 	TEXT_SIZE_PERCENT,
 	activeOverrides,
 	coercePreferences,
@@ -23,11 +22,6 @@ describe('schema validation helpers', () => {
 		expect(isValidValue('text_size', 'enormous')).toBe(false);
 		expect(isValidValue('reduce_motion', 'on')).toBe(true);
 		expect(isValidValue('large_targets', 'auto')).toBe(false); // toggle has no auto
-	});
-
-	it('reduce_motion is NOT in the layout-altering set (cannot lock a user out)', () => {
-		expect(LAYOUT_ALTERING_KEYS).not.toContain('reduce_motion');
-		expect(LAYOUT_ALTERING_KEYS).toEqual(['text_size', 'high_contrast', 'large_targets', 'dyslexia_font']);
 	});
 
 	it('auto/regular text size leaves the root font-size unset', () => {
