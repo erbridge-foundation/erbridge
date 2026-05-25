@@ -110,7 +110,10 @@ The `/login` route SHALL render a vertically and horizontally centred card on a 
 The frontend SHALL implement the visual design language established in the wireframe. All pages and components SHALL use this system consistently.
 
 **Typography**
-The sole typeface is JetBrains Mono (Google Fonts), applied globally via `font-family: "JetBrains Mono", ui-monospace, monospace`. The `<html>` element SHALL be set to `font-size: 100%` (picking up the browser/OS default, typically 16px), and the `<body>` SHALL be set to `font-size: 0.875rem` (≈14px at the default). **All typography rules across the design system SHALL be expressed in `rem`, not `px`**, so the UI scales when a visitor changes their browser font-size or zooms. Spacing (padding, margin, gap, border-radius, avatar/icon dimensions, border widths) is exempt and SHALL remain in `px`, since those are visual-layout values that must not grow with text-size preferences.
+The default typeface is JetBrains Mono (Google Fonts), applied globally via a `--font-ui` custom property (defaulting to `"JetBrains Mono", ui-monospace, monospace`) that `<body>` and everything inheriting from it use. The indirection exists so the `dyslexia_font` accessibility preference can swap the whole UI to an alternative typeface (Atkinson Hyperlegible) by overriding `--font-ui` on `<html>` (see the `accessibility-preferences` capability). The `<html>` element's `font-size` defaults to `100%` (picking up the browser/OS default, typically 16px) but is **user-controllable** via the `text_size` accessibility preference, which overrides `html { font-size }`. The `<body>` SHALL be set to `font-size: 0.875rem` (≈14px at the default). **All typography rules across the design system SHALL be expressed in `rem`, not `px`**, so the UI scales both when a visitor changes their browser font-size or zooms AND when they change the `text_size` preference. Spacing (padding, margin, gap, border-radius, avatar/icon dimensions, border widths) is exempt and SHALL remain in `px`, since those are visual-layout values that must not grow with text-size preferences.
+
+**Motion**
+All animations and transitions SHALL be gated on the reduce-motion preference (which defaults to the OS `prefers-reduced-motion` setting), so motion in the design system — including the pulsing status dot — does not bypass the accessibility preference (see the `accessibility-preferences` capability).
 
 **Colour tokens** — defined as CSS custom properties on `:root`:
 
@@ -159,6 +162,10 @@ The sole typeface is JetBrains Mono (Google Fonts), applied globally via `font-f
 #### Scenario: Sidebar collapses to icon rail
 - **WHEN** the sidebar toggle is clicked on the authenticated map view
 - **THEN** the sidebar width transitions to 40px, text is hidden, and only section icons remain visible
+
+#### Scenario: Text size preference scales typography
+- **WHEN** a user sets the `text_size` accessibility preference away from its default
+- **THEN** `html { font-size }` changes and all `rem`-based typography scales proportionally, while `px` spacing values are unaffected
 
 ### Requirement: Backend uses idiomatic Rust
 The backend SHALL use latest stable Rust. Error handling SHALL use `thiserror` for custom error types. The code SHALL not use `unwrap()` or `expect()` in production paths. Unnecessary clones SHALL be avoided.
