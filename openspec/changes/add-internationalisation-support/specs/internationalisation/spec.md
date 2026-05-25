@@ -15,12 +15,16 @@ The system SHALL detect the user's preferred locale from browser settings on fir
 - **THEN** the active locale SHALL be set to the user's browser locale, falling back to `en` if unsupported
 
 ### Requirement: Locale preference persistence
-The system SHALL persist the user's locale preference to their account so it is restored across sessions and devices.
+The system SHALL persist the user's locale preference as the `locale` key on the account-preferences substrate (the `preferences` JSONB bag, written via `PATCH /api/v1/me/preferences`), NOT as a dedicated locale column or endpoint. It SHALL therefore inherit the substrate's behaviour: localStorage-first for anonymous visitors, backend sync for authenticated users, and login reconciliation (server wins, else push-local-on-first-login). The locale value SHALL be applied to `<html lang>` before first paint via the shared `app.html` bootstrap.
 
 #### Scenario: Locale preference saved
 - **WHEN** a user changes their locale preference
-- **THEN** the new locale SHALL be saved to the user's account via the API
+- **THEN** the new locale SHALL be written as `preferences.locale` (to localStorage, and PATCHed to `/api/v1/me/preferences` for authenticated users)
 
 #### Scenario: Locale preference restored on login
 - **WHEN** an authenticated user loads the application
-- **THEN** the locale SHALL be set to the user's stored preference
+- **THEN** the locale SHALL be set from `preferences.locale` resolved through the account-preferences substrate
+
+#### Scenario: Locale applied before paint
+- **WHEN** a returning visitor with a stored `preferences.locale` loads any page
+- **THEN** `<html lang>` SHALL reflect that locale on first paint, with no flash of the default language
