@@ -11,6 +11,9 @@
 export type TextSize = 'auto' | 'small' | 'regular' | 'large';
 export type TriState = 'auto' | 'on' | 'off';
 export type Toggle = 'off' | 'on';
+// The interface language. Must stay in sync with the backend `Locale` enum
+// (dto/preferences.rs) and Paraglide's compiled locale list (project.inlang).
+export type Locale = 'en' | 'de';
 
 export interface Preferences {
 	text_size: TextSize;
@@ -18,6 +21,10 @@ export interface Preferences {
 	high_contrast: TriState;
 	large_targets: Toggle;
 	dyslexia_font: Toggle;
+	// Unlike the accessibility keys, `locale` is not applied to <html> by apply.ts:
+	// the active language is driven by Paraglide's PARAGLIDE_LOCALE cookie and
+	// resolved server-side (the store writes that cookie when locale changes).
+	locale: Locale;
 }
 
 export type PreferenceKey = keyof Preferences;
@@ -31,7 +38,8 @@ export const ALLOWED_VALUES: { [K in PreferenceKey]: ReadonlyArray<Preferences[K
 	reduce_motion: ['auto', 'on', 'off'],
 	high_contrast: ['auto', 'on', 'off'],
 	large_targets: ['off', 'on'],
-	dyslexia_font: ['off', 'on']
+	dyslexia_font: ['off', 'on'],
+	locale: ['en', 'de']
 };
 
 /** The defaults — every key resolves to these when unset. `auto`/`off` means "no override". */
@@ -40,7 +48,8 @@ export const DEFAULT_PREFERENCES: Preferences = {
 	reduce_motion: 'auto',
 	high_contrast: 'auto',
 	large_targets: 'off',
-	dyslexia_font: 'off'
+	dyslexia_font: 'off',
+	locale: 'en'
 };
 
 /** localStorage key under which the preference bag is persisted. */

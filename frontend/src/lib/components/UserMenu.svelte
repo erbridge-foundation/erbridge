@@ -1,13 +1,17 @@
 <script lang="ts">
+	import { m } from '$lib/paraglide/messages';
+
 	let { onclose }: { onclose: () => void } = $props();
 </script>
 
 <div class="user-menu" role="menu" id="user-menu">
-	<a class="item" href="/preferences" role="menuitem" onclick={onclose}>preferences</a>
-	<span class="item disabled" role="menuitem" aria-disabled="true" tabindex="-1">settings</span>
-	<a class="item" href="/about" role="menuitem" onclick={onclose}>about</a>
+	<a class="item" href="/preferences" role="menuitem" onclick={onclose}>{m.user_menu_preferences()}</a>
+	<span class="item disabled" role="menuitem" aria-disabled="true" tabindex="-1"
+		>{m.user_menu_settings()}</span
+	>
+	<a class="item" href="/about" role="menuitem" onclick={onclose}>{m.user_menu_about()}</a>
 	<hr class="divider" />
-	<a class="item" href="/auth/logout" role="menuitem" onclick={onclose}>log out</a>
+	<a class="item" href="/auth/logout" role="menuitem" onclick={onclose}>{m.user_menu_logout()}</a>
 </div>
 
 <style>

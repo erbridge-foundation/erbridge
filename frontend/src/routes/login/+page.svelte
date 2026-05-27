@@ -1,5 +1,9 @@
+<script lang="ts">
+	import { m } from '$lib/paraglide/messages';
+</script>
+
 <svelte:head>
-	<title>E-R Bridge — Login</title>
+	<title>{m.login_title()}</title>
 </svelte:head>
 
 <div class="card" role="main">
@@ -19,11 +23,11 @@
 	</svg>
 
 	<h1 class="brand-name">E-R BRIDGE</h1>
-	<p class="subtitle">Wormhole Mapper</p>
+	<p class="subtitle">{m.login_subtitle()}</p>
 
 	<hr class="divider" />
 
-	<a href="/auth/login" class="sso-link" aria-label="Log in with EVE Online">
+	<a href="/auth/login" class="sso-link" aria-label={m.login_sso_aria()}>
 		<img
 			src="https://web.ccpgamescdn.com/eveonlineassets/developers/eve-sso-login-white-large.png"
 			alt="LOG IN with EVE Online"
@@ -32,8 +36,8 @@
 	</a>
 
 	<p class="disclaimer">
-		Authentication is handled by EVE Online.<br />
-		No password is stored by this service.
+		{m.login_disclaimer_line1()}<br />
+		{m.login_disclaimer_line2()}
 	</p>
 </div>
 

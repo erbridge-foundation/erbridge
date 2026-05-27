@@ -33,6 +33,7 @@ jsonpath "$.data.reduce_motion" matches "^(auto|on|off)$"
 jsonpath "$.data.high_contrast" matches "^(auto|on|off)$"
 jsonpath "$.data.large_targets" matches "^(off|on)$"
 jsonpath "$.data.dyslexia_font" matches "^(off|on)$"
+jsonpath "$.data.locale" matches "^(en)$"
 jsonpath "$.error" not exists
 
 # ── 3. PATCH sets text_size; returns the full merged set ─────────────────────
@@ -63,7 +64,21 @@ HTTP 200
 jsonpath "$.data.text_size" == "large"
 jsonpath "$.data.reduce_motion" == "auto"
 
-# ── 5. PATCH with an unknown key → 400 ───────────────────────────────────────
+# ── 5. PATCH sets locale; preserves text_size ───────────────────────────────
+
+PATCH {{base_url}}/api/v1/me/preferences
+Authorization: Bearer {{erb_api_key}}
+Content-Type: application/json
+{
+  "locale": "en"
+}
+
+HTTP 200
+[Asserts]
+jsonpath "$.data.locale" == "en"
+jsonpath "$.data.text_size" == "large"
+
+# ── 6. PATCH with an unknown key → 400 ───────────────────────────────────────
 
 PATCH {{base_url}}/api/v1/me/preferences
 Authorization: Bearer {{erb_api_key}}
@@ -76,7 +91,7 @@ HTTP 400
 [Asserts]
 jsonpath "$.error.code" == "bad_request"
 
-# ── 6. PATCH with an invalid enum value → 400 ────────────────────────────────
+# ── 7. PATCH with an invalid enum value → 400 ────────────────────────────────
 
 PATCH {{base_url}}/api/v1/me/preferences
 Authorization: Bearer {{erb_api_key}}

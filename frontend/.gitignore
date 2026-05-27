@@ -1,5 +1,8 @@
 node_modules
 
+# Paraglide compiled output (regenerated from messages/ + project.inlang on build)
+/src/lib/paraglide
+
 # Output
 .output
 .vercel

@@ -1,8 +1,9 @@
-// This is the generic account-preferences substrate. Accessibility keys live in
-// PreferencesDto/PreferencesPatch (dto/preferences.rs). Other features add their
-// own keys here — e.g. add-internationalisation-support adds `locale` as a
-// validated key on this same JSONB bag + endpoint, with NO new column or route.
-// See openspec/changes/add-internationalisation-support/.
+// This is the generic account-preferences substrate. The recognised keys live as
+// typed fields on PreferencesDto/PreferencesPatch (dto/preferences.rs), where
+// `deny_unknown_fields` + enum types do the validation; this service just reads
+// and merges them on the shared JSONB bag. `locale` is one such key (added by
+// add-internationalisation-support) — no dedicated column or route. Other
+// features add keys the same way. See openspec/changes/.
 
 use serde_json::Value;
 use sqlx::PgPool;
@@ -10,13 +11,13 @@ use uuid::Uuid;
 
 use crate::{
     db::preferences as db,
-    dto::preferences::{PreferencesDto, PreferencesPatch, TextSize, Toggle, TriState},
+    dto::preferences::{Locale, PreferencesDto, PreferencesPatch, TextSize, Toggle, TriState},
     error::AppError,
 };
 
-/// Read an account's accessibility preferences as a complete set, filling any
-/// absent key with its default. Tolerates unknown keys stored in the bag (e.g.
-/// preferences owned by other features such as locale) — they are ignored here.
+/// Read an account's preferences as a complete set, filling any absent key with
+/// its default. Tolerates unknown keys stored in the bag (e.g. keys owned by a
+/// future feature) — they are ignored here.
 pub async fn get_preferences(pool: &PgPool, account_id: Uuid) -> Result<PreferencesDto, AppError> {
     let bag = db::get_preferences(pool, account_id)
         .await
@@ -76,6 +77,10 @@ fn dto_from_bag(bag: &Value) -> PreferencesDto {
             .get("dyslexia_font")
             .and_then(|v| serde_json::from_value::<Toggle>(v.clone()).ok())
             .unwrap_or(d.dyslexia_font),
+        locale: bag
+            .get("locale")
+            .and_then(|v| serde_json::from_value::<Locale>(v.clone()).ok())
+            .unwrap_or(d.locale),
     }
 }
 
@@ -112,6 +117,9 @@ fn patch_to_json(patch: &PreferencesPatch) -> Value {
             serde_json::to_value(v).unwrap_or_default(),
         );
     }
+    if let Some(v) = patch.locale {
+        map.insert("locale".into(), serde_json::to_value(v).unwrap_or_default());
+    }
     Value::Object(map)
 }
 
@@ -136,9 +144,17 @@ mod tests {
     }
 
     #[test]
+    fn dto_from_bag_reads_locale() {
+        let dto = dto_from_bag(&json!({"locale": "en"}));
+        assert_eq!(dto.locale, Locale::En);
+    }
+
+    #[test]
     fn dto_from_bag_ignores_unknown_and_invalid_values() {
-        // `locale` is unknown to this feature; `text_size: "huge"` is invalid.
-        let dto = dto_from_bag(&json!({"locale": "en", "text_size": "huge"}));
+        // `not_a_pref` is unknown; `text_size: "huge"` and `locale: "martian"`
+        // are invalid values — all fall back to defaults.
+        let dto =
+            dto_from_bag(&json!({"not_a_pref": "x", "text_size": "huge", "locale": "martian"}));
         assert_eq!(dto, PreferencesDto::default());
     }
 
@@ -228,9 +244,9 @@ mod tests {
 
     #[sqlx::test]
     async fn update_preferences_does_not_clobber_foreign_keys(pool: PgPool) {
-        // A key owned by another feature (e.g. locale) survives an accessibility update.
+        // A key owned by a feature this service doesn't know survives an update.
         let id = accounts::create_account(&pool).await.unwrap();
-        crate::db::preferences::merge_preferences(&pool, id, &json!({"locale": "fr"}))
+        crate::db::preferences::merge_preferences(&pool, id, &json!({"future_feature": "x"}))
             .await
             .unwrap();
         update_preferences(
@@ -247,7 +263,23 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(bag["locale"], "fr");
+        assert_eq!(bag["future_feature"], "x");
         assert_eq!(bag["text_size"], "large");
+    }
+
+    #[sqlx::test]
+    async fn update_preferences_sets_and_returns_locale(pool: PgPool) {
+        let id = accounts::create_account(&pool).await.unwrap();
+        let dto = update_preferences(
+            &pool,
+            id,
+            PreferencesPatch {
+                locale: Some(Locale::En),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(dto.locale, Locale::En);
     }
 }

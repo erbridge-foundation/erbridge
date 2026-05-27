@@ -10,15 +10,42 @@
 // (preserving an anonymous user's setup on first login).
 
 import { browser } from '$app/environment';
+import { getLocale, setLocale } from '$lib/paraglide/runtime';
 import { applyPreferences } from './apply';
 import {
 	DEFAULT_PREFERENCES,
 	STORAGE_KEY,
 	activeOverrides,
 	coercePreferences,
+	type Locale,
 	type Preferences,
 	type PreferencesPatch
 } from './schema';
+
+/**
+ * Bridge the stored locale to Paraglide's PARAGLIDE_LOCALE cookie — the single
+ * integration point between the preference substrate and the i18n library.
+ * Paraglide resolves the active locale from that cookie during SSR, so writing
+ * it keeps the server-rendered language in step with the stored preference.
+ *
+ * `reload` controls whether the page re-renders in the new locale immediately:
+ *  - true  on commit/reset (the user changed locale; re-render so the new
+ *           language takes effect with no wrong-language flash). setLocale only
+ *           reloads when the locale actually differs from the current one.
+ *  - false on reconcile (a routine page load; sync the cookie silently — never
+ *           trigger a reload during init).
+ */
+function bridgeLocale(locale: Locale, reload: boolean): void {
+	if (!browser) return;
+	let current: string | undefined;
+	try {
+		current = getLocale();
+	} catch {
+		// No locale resolved yet — treat as a change so the cookie gets written.
+	}
+	if (current === locale) return;
+	setLocale(locale, { reload });
+}
 
 interface PrefState {
 	current: Preferences;
@@ -134,6 +161,9 @@ export const preferences = {
 
 		state.synced = true;
 		if (browser) applyPreferences(state.current);
+		// Sync Paraglide's cookie to the reconciled locale without reloading —
+		// this runs on every authenticated load, so a reload here would loop.
+		bridgeLocale(state.current.locale, false);
 	},
 
 	/**
@@ -154,7 +184,11 @@ export const preferences = {
 		state.current = { ...state.current, ...patch };
 		if (browser) applyPreferences(state.current);
 		writeLocal(state.current);
+		// Persist to the backend before bridging the locale: bridgeLocale with
+		// reload:true reloads the page when the locale changed, which would abort
+		// an in-flight sync. Awaiting first guarantees the PATCH completes.
 		await syncToServer(patch);
+		bridgeLocale(state.current.locale, true);
 	},
 
 	/** Re-apply the persisted set to the DOM, discarding any unpersisted preview. */
@@ -175,5 +209,6 @@ export const preferences = {
 		if (browser) applyPreferences(state.current);
 		writeLocal(state.current);
 		await syncToServer({ ...DEFAULT_PREFERENCES });
+		bridgeLocale(state.current.locale, true);
 	}
 };

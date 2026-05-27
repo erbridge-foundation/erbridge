@@ -32,3 +32,14 @@ The system SHALL persist the user's locale preference as the `locale` key on the
 #### Scenario: Stored locale rendered server-side without a flash
 - **WHEN** a returning visitor whose locale cookie reflects their stored `preferences.locale` loads any page
 - **THEN** the server SHALL render the page in that locale on the first pass, with no flash of the default language on hydration
+
+### Requirement: Locale selection on the preferences page
+The `/preferences` page SHALL organise its controls into tabs. A "General" tab SHALL contain the locale selector; an "Accessibility" tab SHALL contain the existing accessibility controls. The tabs SHALL share a single staged set and a single Apply/Discard/Reset action bar — switching tabs SHALL NOT commit, discard, or reset staged changes, and `dirty` SHALL reflect staged changes on either tab. Selecting a locale SHALL stage it (previewed live) and, on Apply, persist it as `preferences.locale` and write Paraglide's locale cookie.
+
+#### Scenario: Locale staged and applied from the General tab
+- **WHEN** a user selects a locale on the General tab and clicks Apply
+- **THEN** the locale SHALL be persisted as `preferences.locale` and Paraglide's locale cookie SHALL be written so the new locale takes effect on the next render
+
+#### Scenario: Staged changes survive tab switches
+- **WHEN** a user stages a change on one tab and switches to the other tab
+- **THEN** the staged change SHALL remain staged, the shared Apply/Discard bar SHALL stay visible, and `dirty` SHALL remain true until Apply, Discard, or Reset

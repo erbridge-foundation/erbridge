@@ -60,7 +60,7 @@ mod tests {
 
     #[test]
     fn patch_body_with_unknown_key_is_bad_request() {
-        let body = Json(serde_json::json!({"locale": "en"}));
+        let body = Json(serde_json::json!({"not_a_pref": "x"}));
         let patch: Result<PreferencesPatch, _> = serde_json::from_value(body.0);
         // Mirrors the handler's mapping: a deserialise error becomes BadRequest.
         let mapped = patch.map_err(|e| AppError::BadRequest(e.to_string()));
@@ -69,8 +69,9 @@ mod tests {
 
     #[test]
     fn patch_body_with_valid_keys_deserialises() {
-        let body = Json(serde_json::json!({"text_size": "large"}));
+        let body = Json(serde_json::json!({"text_size": "large", "locale": "en"}));
         let patch: PreferencesPatch = serde_json::from_value(body.0).unwrap();
         assert!(!patch.is_empty());
+        assert_eq!(patch.locale, Some(crate::dto::preferences::Locale::En));
     }
 }

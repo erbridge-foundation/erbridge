@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from "$lib/paraglide/messages";
 	import type { PageData } from "./$types";
 
 	let { data }: { data: PageData } = $props();
@@ -31,7 +32,7 @@
 </script>
 
 <svelte:head>
-	<title>About · E-R Bridge</title>
+	<title>{m.about_title()} · E-R Bridge</title>
 </svelte:head>
 
 <main class="about">
@@ -54,58 +55,44 @@
 			</svg>
 			<span class="title">E-R BRIDGE</span>
 		</div>
-		<p class="tagline">Wormhole Mapper for EVE Online</p>
+		<p class="tagline">{m.about_tagline()}</p>
 	</header>
 
 	<section class="section">
-		<h2 class="section-label">Versions</h2>
+		<h2 class="section-label">{m.about_section_versions()}</h2>
 		<div class="version-row">
-			<span class="label">UI version</span>
+			<span class="label">{m.about_label_ui_version()}</span>
 			<span class="value">{uiVersion}</span>
 		</div>
 		<div class="version-row">
-			<span class="label">API version</span>
+			<span class="label">{m.about_label_api_version()}</span>
 			{#if data.health}
 				<span class="value"
 					>{data.health.version} ·
 					<span class="commit">{data.health.commit}</span></span
 				>
 			{:else}
-				<span class="value unreachable">API: unreachable</span>
+				<span class="value unreachable">{m.about_api_unreachable()}</span>
 			{/if}
 		</div>
 	</section>
 
 	<section class="section source-link">
-		<h2 class="section-label">Source code</h2>
+		<h2 class="section-label">{m.about_section_source()}</h2>
 		<a
 			href="https://github.com/erbridge-foundation/erbridge"
 			target="_blank"
-			rel="noopener noreferrer">Source on GitHub →</a
+			rel="noopener noreferrer">{m.about_source_link()}</a
 		>
 	</section>
 
 	<section class="section">
-		<h2 class="section-label">Legal</h2>
-		<p class="legal">
-			EVE Online and the EVE logo are the registered trademarks of CCP hf. All
-			rights are reserved worldwide. All other trademarks are the property of
-			their respective owners. EVE Online, the EVE logo, EVE and all associated
-			logos and designs are the intellectual property of CCP hf. All artwork,
-			screenshots, characters, vehicles, storylines, world facts or other
-			recognizable features of the intellectual property relating to these
-			trademarks are likewise the intellectual property of CCP hf. CCP hf. has
-			granted permission to E-R Bridge to use EVE Online and all associated
-			logos and designs for promotional and information purposes on its website
-			but does not endorse, and is not in any way affiliated with, E-R Bridge.
-			CCP is in no way responsible for the content on or functioning of this
-			website, nor can it be liable for any damage arising from the use of this
-			website.
-		</p>
+		<h2 class="section-label">{m.about_section_legal()}</h2>
+		<p class="legal">{m.about_legal_body()}</p>
 	</section>
 
 	<section class="section">
-		<h2 class="section-label">Acknowledgements</h2>
+		<h2 class="section-label">{m.about_section_acknowledgements()}</h2>
 		<ul class="ack-list">
 			{#each acknowledgements as ack (ack.href)}
 				<li class="ack">

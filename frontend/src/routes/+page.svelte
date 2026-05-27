@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { m } from '$lib/paraglide/messages';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -9,13 +10,13 @@
 <main class="body">
 	<div class="content">
 		{#if main}
-			<h1 class="welcome">Welcome, {main.name}</h1>
+			<h1 class="welcome">{m.home_welcome_named({ name: main.name })}</h1>
 
-			<section class="main-character" aria-label="Main character">
+			<section class="main-character" aria-label={m.home_main_character()}>
 				<div class="name-row">
 					<span>{main.name}</span>
 					<span class="sep">·</span>
-					<span class="role">main</span>
+					<span class="role">{m.home_role_main()}</span>
 				</div>
 				<div class="corp">{main.corporation_name}</div>
 				{#if main.alliance_name}
@@ -23,7 +24,7 @@
 				{/if}
 			</section>
 		{:else}
-			<h1 class="welcome">Welcome.</h1>
+			<h1 class="welcome">{m.home_welcome_anonymous()}</h1>
 		{/if}
 	</div>
 </main>

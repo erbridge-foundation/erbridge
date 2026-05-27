@@ -7,7 +7,8 @@ const DEFAULTS = {
 	reduce_motion: 'auto',
 	high_contrast: 'auto',
 	large_targets: 'off',
-	dyslexia_font: 'off'
+	dyslexia_font: 'off',
+	locale: 'en'
 } as const;
 
 // Mutable persisted baseline the mocked store reports; tests set it before render.
@@ -62,9 +63,64 @@ function optionInGroup(legend: string, name: string): HTMLButtonElement {
 	return btn as HTMLButtonElement;
 }
 
+/** Switch to a tab by its accessible name (the accessibility controls live there). */
+async function openTab(name: string) {
+	await fireEvent.click(screen.getByRole('tab', { name }));
+	await tick();
+}
+
+describe('/preferences page — tabs', () => {
+	it('opens on the General tab showing the locale selector', () => {
+		render(PreferencesPage);
+		expect(screen.getByRole('tab', { name: 'General' })).toHaveAttribute('aria-selected', 'true');
+		// Locale control is visible; accessibility controls are not.
+		expect(screen.getByText('Language')).toBeInTheDocument();
+		expect(screen.queryByText('Text size')).toBeNull();
+	});
+
+	it('switching to the Accessibility tab reveals the accessibility controls', async () => {
+		render(PreferencesPage);
+		await openTab('Accessibility');
+		expect(screen.getByText('Text size')).toBeInTheDocument();
+		expect(screen.getByText('Dyslexia-friendly typeface')).toBeInTheDocument();
+		expect(screen.queryByText('Language')).toBeNull();
+	});
+
+	it('staged changes survive a tab switch and keep the shared action bar', async () => {
+		render(PreferencesPage);
+		await openTab('Accessibility');
+		await fireEvent.click(optionInGroup('Text size', 'Large'));
+		await tick();
+		expect(screen.getByRole('button', { name: 'Apply' })).toBeInTheDocument();
+
+		// Switch tabs — staged change is preserved, Apply/Discard remain.
+		await openTab('General');
+		expect(screen.getByRole('button', { name: 'Apply' })).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Discard' })).toBeInTheDocument();
+		expect(commit).not.toHaveBeenCalled();
+		expect(revertToPersisted).not.toHaveBeenCalled();
+
+		// Apply from the General tab still commits the accessibility change.
+		await fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+		await tick();
+		expect(commit).toHaveBeenCalledWith(expect.objectContaining({ text_size: 'large' }));
+	});
+});
+
+describe('/preferences page — locale (General tab)', () => {
+	it('selecting a locale previews it but does not persist', async () => {
+		render(PreferencesPage);
+		await fireEvent.click(optionInGroup('Language', 'English'));
+		await tick();
+		expect(preview).toHaveBeenCalledWith(expect.objectContaining({ locale: 'en' }));
+		expect(commit).not.toHaveBeenCalled();
+	});
+});
+
 describe('/preferences page — staging model', () => {
 	it('selecting a control previews live but does not persist', async () => {
 		render(PreferencesPage);
+		await openTab('Accessibility');
 		await fireEvent.click(optionInGroup('Text size', 'Large'));
 		await tick();
 
@@ -79,6 +135,7 @@ describe('/preferences page — staging model', () => {
 		expect(screen.queryByRole('button', { name: 'Discard' })).toBeNull();
 		expect(screen.getByRole('button', { name: 'Reset to defaults' })).toBeInTheDocument();
 
+		await openTab('Accessibility');
 		await fireEvent.click(optionInGroup('Text size', 'Large'));
 		await tick();
 
@@ -88,6 +145,7 @@ describe('/preferences page — staging model', () => {
 
 	it('Apply commits the staged batch (including reduce_motion)', async () => {
 		render(PreferencesPage);
+		await openTab('Accessibility');
 		await fireEvent.click(optionInGroup('Text size', 'Large'));
 		await fireEvent.click(optionInGroup('Reduce motion', 'On'));
 		await tick();
@@ -102,6 +160,7 @@ describe('/preferences page — staging model', () => {
 
 	it('reduce_motion stages (does not commit instantly)', async () => {
 		render(PreferencesPage);
+		await openTab('Accessibility');
 		await fireEvent.click(optionInGroup('Reduce motion', 'On'));
 		await tick();
 
@@ -112,6 +171,7 @@ describe('/preferences page — staging model', () => {
 
 	it('Discard reverts the previews and clears the dirty state', async () => {
 		render(PreferencesPage);
+		await openTab('Accessibility');
 		await fireEvent.click(optionInGroup('Text size', 'Large'));
 		await tick();
 		await fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
@@ -125,6 +185,7 @@ describe('/preferences page — staging model', () => {
 	it('returning a control to its persisted value clears the dirty state', async () => {
 		store.persisted = { ...DEFAULTS, text_size: 'large' };
 		render(PreferencesPage);
+		await openTab('Accessibility');
 
 		// Change away from persisted → dirty.
 		await fireEvent.click(optionInGroup('Text size', 'Small'));
@@ -147,6 +208,7 @@ describe('/preferences page — staging model', () => {
 
 	it('navigating away while dirty discards the previews', async () => {
 		render(PreferencesPage);
+		await openTab('Accessibility');
 		await fireEvent.click(optionInGroup('Text size', 'Large'));
 		await tick();
 

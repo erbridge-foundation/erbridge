@@ -29,6 +29,16 @@ pub enum Toggle {
     On,
 }
 
+/// The interface language. This is the accepted-locale set for the API; it must
+/// stay in sync with Paraglide's compiled locale list on the frontend (see the
+/// i18n change's design.md). `En` is the default.
+#[derive(Serialize, Deserialize, ToSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Locale {
+    En,
+    De,
+}
+
 /// The full accessibility preference set as returned to clients. Absent keys
 /// are serialised as their default (`auto` / `off`), so the response is always
 /// a complete, explicit set the frontend can apply directly.
@@ -39,6 +49,7 @@ pub struct PreferencesDto {
     pub high_contrast: TriState,
     pub large_targets: Toggle,
     pub dyslexia_font: Toggle,
+    pub locale: Locale,
 }
 
 impl Default for PreferencesDto {
@@ -49,6 +60,7 @@ impl Default for PreferencesDto {
             high_contrast: TriState::Auto,
             large_targets: Toggle::Off,
             dyslexia_font: Toggle::Off,
+            locale: Locale::En,
         }
     }
 }
@@ -69,6 +81,8 @@ pub struct PreferencesPatch {
     pub large_targets: Option<Toggle>,
     #[serde(default)]
     pub dyslexia_font: Option<Toggle>,
+    #[serde(default)]
+    pub locale: Option<Locale>,
 }
 
 impl PreferencesPatch {
@@ -79,6 +93,7 @@ impl PreferencesPatch {
             && self.high_contrast.is_none()
             && self.large_targets.is_none()
             && self.dyslexia_font.is_none()
+            && self.locale.is_none()
     }
 }
 
@@ -95,6 +110,7 @@ mod tests {
         assert_eq!(d.high_contrast, TriState::Auto);
         assert_eq!(d.large_targets, Toggle::Off);
         assert_eq!(d.dyslexia_font, Toggle::Off);
+        assert_eq!(d.locale, Locale::En);
     }
 
     #[test]
@@ -105,8 +121,24 @@ mod tests {
     }
 
     #[test]
+    fn patch_deserialises_locale() {
+        let p: PreferencesPatch = serde_json::from_value(json!({"locale": "en"})).unwrap();
+        assert_eq!(p.locale, Some(Locale::En));
+        assert!(p.text_size.is_none());
+
+        let de: PreferencesPatch = serde_json::from_value(json!({"locale": "de"})).unwrap();
+        assert_eq!(de.locale, Some(Locale::De));
+    }
+
+    #[test]
     fn patch_rejects_unknown_key() {
-        let err = serde_json::from_value::<PreferencesPatch>(json!({"locale": "en"}));
+        let err = serde_json::from_value::<PreferencesPatch>(json!({"not_a_pref": "x"}));
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn patch_rejects_invalid_locale_value() {
+        let err = serde_json::from_value::<PreferencesPatch>(json!({"locale": "martian"}));
         assert!(err.is_err());
     }
 
@@ -131,5 +163,6 @@ mod tests {
         let json = serde_json::to_value(PreferencesDto::default()).unwrap();
         assert_eq!(json["text_size"], "auto");
         assert_eq!(json["large_targets"], "off");
+        assert_eq!(json["locale"], "en");
     }
 }

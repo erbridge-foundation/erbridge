@@ -13,7 +13,7 @@ describe('schema validation helpers', () => {
 	it('isPreferenceKey recognises known keys and rejects others', () => {
 		expect(isPreferenceKey('text_size')).toBe(true);
 		expect(isPreferenceKey('reduce_motion')).toBe(true);
-		expect(isPreferenceKey('locale')).toBe(false);
+		expect(isPreferenceKey('locale')).toBe(true);
 		expect(isPreferenceKey('nonsense')).toBe(false);
 	});
 
@@ -22,6 +22,9 @@ describe('schema validation helpers', () => {
 		expect(isValidValue('text_size', 'enormous')).toBe(false);
 		expect(isValidValue('reduce_motion', 'on')).toBe(true);
 		expect(isValidValue('large_targets', 'auto')).toBe(false); // toggle has no auto
+		expect(isValidValue('locale', 'en')).toBe(true);
+		expect(isValidValue('locale', 'de')).toBe(true);
+		expect(isValidValue('locale', 'martian')).toBe(false);
 	});
 
 	it('auto/regular text size leaves the root font-size unset', () => {
@@ -45,10 +48,15 @@ describe('coercePreferences', () => {
 		expect(result.reduce_motion).toBe('auto'); // invalid → default
 	});
 
-	it('ignores foreign keys (forward-compatible with e.g. locale)', () => {
-		const result = coercePreferences({ locale: 'fr', high_contrast: 'on' });
+	it('keeps a valid locale and defaults an invalid one', () => {
+		expect(coercePreferences({ locale: 'en' }).locale).toBe('en');
+		expect(coercePreferences({ locale: 'martian' }).locale).toBe('en'); // invalid → default
+	});
+
+	it('ignores genuinely foreign keys (forward-compatible)', () => {
+		const result = coercePreferences({ future_feature: 'x', high_contrast: 'on' });
 		expect(result.high_contrast).toBe('on');
-		expect(result).not.toHaveProperty('locale');
+		expect(result).not.toHaveProperty('future_feature');
 	});
 });
 

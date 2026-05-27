@@ -39,7 +39,8 @@ describe('applyPreferences', () => {
 			reduce_motion: 'on',
 			high_contrast: 'off',
 			large_targets: 'on',
-			dyslexia_font: 'off'
+			dyslexia_font: 'off',
+			locale: 'en'
 		};
 		applyPreferences(prefs);
 		expect(root().getAttribute('data-reduce-motion')).toBe('on');

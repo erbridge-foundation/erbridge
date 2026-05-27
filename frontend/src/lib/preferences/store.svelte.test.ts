@@ -1,6 +1,15 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
+import { setLocale, getLocale } from '$lib/paraglide/runtime';
 import { preferences } from './store.svelte';
 import { DEFAULT_PREFERENCES, STORAGE_KEY, type Preferences } from './schema';
+
+// The Paraglide cookie bridge is the i18n integration point; mock the runtime so
+// the store's bridgeLocale calls are observable without a real cookie / reload.
+// getLocale returns the current active locale (default 'en' in tests).
+vi.mock('$lib/paraglide/runtime', () => ({
+	getLocale: vi.fn(() => 'en'),
+	setLocale: vi.fn()
+}));
 
 function withOverrides(o: Partial<Preferences>): Preferences {
 	return { ...DEFAULT_PREFERENCES, ...o };
@@ -11,6 +20,11 @@ describe('preferences store', () => {
 		localStorage.clear();
 		preferences.revertToPersisted(); // reset in-memory state to defaults
 		vi.restoreAllMocks();
+		// Re-establish the paraglide bridge mock defaults after restoreAllMocks:
+		// active locale matches the default 'en', so the bridge stays inert unless
+		// a test overrides getLocale.
+		vi.mocked(getLocale).mockReturnValue('en');
+		vi.mocked(setLocale).mockReset();
 	});
 
 	afterEach(() => {
@@ -115,6 +129,50 @@ describe('preferences store', () => {
 			await preferences.commit({ text_size: 'small' });
 			expect(preferences.current.text_size).toBe('small');
 			expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!).text_size).toBe('small');
+		});
+	});
+
+	describe('Paraglide locale bridge', () => {
+		it('commit bridges the locale with reload:true after syncing', async () => {
+			// getLocale differs from the stored locale, so the bridge fires.
+			vi.mocked(getLocale).mockReturnValue('en');
+			const order: string[] = [];
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+				order.push('fetch');
+				return new Response(JSON.stringify({ data: { ...DEFAULT_PREFERENCES } }), {
+					status: 200,
+					headers: { 'content-type': 'application/json' }
+				});
+			});
+			// Pretend the active locale is something else so locale !== current.
+			vi.mocked(getLocale).mockReturnValue('xx' as unknown as 'en');
+			vi.mocked(setLocale).mockImplementation(() => {
+				order.push('setLocale');
+			});
+
+			await preferences.commit({ locale: 'en' });
+
+			expect(setLocale).toHaveBeenCalledWith('en', { reload: true });
+			// The server PATCH must complete before the (possibly reloading) bridge.
+			expect(order).toEqual(['fetch', 'setLocale']);
+		});
+
+		it('does not bridge when the active locale already matches', async () => {
+			vi.mocked(getLocale).mockReturnValue('en');
+			vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+				new Response(JSON.stringify({ data: { ...DEFAULT_PREFERENCES } }), {
+					status: 200,
+					headers: { 'content-type': 'application/json' }
+				})
+			);
+			await preferences.commit({ locale: 'en' });
+			expect(setLocale).not.toHaveBeenCalled();
+		});
+
+		it('reconcile bridges with reload:false (never reloads on init)', async () => {
+			vi.mocked(getLocale).mockReturnValue('xx' as unknown as 'en');
+			await preferences.reconcile({ ...DEFAULT_PREFERENCES });
+			expect(setLocale).toHaveBeenCalledWith('en', { reload: false });
 		});
 	});
 

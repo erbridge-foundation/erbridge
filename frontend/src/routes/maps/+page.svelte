@@ -1,9 +1,13 @@
+<script lang="ts">
+	import { m } from '$lib/paraglide/messages';
+</script>
+
 <svelte:head>
-	<title>E-R Bridge — Maps</title>
+	<title>{m.maps_title()}</title>
 </svelte:head>
 
 <main class="body">
-	<p class="placeholder">Map view coming soon.</p>
+	<p class="placeholder">{m.maps_coming_soon()}</p>
 </main>
 
 <style>

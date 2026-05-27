@@ -132,6 +132,7 @@ async fn get_preferences_returns_defaults_for_new_account(pool: PgPool) {
     assert_eq!(body["data"]["high_contrast"], "auto");
     assert_eq!(body["data"]["large_targets"], "off");
     assert_eq!(body["data"]["dyslexia_font"], "off");
+    assert_eq!(body["data"]["locale"], "en");
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -161,6 +162,40 @@ async fn patch_preferences_partial_merge_preserves_other_keys(pool: PgPool) {
     let body = json_body(resp).await;
     assert_eq!(body["data"]["text_size"], "large");
     assert_eq!(body["data"]["reduce_motion"], "on");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn patch_preferences_sets_locale(pool: PgPool) {
+    let state = build_state(pool.clone());
+    let account_id = accounts::create_account(&pool).await.unwrap();
+    let cookie = create_session(&state, account_id).await;
+    let app = backend::build_router(state);
+
+    let resp = app
+        .oneshot(patch_req(&cookie, json!({"locale": "en"})))
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = json_body(resp).await;
+    assert_eq!(body["data"]["locale"], "en");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn patch_preferences_invalid_locale_returns_400(pool: PgPool) {
+    let state = build_state(pool.clone());
+    let account_id = accounts::create_account(&pool).await.unwrap();
+    let cookie = create_session(&state, account_id).await;
+    let app = backend::build_router(state);
+
+    let resp = app
+        .oneshot(patch_req(&cookie, json!({"locale": "martian"})))
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body = json_body(resp).await;
+    assert_eq!(body["error"]["code"], "bad_request");
 }
 
 #[sqlx::test(migrations = "./migrations")]

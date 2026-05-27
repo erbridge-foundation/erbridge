@@ -40,11 +40,23 @@ Deliberately **no `url` strategy** (no `/en/`, `/de/` path prefixes). Rationale:
 
 ### Decision: Locale persists as `preferences.locale` on the account-preferences substrate
 
-Locale is stored as the `locale` key in the `preferences` JSONB bag and read/written through the existing `GET`/`PATCH /api/v1/me/preferences`. The preferences **service layer** is extended to recognise and validate `locale` (it must be one of the supported locales). This reuses the substrate's localStorage-first-with-backend-sync model and login reconciliation for free — no new column, endpoint, or store. Locale and the accessibility preferences are the same problem shape (a per-account preference that also works anonymously), so a second parallel system would be needless duplication.
+Locale is stored as the `locale` key in the `preferences` JSONB bag and read/written through the existing `GET`/`PATCH /api/v1/me/preferences`. Validation lives in the **DTO layer**, not the service: `PreferencesPatch` is `#[serde(deny_unknown_fields)]` and each key is a typed enum, so an unknown key or invalid value is rejected at deserialisation before the service runs (the service does no value-validation of its own). Locale therefore becomes a first-class typed key — a `Locale` enum field on `PreferencesDto`/`PreferencesPatch` — exactly like `text_size` et al., rather than a loosely-validated string checked in the service. This reuses the substrate's localStorage-first-with-backend-sync model and login reconciliation for free — no new column, endpoint, or store. Locale and the accessibility preferences are the same problem shape (a per-account preference that also works anonymously), so a second parallel system would be needless duplication.
+
+(The substrate was built with locale's arrival anticipated — its tests currently assert locale is an *ignored foreign key*; adding it as a typed key inverts those specific assertions.)
 
 ### Decision: Bridge `preferences.locale` to Paraglide's locale cookie
 
 Paraglide resolves the active locale from a cookie during SSR; `preferences.locale` is the saved choice. These must never disagree. The preferences store therefore writes Paraglide's locale cookie whenever `locale` changes — on Apply and during login reconciliation — so the server-rendered language always matches the stored preference. This is the single integration point between the i18n library and the preference substrate.
+
+### Decision: The preferences page is tabbed, over a single shared staged batch
+
+The `/preferences` page is organised into tabs — "General" (locale, and the home for future non-accessibility preferences) and "Accessibility" (the existing text-size/contrast/motion/targets/font controls). This is introduced here because i18n adds the first preference that is not an accessibility setting, but the structure is **not i18n-specific**: it is the page's layout going forward, and later preference families add a tab (or a control to an existing tab) rather than a parallel page.
+
+Crucially, the tabs are a **presentation layer over one staged batch**, not independent forms. There remains a single `staged` set, a single `dirty` flag, and a single Apply/Discard/Reset action bar spanning all tabs. Switching tabs neither commits, discards, nor resets — it only changes which controls are visible. This preserves the page's existing commit model intact: the staging logic, the `beforeNavigate`/teardown revert-on-dirty backstop, and the contrast/size-proof recovery surface (the action bar) all carry over unchanged.
+
+The alternative — per-tab staging with a dirty state and Apply bar per tab — was rejected. It fragments the single-batch model, reopens the "leaving a dirty tab" question (block? discard? carry?) that the current design answers once for the whole page, and multiplies the test surface, all for no user benefit when Apply already commits the whole batch atomically.
+
+A consequence: the page `<h1>` and intro copy are currently accessibility-specific and become page-level once tabs exist. Since this is the i18n change, that copy lands as Paraglide message keys rather than literals.
 
 ### Decision: Browser detection only sets the *default*, it does not write a preference
 
@@ -54,5 +66,5 @@ On first visit with no cookie and no stored `preferences.locale`, the active loc
 
 - **Ordering dependency on `accessibility-preferences`.** This change assumes the substrate exists. (`accessibility-preferences` is now archived, so the dependency is satisfied — but the dependency remains real for understanding the design.)
 - **Cookie ⇄ `preferences.locale` consistency.** Two locale signals (Paraglide's cookie and the stored preference) must stay in sync; the store owns writing the cookie on every locale change. A drift would render SSR in one language and show the preference as another. Mitigation: a single code path (the store) sets both.
-- **Locale validation lives in the shared preferences service.** Adding a supported locale later means updating the service's allowed-value set for the `locale` key (an app-layer change, no migration) *and* Paraglide's compiled locale list. Acceptable; both are app-layer.
+- **Locale validation lives in the shared preferences DTO.** Adding a supported locale later means adding a variant to the `Locale` enum in `dto/preferences.rs` (an app-layer change, no migration) *and* Paraglide's compiled locale list. The two must stay in sync — the DTO is the API's accepted set, Paraglide's list is what compiles. Acceptable; both are app-layer.
 - **The string-extraction effort is the bulk of the work.** Replacing every hardcoded literal across the frontend is large and easy to underestimate; it is the dominant task, not the library setup.

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/stores';
+	import { m } from '$lib/paraglide/messages';
 	import UserChip from './UserChip.svelte';
 	import type { MeResponse } from '$lib/api';
 
@@ -28,21 +29,21 @@
 	</a>
 
 	<nav class="nav-links">
-		<a href="/maps" class:active={$page.url.pathname === '/maps'}>maps</a>
-		<a href="/characters" class:active={$page.url.pathname === '/characters'}>characters</a>
+		<a href="/maps" class:active={$page.url.pathname === '/maps'}>{m.nav_maps()}</a>
+		<a href="/characters" class:active={$page.url.pathname === '/characters'}>{m.nav_characters()}</a>
 	</nav>
 
 	<div class="nav-spacer"></div>
 
 	<div class="status" aria-live="polite">
 		<span class="dot" class:disconnected={!connected} aria-hidden="true"></span>
-		<span>{connected ? 'connected' : 'disconnected'}</span>
+		<span>{connected ? m.nav_connected() : m.nav_disconnected()}</span>
 	</div>
 
 	{#if main}
 		<UserChip portraitUrl={main.portrait_url} name={main.name} />
 	{:else}
-		<div class="user-chip-placeholder" aria-label="Not signed in"></div>
+		<div class="user-chip-placeholder" aria-label={m.nav_not_signed_in()}></div>
 	{/if}
 </header>
 

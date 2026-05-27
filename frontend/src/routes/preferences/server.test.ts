@@ -17,7 +17,8 @@ const DEFAULT_PREFS = {
 	reduce_motion: 'auto',
 	high_contrast: 'auto',
 	large_targets: 'off',
-	dyslexia_font: 'off'
+	dyslexia_font: 'off',
+	locale: 'en'
 } as const;
 
 type Handler = typeof GET;

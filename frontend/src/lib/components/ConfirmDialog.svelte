@@ -4,8 +4,9 @@
 	Specified by: openspec/specs/frontend-patterns/spec.md
 	Implemented per: openspec/changes/confirm-destructive-actions/tasks.md §2.
 
-	The cancel label is hard-coded as "cancel" (§1.2 of the change tasks); the
-	spec requires every invocation to use the same word, so it is not a prop.
+	The cancel label is the shared `dialog_cancel` message, not a prop (§1.2 of
+	the change tasks): the spec requires every invocation to use the same word,
+	and a single message key guarantees that across locales.
 
 	HANDOFF STATUS (§2.8). The lines below mark each behaviour as either
 	covered by the Vitest suite (@verified-by-test) or still needing a
@@ -56,6 +57,7 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import { fade, scale } from 'svelte/transition';
+	import { m } from '$lib/paraglide/messages';
 
 	type Props = {
 		open: boolean;
@@ -220,7 +222,7 @@
 					class="cancel"
 					onclick={onCancel}
 				>
-					cancel
+					{m.dialog_cancel()}
 				</button>
 				<button
 					bind:this={confirmButtonEl}

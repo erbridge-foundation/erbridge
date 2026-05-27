@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import { m } from '$lib/paraglide/messages';
 	import type { PageData, ActionData } from './$types';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 
@@ -45,13 +46,13 @@
 </script>
 
 <svelte:head>
-	<title>E-R Bridge — Characters</title>
+	<title>{m.characters_title()}</title>
 </svelte:head>
 
 <main class="body">
 	<div class="content">
 		<div class="page-header">
-			<h1>CHARACTERS</h1>
+			<h1>{m.characters_heading()}</h1>
 			<div class="header-actions">
 				<!-- TODO: extract a SearchInput component on the second use. -->
 				<label class="search">
@@ -70,8 +71,8 @@
 					</svg>
 					<input
 						type="search"
-						placeholder="search characters…"
-						aria-label="Search characters by name"
+						placeholder={m.characters_search_placeholder()}
+						aria-label={m.characters_search_aria()}
 						autocomplete="off"
 						bind:value={query}
 					/>
@@ -79,7 +80,7 @@
 						<button
 							type="button"
 							class="search-clear"
-							aria-label="Clear search"
+							aria-label={m.characters_search_clear_aria()}
 							onclick={() => (query = '')}
 						>
 							<svg
@@ -97,13 +98,13 @@
 						</button>
 					{/if}
 				</label>
-				<a class="btn" href="/auth/characters/add?return_to=/characters">+ add character</a>
+				<a class="btn" href="/auth/characters/add?return_to=/characters">{m.characters_add()}</a>
 			</div>
 		</div>
 
 		<div class="grid" class:empty={filtered.length === 0}>
 			{#if filtered.length === 0}
-				<p class="empty-state" role="status">No characters match your search.</p>
+				<p class="empty-state" role="status">{m.characters_empty()}</p>
 			{/if}
 
 			{#each filtered as character (character.id)}
@@ -121,7 +122,7 @@
 								<div class="name-row">
 									<span class="name">{character.name}</span>
 									{#if character.is_main}
-										<span class="badge-main">main</span>
+										<span class="badge-main">{m.characters_badge_main()}</span>
 									{/if}
 								</div>
 								<div class="affiliation">
@@ -141,7 +142,11 @@
 								data-state={character.token_status}
 							>
 								<span class="dot" aria-hidden="true"></span>
-								<span>token {character.token_status === 'active' ? 'active' : 'expired'}</span>
+								<span
+									>{character.token_status === 'active'
+										? m.characters_token_active()
+										: m.characters_token_expired()}</span
+								>
 							</span>
 
 							{#if !character.is_main}
@@ -149,10 +154,12 @@
 									{#if character.token_status === 'active'}
 										<form method="POST" action="?/setMain" use:enhance>
 											<input type="hidden" name="character_id" value={character.id} />
-											<button type="submit">set main</button>
+											<button type="submit">{m.characters_set_main()}</button>
 										</form>
 									{:else}
-										<a class="reauth" href="/auth/characters/add?return_to=/characters">re-auth</a>
+										<a class="reauth" href="/auth/characters/add?return_to=/characters"
+											>{m.characters_reauth()}</a
+										>
 									{/if}
 									<form
 										bind:this={removeForms[character.id]}
@@ -169,12 +176,14 @@
 											onclick={() => {
 												removeState = { open: true, character };
 											}}
-										>remove</button>
+										>{m.characters_remove()}</button>
 									</form>
 								</div>
 							{:else if character.token_status === 'expired'}
 								<div class="actions">
-									<a class="reauth" href="/auth/characters/add?return_to=/characters">re-auth</a>
+									<a class="reauth" href="/auth/characters/add?return_to=/characters"
+										>{m.characters_reauth()}</a
+									>
 								</div>
 							{/if}
 						</div>
@@ -191,12 +200,12 @@
 
 		<hr class="divider" />
 
-		<h2 class="danger-zone-title">DANGER ZONE</h2>
+		<h2 class="danger-zone-title">{m.characters_danger_zone()}</h2>
 		<form bind:this={deleteAccountForm} method="POST" action="?/deleteAccount" use:enhance>
 			<!-- type="button": no-JS users get no confirmation and no submit (§3.5).
 			     Per design.md decision 8, this regression is accepted for v1. -->
 			<button type="button" class="danger-btn" onclick={() => (deleteAccountOpen = true)}>
-				delete account
+				{m.characters_delete_account()}
 			</button>
 		</form>
 		{#if formError && !formError.characterId && formError.code}
@@ -219,12 +228,9 @@
 		removeState = { open: false, character: null };
 	}}
 >
-	{#snippet title()}Remove {removeState.character?.name}?{/snippet}
-	{#snippet body()}
-		This character will be removed from your account. You can add them again at any time
-		via add character and performing an EVE login.
-	{/snippet}
-	{#snippet confirmLabel()}remove character{/snippet}
+	{#snippet title()}{m.characters_remove_title({ name: removeState.character?.name ?? '' })}{/snippet}
+	{#snippet body()}{m.characters_remove_body()}{/snippet}
+	{#snippet confirmLabel()}{m.characters_remove_confirm()}{/snippet}
 </ConfirmDialog>
 
 <!-- Delete-account confirmation modal (§3.3). -->
@@ -237,12 +243,9 @@
 		deleteAccountOpen = false;
 	}}
 >
-	{#snippet title()}Delete account?{/snippet}
-	{#snippet body()}
-		Your account will be deactivated. To restore it, log back in within 30 days; after
-		that, your data is permanently removed.
-	{/snippet}
-	{#snippet confirmLabel()}delete account{/snippet}
+	{#snippet title()}{m.characters_delete_account_title()}{/snippet}
+	{#snippet body()}{m.characters_delete_account_body()}{/snippet}
+	{#snippet confirmLabel()}{m.characters_delete_account_confirm()}{/snippet}
 </ConfirmDialog>
 
 <style>
