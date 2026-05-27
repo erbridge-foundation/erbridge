@@ -196,12 +196,13 @@
 	.preferences {
 		/* Own scroll region inside the fixed-height app shell — see /about for the
 		   rationale. flex:1 + min-height:0 fill remaining height and allow shrink;
-		   the 640px column stays centred via max-width + auto margins. */
+		   the column stays centred via max-width + auto margins. The 960px width
+		   matches /about and /characters so the content column is consistent. */
 		flex: 1;
 		min-height: 0;
 		overflow-y: auto;
 		width: 100%;
-		max-width: 640px;
+		max-width: 960px;
 		margin: 0 auto;
 		padding: 32px 24px 64px;
 	}
