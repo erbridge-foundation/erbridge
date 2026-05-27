@@ -15,6 +15,7 @@ The fix is not to build new machinery — it is to (a) establish a single source
 - **Frontend:** the SvelteKit build receives the same git-derived `APP_VERSION` and `GIT_COMMIT_SHA` as build args; vite inlines them as `PUBLIC_UI_VERSION` and `PUBLIC_GIT_COMMIT`. `/about` shows the UI commit alongside the existing UI/API versions.
 - **CI:** `actions/checkout` fetches tags + full depth (`fetch-depth: 0`) so `git describe` works; a step computes `APP_VERSION` + `GIT_COMMIT_SHA` once and passes them as build-args to both image builds.
 - **Release immutability:** on `v*` tag pushes the publish job refuses to re-publish an already-existing `:v<semver>` image tag (fails hard); the `:develop`/`:sha-` mutable tags are exempt. A `v*` git-tag-protection ruleset (restrict updates + deletions) prevents the underlying tag from being moved. Tags `:develop`, `:sha-`, `:latest` are unchanged.
+- **Baseline release:** after the fixed pipeline lands on `main`, cut `v0.0.1` as the first real release so the baseline images report `0.0.1` + a real commit; then delete the stale pre-fix GHCR images (`0.1.0`/`unknown`) so only correctly-versioned artifacts remain.
 - **Docs:** add `RELEASING.md` documenting the manual bump = create a `v<semver>` git tag, plus the zero-tag bootstrap behaviour.
 
 ## Capabilities

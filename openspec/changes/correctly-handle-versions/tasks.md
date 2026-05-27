@@ -33,3 +33,11 @@
 - [ ] 6.2 Build the frontend image and confirm `/about` shows the git version + UI commit
 - [ ] 6.3 Confirm `docker-compose.dev.yml` still builds and runs (it will report the documented fallbacks unless build args are added — note in RELEASING.md whether that is acceptable for dev)
 - [ ] 6.4 Confirm the immutability check: a re-run/re-push of an already-published `v<semver>` fails the publish job, and the `v*` tag-protection ruleset rejects a force-update of an existing tag
+
+## 7. Baseline release + GHCR cleanup
+
+(Runs last — after sections 1–5 are merged to `main`, so the baseline build goes through the fixed pipeline.)
+
+- [ ] 7.1 Cut and push the `v0.0.1` tag from `main`; confirm CI's fixed pipeline publishes `erbridge-api`/`erbridge-web` at `:v0.0.1` + `:latest` + `:sha-<short>`
+- [ ] 7.2 Verify the baseline artifacts: `erbridge-api` `/api/health` reports `version: 0.0.1` + real commit; `erbridge-web` `/about` shows UI version `0.0.1` + real UI commit
+- [ ] 7.3 Delete the stale pre-fix GHCR image versions (`0.1.0` / `commit unknown`) — operator runs this with a `delete:packages`-scoped token (the session token has only `repo, workflow, read:org, gist`, so it cannot); confirm only correctly-versioned artifacts remain

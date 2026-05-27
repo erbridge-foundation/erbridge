@@ -108,3 +108,19 @@ A pre-flight existence check has an inherent time-of-check/time-of-use window fo
 #### Scenario: Moving a release git tag is blocked
 - **WHEN** a developer attempts to force-update or delete an existing `v1.2.3` git tag
 - **THEN** the repository tag-protection ruleset rejects the operation
+
+### Requirement: The baseline release is v0.0.1
+
+The first release tag SHALL be `v0.0.1`, cut only after the fixed versioning pipeline (build-arg injection + immutability check) is in place, so the baseline images are produced by the correct pipeline. Until `v0.0.1` exists, develop builds use the `0.0.0-dev.<short-sha>` bootstrap version; once it exists, develop builds read `0.0.1-pre.<N>.g<short-sha>`.
+
+#### Scenario: Baseline images report a real version and commit
+- **WHEN** the `v0.0.1` tag is pushed through the fixed pipeline
+- **THEN** the published `erbridge-api` image reports `"version": "0.0.1"` and a real (non-`"unknown"`) `commit` on `/api/health`, and the `erbridge-web` image exposes `PUBLIC_UI_VERSION = "0.0.1"` and a real `PUBLIC_GIT_COMMIT`
+
+### Requirement: Stale pre-fix images are removed
+
+The container images published by the broken pipeline (reporting `version: 0.1.0` / `commit: "unknown"`) SHALL be deleted from GHCR as part of this change, so that only correctly-versioned artifacts remain. Deletion requires a token with `delete:packages` and is performed by an operator (not stored credentials).
+
+#### Scenario: Only correctly-versioned artifacts remain
+- **WHEN** the cleanup step has run after the `v0.0.1` baseline is published
+- **THEN** no GHCR image version produced by the pre-fix pipeline (`0.1.0` / `unknown`) remains, except any immutable tag that must be retained for reference
