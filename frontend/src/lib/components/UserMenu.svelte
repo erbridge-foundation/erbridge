@@ -6,9 +6,7 @@
 
 <div class="user-menu" role="menu" id="user-menu">
 	<a class="item" href="/preferences" role="menuitem" onclick={onclose}>{m.user_menu_preferences()}</a>
-	<span class="item disabled" role="menuitem" aria-disabled="true" tabindex="-1"
-		>{m.user_menu_settings()}</span
-	>
+	<a class="item" href="/account" role="menuitem" onclick={onclose}>{m.user_menu_account()}</a>
 	<a class="item" href="/about" role="menuitem" onclick={onclose}>{m.user_menu_about()}</a>
 	<hr class="divider" />
 	<a class="item" href="/auth/logout" role="menuitem" onclick={onclose}>{m.user_menu_logout()}</a>
@@ -38,13 +36,6 @@
 	}
 	.item:hover {
 		background: var(--space-700);
-	}
-	.item.disabled {
-		color: var(--slate-600);
-		cursor: not-allowed;
-	}
-	.item.disabled:hover {
-		background: transparent;
 	}
 
 	.divider {

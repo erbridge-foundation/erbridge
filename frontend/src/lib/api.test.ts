@@ -1,6 +1,22 @@
 import { describe, it, expect, vi } from 'vitest';
-import { ApiError, getMe, getHealth, deleteCharacter, deleteAccount, setMainCharacter } from './api';
-import type { MeResponse, CharacterDto, HealthResponse } from './api';
+import {
+	ApiError,
+	getMe,
+	getHealth,
+	deleteCharacter,
+	deleteAccount,
+	setMainCharacter,
+	listKeys,
+	createKey,
+	deleteKey
+} from './api';
+import type {
+	MeResponse,
+	CharacterDto,
+	HealthResponse,
+	KeyMetadataDto,
+	CreatedKeyDto
+} from './api';
 
 const BACKEND = 'http://backend:3000';
 const COOKIE = 'session=abc.def.ghi';
@@ -88,6 +104,68 @@ describe('api.request', () => {
 			`${BACKEND}/api/v1/characters/c1/set-main`,
 			expect.objectContaining({ method: 'POST', headers: { cookie: COOKIE } })
 		);
+	});
+});
+
+describe('api keys', () => {
+	it('listKeys returns the unwrapped array on 200', async () => {
+		const keys: KeyMetadataDto[] = [
+			{ id: 'k1', name: 'ci', scope: 'account', expires_at: null, created_at: 'now' }
+		];
+		const fetch = mockJsonFetch(200, { data: keys });
+		const result = await listKeys(fetch, BACKEND, COOKIE);
+		expect(result).toEqual(keys);
+		expect(fetch).toHaveBeenCalledWith(
+			`${BACKEND}/api/v1/keys`,
+			expect.objectContaining({ headers: { cookie: COOKIE } })
+		);
+	});
+
+	it('createKey POSTs JSON and returns the plaintext key envelope on 201', async () => {
+		const created: CreatedKeyDto = {
+			id: 'k1',
+			key: 'erb_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+			name: 'ci',
+			expires_at: null,
+			created_at: 'now'
+		};
+		const fetch = mockJsonFetch(201, { data: created });
+		const result = await createKey(fetch, BACKEND, { name: 'ci', expires_at: null }, COOKIE);
+		expect(result).toEqual(created);
+		expect(fetch).toHaveBeenCalledWith(
+			`${BACKEND}/api/v1/keys`,
+			expect.objectContaining({
+				method: 'POST',
+				headers: { cookie: COOKIE, 'content-type': 'application/json' },
+				body: JSON.stringify({ name: 'ci', expires_at: null })
+			})
+		);
+	});
+
+	it('createKey throws ApiError on duplicate name (409)', async () => {
+		const fetch = mockJsonFetch(409, {
+			error: { code: 'conflict', message: 'duplicate name' }
+		});
+		await expect(
+			createKey(fetch, BACKEND, { name: 'ci', expires_at: null }, COOKIE)
+		).rejects.toMatchObject({ code: 'conflict', status: 409 });
+	});
+
+	it('deleteKey returns undefined on 204 (no body)', async () => {
+		const fetch = mockNoContentFetch();
+		await expect(deleteKey(fetch, BACKEND, 'k1', COOKIE)).resolves.toBeUndefined();
+		expect(fetch).toHaveBeenCalledWith(
+			`${BACKEND}/api/v1/keys/k1`,
+			expect.objectContaining({ method: 'DELETE', headers: { cookie: COOKIE } })
+		);
+	});
+
+	it('deleteKey throws ApiError on 404', async () => {
+		const fetch = mockJsonFetch(404, { error: { code: 'not_found', message: 'gone' } });
+		await expect(deleteKey(fetch, BACKEND, 'k1', COOKIE)).rejects.toMatchObject({
+			code: 'not_found',
+			status: 404
+		});
 	});
 });
 

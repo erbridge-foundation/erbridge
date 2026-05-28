@@ -1,13 +1,14 @@
 // Modal confirmation is client-side; ConfirmDialog is tested in src/lib/components/ConfirmDialog.test.ts. Server actions remain testable in isolation here.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 vi.mock('$lib/api', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('$lib/api')>();
 	return {
 		...actual,
 		setMainCharacter: vi.fn(),
-		deleteCharacter: vi.fn(),
-		deleteAccount: vi.fn()
+		deleteCharacter: vi.fn()
 	};
 });
 
@@ -15,7 +16,7 @@ vi.mock('$lib/server/env', () => ({
 	backend_internal_url: () => 'http://backend:3000'
 }));
 
-const { setMainCharacter, deleteCharacter, deleteAccount, ApiError } = await import('$lib/api');
+const { setMainCharacter, deleteCharacter, ApiError } = await import('$lib/api');
 const { load, actions } = await import('./+page.server');
 
 type LoadEvent = Parameters<typeof load>[0];
@@ -39,7 +40,6 @@ function makeActionEvent(opts: { cookie?: string; formData?: Record<string, stri
 beforeEach(() => {
 	vi.mocked(setMainCharacter).mockReset();
 	vi.mocked(deleteCharacter).mockReset();
-	vi.mocked(deleteAccount).mockReset();
 });
 
 describe('characters/+page.server load', () => {
@@ -152,34 +152,24 @@ describe('characters/+page.server actions', () => {
 		});
 	});
 
-	describe('deleteAccount', () => {
-		it('redirects to /login on success', async () => {
-			vi.mocked(deleteAccount).mockResolvedValue(undefined);
+	it('has no deleteAccount action (moved to /account in add-account-page-and-api-keys)', () => {
+		expect((actions as Record<string, unknown>).deleteAccount).toBeUndefined();
+	});
+});
 
-			await expect(actions.deleteAccount(makeActionEvent({ cookie: 'session=jwt' }))).rejects.toMatchObject({
-				status: 303,
-				location: '/login'
-			});
+describe('characters route source (post-move regression)', () => {
+	const here = resolve(__dirname);
+	const serverSrc = readFileSync(resolve(here, '+page.server.ts'), 'utf8');
+	const pageSrc = readFileSync(resolve(here, '+page.svelte'), 'utf8');
 
-			expect(deleteAccount).toHaveBeenCalledWith(expect.anything(), 'http://backend:3000', 'session=jwt');
-		});
+	it('does not reference ?/deleteAccount', () => {
+		expect(serverSrc).not.toMatch(/\?\/deleteAccount/);
+		expect(pageSrc).not.toMatch(/\?\/deleteAccount/);
+	});
 
-		it('returns fail without characterId on backend rejection', async () => {
-			vi.mocked(deleteAccount).mockRejectedValue(
-				new ApiError(
-					'cannot_remove_last_server_admin',
-					'Cannot remove the last server administrator; promote another admin first',
-					409
-				)
-			);
-
-			const result = await actions.deleteAccount(makeActionEvent({}));
-
-			expect(result).toMatchObject({
-				status: 409,
-				data: { code: 'cannot_remove_last_server_admin' }
-			});
-			expect((result as { data: { characterId?: string } }).data.characterId).toBeUndefined();
-		});
+	it('does not reference moved characters_delete_account* or characters_danger_zone i18n keys', () => {
+		const combined = `${serverSrc}\n${pageSrc}`;
+		expect(combined).not.toMatch(/characters_delete_account/);
+		expect(combined).not.toMatch(/characters_danger_zone/);
 	});
 });

@@ -13,17 +13,18 @@ describe('UserMenu', () => {
 		expect(link).not.toHaveAttribute('aria-disabled');
 	});
 
-	it('keeps settings disabled (out of scope for this change)', () => {
+	it('renders account as an enabled link to /account', () => {
 		render(UserMenu, { props: { onclose: () => {} } });
-		const settings = screen.getByRole('menuitem', { name: 'settings' });
-		expect(settings.tagName).toBe('SPAN');
-		expect(settings).toHaveAttribute('aria-disabled', 'true');
+		const link = screen.getByRole('menuitem', { name: 'account' });
+		expect(link.tagName).toBe('A');
+		expect(link).toHaveAttribute('href', '/account');
+		expect(link).not.toHaveAttribute('aria-disabled');
 	});
 
-	it('orders items preferences, settings, about, then log out', () => {
+	it('orders items preferences, account, about, then log out', () => {
 		render(UserMenu, { props: { onclose: () => {} } });
 		const labels = screen.getAllByRole('menuitem').map((el) => el.textContent?.trim());
-		expect(labels).toEqual(['preferences', 'settings', 'about', 'log out']);
+		expect(labels).toEqual(['preferences', 'account', 'about', 'log out']);
 	});
 
 	it('calls onclose when a navigation item is clicked (so the menu closes)', async () => {

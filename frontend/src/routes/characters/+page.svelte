@@ -24,8 +24,6 @@
 				)
 	);
 
-	// The form result's characterId is present on setMain/remove failures but
-	// not on deleteAccount; widen the type so the template can branch on it.
 	type FormError = { code: string; message: string; characterId?: string };
 	let formError = $derived(form as FormError | null);
 
@@ -39,10 +37,6 @@
 
 	// Map of character id → form element, populated via bind:this in the template.
 	let removeForms = $state<Record<string, HTMLFormElement>>({});
-
-	// Delete-account confirmation state.
-	let deleteAccountOpen = $state(false);
-	let deleteAccountForm = $state<HTMLFormElement | null>(null);
 </script>
 
 <svelte:head>
@@ -198,21 +192,6 @@
 			{/each}
 		</div>
 
-		<hr class="divider" />
-
-		<h2 class="danger-zone-title">{m.characters_danger_zone()}</h2>
-		<form bind:this={deleteAccountForm} method="POST" action="?/deleteAccount" use:enhance>
-			<!-- type="button": no-JS users get no confirmation and no submit (§3.5).
-			     Per design.md decision 8, this regression is accepted for v1. -->
-			<button type="button" class="danger-btn" onclick={() => (deleteAccountOpen = true)}>
-				{m.characters_delete_account()}
-			</button>
-		</form>
-		{#if formError && !formError.characterId && formError.code}
-			<p class="inline-error" role="alert" data-error-code={formError.code}>
-				{formError.message}
-			</p>
-		{/if}
 	</div>
 </main>
 
@@ -231,21 +210,6 @@
 	{#snippet title()}{m.characters_remove_title({ name: removeState.character?.name ?? '' })}{/snippet}
 	{#snippet body()}{m.characters_remove_body()}{/snippet}
 	{#snippet confirmLabel()}{m.characters_remove_confirm()}{/snippet}
-</ConfirmDialog>
-
-<!-- Delete-account confirmation modal (§3.3). -->
-<ConfirmDialog
-	open={deleteAccountOpen}
-	tone="danger"
-	onCancel={() => (deleteAccountOpen = false)}
-	onConfirm={() => {
-		deleteAccountForm?.requestSubmit();
-		deleteAccountOpen = false;
-	}}
->
-	{#snippet title()}{m.characters_delete_account_title()}{/snippet}
-	{#snippet body()}{m.characters_delete_account_body()}{/snippet}
-	{#snippet confirmLabel()}{m.characters_delete_account_confirm()}{/snippet}
 </ConfirmDialog>
 
 <style>
@@ -549,30 +513,4 @@
 		font-size: 0.75rem;
 	}
 
-	.divider {
-		margin: 32px 0 24px;
-		border: 0;
-		border-top: 1px solid var(--space-700);
-	}
-
-	.danger-zone-title {
-		margin: 0 0 16px;
-		font-size: 0.75rem;
-		font-weight: 600;
-		letter-spacing: 0.2em;
-		color: var(--slate-500);
-	}
-
-	.danger-btn {
-		background: transparent;
-		border: 0;
-		padding: 0;
-		font: inherit;
-		font-size: 0.875rem;
-		color: var(--red);
-		cursor: pointer;
-	}
-	.danger-btn:hover {
-		text-decoration: underline;
-	}
 </style>

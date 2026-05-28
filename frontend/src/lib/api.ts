@@ -161,6 +161,41 @@ export function deleteAccount(
 	});
 }
 
+export function listKeys(
+	fetch: typeof globalThis.fetch,
+	backendUrl: string,
+	cookie: string
+): Promise<KeyMetadataDto[]> {
+	return request<KeyMetadataDto[]>(fetch, `${backendUrl}/api/v1/keys`, {
+		headers: { cookie }
+	});
+}
+
+export function createKey(
+	fetch: typeof globalThis.fetch,
+	backendUrl: string,
+	body: CreateKeyRequest,
+	cookie: string
+): Promise<CreatedKeyDto> {
+	return request<CreatedKeyDto>(fetch, `${backendUrl}/api/v1/keys`, {
+		method: 'POST',
+		headers: { cookie, 'content-type': 'application/json' },
+		body: JSON.stringify(body)
+	});
+}
+
+export function deleteKey(
+	fetch: typeof globalThis.fetch,
+	backendUrl: string,
+	keyId: string,
+	cookie: string
+): Promise<void> {
+	return request<void>(fetch, `${backendUrl}/api/v1/keys/${keyId}`, {
+		method: 'DELETE',
+		headers: { cookie }
+	});
+}
+
 export function getPreferences(
 	fetch: typeof globalThis.fetch,
 	backendUrl: string,

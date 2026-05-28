@@ -1,6 +1,6 @@
-import { redirect, fail } from '@sveltejs/kit';
+import { fail } from '@sveltejs/kit';
 import { backend_internal_url } from '$lib/server/env';
-import { setMainCharacter, deleteCharacter, deleteAccount, ApiError } from '$lib/api';
+import { setMainCharacter, deleteCharacter, ApiError } from '$lib/api';
 import type { PageServerLoad, Actions } from './$types';
 
 export const load: PageServerLoad = async ({ parent }) => {
@@ -39,18 +39,5 @@ export const actions: Actions = {
 			}
 			return fail(500, { code: 'internal_error', message: 'An unexpected error occurred', characterId });
 		}
-	},
-
-	deleteAccount: async ({ request, fetch }) => {
-		const cookie = request.headers.get('cookie') ?? '';
-		try {
-			await deleteAccount(fetch, backend_internal_url(), cookie);
-		} catch (e) {
-			if (e instanceof ApiError) {
-				return fail(e.status, { code: e.code, message: e.message });
-			}
-			return fail(500, { code: 'internal_error', message: 'An unexpected error occurred' });
-		}
-		redirect(303, '/login');
-	},
+	}
 };
