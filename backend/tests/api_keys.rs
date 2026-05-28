@@ -235,6 +235,69 @@ async fn delete_key_wrong_account_returns_404(pool: PgPool) {
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
 
+/// POST /api/v1/keys with a name that already exists for the same account → 409.
+#[sqlx::test(migrations = "./migrations")]
+async fn create_key_duplicate_name_returns_409(pool: PgPool) {
+    let state = build_state(pool);
+    let app = backend::build_router(state.clone());
+
+    let (_, cookie) = create_session(&state).await;
+
+    // First create — succeeds.
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri("/api/v1/keys")
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::COOKIE, &cookie)
+        .body(Body::from(r#"{"name":"ci","expires_at":null}"#))
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    // Second create with the same name → 409 with api_key_name_already_exists code.
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri("/api/v1/keys")
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::COOKIE, &cookie)
+        .body(Body::from(r#"{"name":"ci","expires_at":null}"#))
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+
+    let body = json_body(resp).await;
+    assert_eq!(
+        body["error"]["code"].as_str().unwrap(),
+        "api_key_name_already_exists"
+    );
+}
+
+/// Two accounts may each have an API key with the same name (the uniqueness is scoped per account).
+#[sqlx::test(migrations = "./migrations")]
+async fn create_key_same_name_different_accounts_returns_201(pool: PgPool) {
+    let state = build_state(pool);
+    let app = backend::build_router(state.clone());
+
+    let (_, cookie_a) = create_session(&state).await;
+    let (_, cookie_b) = create_session(&state).await;
+
+    let make_req = |cookie: &str| {
+        Request::builder()
+            .method(Method::POST)
+            .uri("/api/v1/keys")
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(header::COOKIE, cookie.to_owned())
+            .body(Body::from(r#"{"name":"shared","expires_at":null}"#))
+            .unwrap()
+    };
+
+    let resp_a = app.clone().oneshot(make_req(&cookie_a)).await.unwrap();
+    assert_eq!(resp_a.status(), StatusCode::CREATED);
+
+    let resp_b = app.clone().oneshot(make_req(&cookie_b)).await.unwrap();
+    assert_eq!(resp_b.status(), StatusCode::CREATED);
+}
+
 /// POST /api/v1/keys with an empty name → 400.
 #[sqlx::test(migrations = "./migrations")]
 async fn create_key_empty_name_returns_400(pool: PgPool) {

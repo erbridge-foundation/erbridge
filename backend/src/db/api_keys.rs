@@ -218,6 +218,36 @@ mod tests {
     }
 
     #[sqlx::test]
+    async fn insert_duplicate_name_same_account_returns_unique_violation(pool: PgPool) {
+        let account_id = accounts::create_account(&pool).await.unwrap();
+        insert_key(&pool, account_id, "ci", &fake_hash("first"), None)
+            .await
+            .unwrap();
+
+        let err = insert_key(&pool, account_id, "ci", &fake_hash("second"), None)
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, DbError::UniqueViolation { .. }));
+    }
+
+    #[sqlx::test]
+    async fn insert_same_name_different_accounts_succeeds(pool: PgPool) {
+        let account_a = accounts::create_account(&pool).await.unwrap();
+        let account_b = accounts::create_account(&pool).await.unwrap();
+
+        insert_key(&pool, account_a, "ci", &fake_hash("a"), None)
+            .await
+            .unwrap();
+        insert_key(&pool, account_b, "ci", &fake_hash("b"), None)
+            .await
+            .unwrap();
+
+        assert_eq!(list_for_account(&pool, account_a).await.unwrap().len(), 1);
+        assert_eq!(list_for_account(&pool, account_b).await.unwrap().len(), 1);
+    }
+
+    #[sqlx::test]
     async fn list_returns_only_own_keys(pool: PgPool) {
         let account_a = accounts::create_account(&pool).await.unwrap();
         let account_b = accounts::create_account(&pool).await.unwrap();

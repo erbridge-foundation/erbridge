@@ -46,6 +46,17 @@ jsonpath "$.data.created_at" isString
 jsonpath "$.data.key_hash" not exists
 jsonpath "$.error" not exists
 
+# ── 3a. Create key with duplicate name → 409 ─────────────────────────────────
+
+POST {{base_url}}/api/v1/keys
+Content-Type: application/json
+Authorization: Bearer {{erb_api_key}}
+{"name": "smoke", "expires_at": null}
+
+HTTP 409
+[Asserts]
+jsonpath "$.error.code" == "api_key_name_already_exists"
+
 # ── 4. List keys via Bearer token → 200 ──────────────────────────────────────
 
 GET {{base_url}}/api/v1/keys
