@@ -2,6 +2,7 @@
 	import '../app.css';
 	import { page } from '$app/stores';
 	import GlobalNav from '$lib/components/GlobalNav.svelte';
+	import UpdateBanner from '$lib/components/UpdateBanner.svelte';
 	import { preferences } from '$lib/preferences/store.svelte';
 	import { coercePreferences } from '$lib/preferences/schema';
 	import type { LayoutData } from './$types';
@@ -25,6 +26,7 @@
 </script>
 
 <div class="app" class:login={isLoginRoute}>
+	<UpdateBanner />
 	{#if !isLoginRoute}
 		<GlobalNav me={data.me} />
 		{#if data.meError}

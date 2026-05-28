@@ -14,6 +14,9 @@
 
 	"dialog_cancel": "cancel",
 
+	"update_banner_message": "A new version is available.",
+	"update_banner_reload": "reload",
+
 	"app_tagline": "Wormhole Mapper",
 
 	"home_welcome_named": "Welcome, {name}",
