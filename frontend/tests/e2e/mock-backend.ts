@@ -7,19 +7,20 @@
  * during the test run.
  *
  * Authentication model:
- *   The mock returns 401 for /api/v1/me by default. Tests that need an
- *   authenticated session SHALL set a cookie via page.context().addCookies
- *   with name=session and any non-empty value before navigating; the mock
- *   accepts any cookie whose value is non-empty as a valid session. This
- *   lets login.spec.ts (which expects an unauthenticated state) and
- *   characters-confirm-dialog.spec.ts (which needs auth) share the same
- *   mock without interfering.
+ *   The mock returns 401 for authenticated endpoints by default. Tests that
+ *   need an authenticated session SHALL set a cookie via
+ *   page.context().addCookies with name=session and any non-empty value
+ *   before navigating; the mock accepts any cookie whose value is non-empty
+ *   as a valid session. This lets login.spec.ts (which expects an
+ *   unauthenticated state) and the authenticated suites share the same mock
+ *   without interfering.
  *
  * Seeded data (returned when authenticated):
  *   - Account: id "acc1", active
  *   - Characters:
  *       "char-main"  — Main Pilot   (is_main: true,  token_status: active)
  *       "char-alt"   — Jita Trader  (is_main: false, token_status: active)
+ *   - API keys: empty list (so /account renders its empty state)
  */
 
 import http from 'node:http';
@@ -111,6 +112,18 @@ const server = http.createServer((req, res) => {
 	// DELETE /api/v1/account
 	if (method === 'DELETE' && url === '/api/v1/account') {
 		noContent(res);
+		return;
+	}
+
+	// GET /api/v1/keys — authenticated; returns an empty list so /account
+	// renders its empty state. The e2e suite doesn't need a populated list
+	// to exercise the danger-zone modal.
+	if (method === 'GET' && url === '/api/v1/keys') {
+		if (!hasValidSession(req)) {
+			unauthorised(res);
+			return;
+		}
+		json(res, 200, { data: [] });
 		return;
 	}
 

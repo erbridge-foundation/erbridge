@@ -102,23 +102,7 @@ test.describe('/characters confirm-dialog', () => {
 		await expect(page.locator('article', { hasText: ALT_CHARACTER_NAME })).toBeVisible();
 	});
 
-	test('clicking delete account opens the account-deletion modal', async ({ page }) => {
-		await page.getByRole('button', { name: 'delete account' }).click();
-
-		const dialog = page.getByRole('alertdialog');
-		await expect(dialog).toBeVisible();
-		await expect(dialog).toContainText('Delete account?');
-		await expect(dialog).toContainText('30 days');
-	});
-
-	test('cancelling the delete-account modal does not submit', async ({ page }) => {
-		await page.getByRole('button', { name: 'delete account' }).click();
-		await expect(page.getByRole('alertdialog')).toBeVisible();
-
-		await page.getByRole('button', { name: 'cancel' }).click();
-		await expect(page.getByRole('alertdialog')).toHaveCount(0);
-
-		// Still on /characters (no redirect to /login).
-		await expect(page).toHaveURL(/\/characters/);
-	});
+	// The delete-account button moved to /account (Danger zone tab) in the
+	// add-account-page-and-api-keys change. Its modal coverage lives in
+	// account-confirm-dialog.spec.ts.
 });
