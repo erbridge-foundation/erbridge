@@ -55,13 +55,13 @@ pub async fn reactivate_if_soft_deleted(
     Ok(())
 }
 
-pub async fn soft_delete(pool: &PgPool, id: Uuid) -> Result<()> {
+pub async fn soft_delete(tx: &mut Transaction<'_, Postgres>, id: Uuid) -> Result<()> {
     sqlx::query!(
         "UPDATE account SET status = 'soft_deleted', delete_requested_at = now()
          WHERE id = $1",
         id
     )
-    .execute(pool)
+    .execute(&mut **tx)
     .await
     .context("failed to soft delete account")?;
     Ok(())
@@ -204,7 +204,9 @@ mod tests {
         let first = resolve_or_create(&mut tx, None, 1001).await.unwrap();
         tx.commit().await.unwrap();
 
-        soft_delete(&pool, first).await.unwrap();
+        let mut tx = pool.begin().await.unwrap();
+        soft_delete(&mut tx, first).await.unwrap();
+        tx.commit().await.unwrap();
 
         let mut tx = pool.begin().await.unwrap();
         let second = resolve_or_create(&mut tx, None, 1002).await.unwrap();
@@ -223,14 +225,18 @@ mod tests {
 
         assert_eq!(count_server_admins(&pool).await.unwrap(), 1);
 
-        soft_delete(&pool, first).await.unwrap();
+        let mut tx = pool.begin().await.unwrap();
+        soft_delete(&mut tx, first).await.unwrap();
+        tx.commit().await.unwrap();
         assert_eq!(count_server_admins(&pool).await.unwrap(), 0);
     }
 
     #[sqlx::test]
     async fn soft_delete_sets_status(pool: PgPool) {
         let id = create_account(&pool).await.unwrap();
-        soft_delete(&pool, id).await.unwrap();
+        let mut tx = pool.begin().await.unwrap();
+        soft_delete(&mut tx, id).await.unwrap();
+        tx.commit().await.unwrap();
         let account = get_account(&pool, id).await.unwrap().unwrap();
         assert_eq!(account.status, "soft_deleted");
         assert!(account.delete_requested_at.is_some());

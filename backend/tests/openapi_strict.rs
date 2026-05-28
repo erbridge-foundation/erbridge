@@ -415,6 +415,51 @@ async fn delete_account_204(pool: PgPool) {
 }
 
 #[sqlx::test]
+async fn delete_account_clears_session_cookie_and_does_not_refresh(pool: PgPool) {
+    let state = build_state(pool);
+    let (_account_id, cookie) = create_session(&state).await;
+
+    let resp = backend::build_router(state)
+        .oneshot(
+            Request::builder()
+                .method(Method::DELETE)
+                .uri("/api/v1/account")
+                .header(header::COOKIE, &cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+    let set_cookies: Vec<String> = resp
+        .headers()
+        .get_all(header::SET_COOKIE)
+        .iter()
+        .map(|v| v.to_str().unwrap().to_string())
+        .collect();
+
+    // Exactly one Set-Cookie header — proves the refresh middleware did not
+    // append a competing refreshed session cookie alongside the cleared one.
+    assert_eq!(
+        set_cookies.len(),
+        1,
+        "expected exactly one Set-Cookie, got {set_cookies:?}"
+    );
+
+    let header_value = &set_cookies[0];
+    assert!(
+        header_value.contains("session="),
+        "Set-Cookie should target the session cookie, got {header_value:?}"
+    );
+    assert!(
+        header_value.contains("Max-Age=0"),
+        "Set-Cookie should clear the session, got {header_value:?}"
+    );
+}
+
+#[sqlx::test]
 async fn get_health_200_matches_schema(pool: PgPool) {
     let doc = openapi_doc_json();
 

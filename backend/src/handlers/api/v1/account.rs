@@ -1,9 +1,12 @@
-use axum::{extract::State, http::StatusCode};
+use axum::{Extension, extract::State, http::StatusCode};
 
 use crate::{
     app_state::AppState,
     error::{AppError, ErrorEnvelope},
-    handlers::{cookie, middleware::AuthenticatedAccount},
+    handlers::{
+        cookie,
+        middleware::{AuthenticatedAccount, RefreshedJwtSlot},
+    },
     services::account as account_service,
 };
 
@@ -21,6 +24,7 @@ use crate::{
 pub async fn delete_account(
     State(state): State<AppState>,
     AuthenticatedAccount(account_id): AuthenticatedAccount,
+    Extension(refresh_slot): Extension<RefreshedJwtSlot>,
 ) -> Result<(StatusCode, axum::http::HeaderMap), AppError> {
     account_service::delete_account(&state.db, account_id).await?;
 
@@ -29,6 +33,10 @@ pub async fn delete_account(
         .remove_all_for_account(account_id)
         .await
         .map_err(AppError::Internal)?;
+
+    // Stop the wrapping `refresh_session_cookie` middleware from overwriting
+    // the cleared cookie with a freshly-minted session JWT.
+    refresh_slot.suppress();
 
     let mut headers = axum::http::HeaderMap::new();
     cookie::clear_session_cookie(&mut headers);

@@ -125,9 +125,19 @@ pub async fn delete_account(pool: &PgPool, account_id: Uuid) -> Result<(), AppEr
         }
     }
 
-    accounts::soft_delete(pool, account_id)
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?;
+    accounts::soft_delete(&mut tx, account_id)
         .await
         .map_err(AppError::Internal)?;
+    characters::clear_tokens_for_account(&mut tx, account_id)
+        .await
+        .map_err(AppError::Internal)?;
+    tx.commit()
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?;
 
     Ok(())
 }
@@ -235,10 +245,13 @@ mod tests {
         .await
         .unwrap();
 
+        let char_id = insert_test_character_with_tokens(&pool, first, 1001).await;
+
         delete_account(&pool, first).await.unwrap();
 
         let account = accounts::get_account(&pool, first).await.unwrap().unwrap();
         assert_eq!(account.status, "soft_deleted");
+        assert_character_tokens_cleared(&pool, char_id).await;
     }
 
     #[sqlx::test]
@@ -252,9 +265,84 @@ mod tests {
             .unwrap();
         tx.commit().await.unwrap();
 
+        let char_id = insert_test_character_with_tokens(&pool, user, 1002).await;
+
         delete_account(&pool, user).await.unwrap();
 
         let account = accounts::get_account(&pool, user).await.unwrap().unwrap();
         assert_eq!(account.status, "soft_deleted");
+        assert_character_tokens_cleared(&pool, char_id).await;
+    }
+
+    #[sqlx::test]
+    async fn delete_account_is_atomic_on_account_with_characters(pool: PgPool) {
+        let mut tx = pool.begin().await.unwrap();
+        let _admin = accounts::resolve_or_create(&mut tx, None, 1001)
+            .await
+            .unwrap();
+        let user = accounts::resolve_or_create(&mut tx, None, 1002)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+
+        let char_one = insert_test_character_with_tokens(&pool, user, 9001).await;
+        let char_two = insert_test_character_with_tokens(&pool, user, 9002).await;
+
+        delete_account(&pool, user).await.unwrap();
+
+        let account = accounts::get_account(&pool, user).await.unwrap().unwrap();
+        assert_eq!(account.status, "soft_deleted");
+        assert!(account.delete_requested_at.is_some());
+        assert_character_tokens_cleared(&pool, char_one).await;
+        assert_character_tokens_cleared(&pool, char_two).await;
+    }
+
+    async fn insert_test_character_with_tokens(
+        pool: &PgPool,
+        account_id: Uuid,
+        eve_character_id: i64,
+    ) -> Uuid {
+        let row = sqlx::query!(
+            r#"
+            INSERT INTO eve_character (
+                account_id, eve_character_id, name, corporation_id, corporation_name,
+                esi_client_id, encrypted_access_token, encrypted_refresh_token,
+                access_token_expires_at, scopes
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            RETURNING id
+            "#,
+            account_id,
+            eve_character_id,
+            format!("Pilot {eve_character_id}"),
+            1_000_001_i64,
+            "Test Corp",
+            "test-client",
+            &[1u8, 2, 3][..],
+            &[4u8, 5, 6][..],
+            chrono::Utc::now() + chrono::Duration::hours(1),
+            &["esi-skills.read_skills.v1".to_string()][..],
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        row.id
+    }
+
+    async fn assert_character_tokens_cleared(pool: &PgPool, character_id: Uuid) {
+        let row = sqlx::query!(
+            r#"
+            SELECT encrypted_access_token, encrypted_refresh_token,
+                   access_token_expires_at, scopes
+            FROM eve_character WHERE id = $1
+            "#,
+            character_id
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        assert!(row.encrypted_access_token.is_none());
+        assert!(row.encrypted_refresh_token.is_none());
+        assert!(row.access_token_expires_at.is_none());
+        assert!(row.scopes.is_empty());
     }
 }

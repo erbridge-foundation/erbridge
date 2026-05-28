@@ -23,8 +23,23 @@ use crate::{
 ///
 /// API-key requests never write to this slot, so API-key callers never get a
 /// refreshed cookie.
+///
+/// Handlers that intentionally log the user out (e.g. `DELETE /api/v1/account`)
+/// MUST call `suppress()` so the middleware does not overwrite the handler's
+/// cookie-clearing `Set-Cookie` header with a refreshed session cookie.
 #[derive(Clone, Default)]
-struct RefreshedJwtSlot(Arc<Mutex<Option<String>>>);
+pub struct RefreshedJwtSlot(Arc<Mutex<Option<String>>>);
+
+impl RefreshedJwtSlot {
+    /// Empty the slot so the wrapping middleware writes no refreshed
+    /// `Set-Cookie` header. Use this in handlers that end the session.
+    pub fn suppress(&self) {
+        #[allow(clippy::unwrap_used)]
+        {
+            *self.0.lock().unwrap() = None;
+        }
+    }
+}
 
 /// Axum extractor that resolves the authenticated account ID from either:
 /// 1. `Authorization: Bearer erb_…` (API key, account-scoped only)
@@ -164,6 +179,29 @@ mod tests {
             axum::http::HeaderValue::from_static("Basic dXNlcjpwYXNz"),
         );
         assert!(extract_bearer(&headers).is_none());
+    }
+
+    #[test]
+    fn refreshed_jwt_slot_suppress_clears_value() {
+        let slot = RefreshedJwtSlot::default();
+        #[allow(clippy::unwrap_used)]
+        {
+            *slot.0.lock().unwrap() = Some("would-be-refresh-jwt".to_string());
+        }
+        slot.suppress();
+        #[allow(clippy::unwrap_used)]
+        let guard = slot.0.lock().unwrap();
+        assert!(guard.is_none());
+    }
+
+    #[test]
+    fn refreshed_jwt_slot_suppress_is_idempotent_on_empty_slot() {
+        let slot = RefreshedJwtSlot::default();
+        slot.suppress();
+        slot.suppress();
+        #[allow(clippy::unwrap_used)]
+        let guard = slot.0.lock().unwrap();
+        assert!(guard.is_none());
     }
 
     #[test]

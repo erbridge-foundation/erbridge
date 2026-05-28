@@ -232,6 +232,28 @@ pub async fn count_for_account(pool: &PgPool, account_id: Uuid) -> Result<i64> {
     Ok(row.count.unwrap_or(0))
 }
 
+pub async fn clear_tokens_for_account(
+    tx: &mut Transaction<'_, Postgres>,
+    account_id: Uuid,
+) -> Result<()> {
+    sqlx::query!(
+        r#"
+        UPDATE eve_character
+        SET encrypted_access_token = NULL,
+            encrypted_refresh_token = NULL,
+            access_token_expires_at = NULL,
+            scopes = '{}',
+            updated_at = now()
+        WHERE account_id = $1
+        "#,
+        account_id
+    )
+    .execute(&mut **tx)
+    .await
+    .context("failed to clear character tokens for account")?;
+    Ok(())
+}
+
 pub async fn is_main(pool: &PgPool, id: Uuid) -> Result<Option<(Uuid, bool)>> {
     let row = sqlx::query!(
         "SELECT account_id, is_main FROM eve_character WHERE id = $1",
@@ -473,5 +495,165 @@ mod tests {
     async fn is_main_returns_none_for_unknown(pool: PgPool) {
         let result = is_main(&pool, Uuid::new_v4()).await.unwrap();
         assert!(result.is_none());
+    }
+
+    #[sqlx::test]
+    async fn clear_tokens_for_account_nulls_credential_columns_only(pool: PgPool) {
+        let account_id = accounts::create_account(&pool).await.unwrap();
+
+        let mut tx = pool.begin().await.unwrap();
+        let with_tokens = upsert_tokens(
+            &mut tx,
+            account_id,
+            99100,
+            "Has Tokens",
+            1000001,
+            "Corp One",
+            Some(2000001),
+            Some("Alliance One"),
+            "client1",
+            "access_tok",
+            "refresh_tok",
+            chrono::Utc::now() + chrono::Duration::hours(1),
+            &["esi-skills.read_skills.v1".to_string()],
+            &test_key(),
+        )
+        .await
+        .unwrap();
+        promote_if_no_main(&mut tx, account_id, with_tokens)
+            .await
+            .unwrap();
+        let without_tokens = upsert_tokens(
+            &mut tx,
+            account_id,
+            99101,
+            "Already Clear",
+            1000002,
+            "Corp Two",
+            None,
+            None,
+            "client1",
+            "a",
+            "r",
+            chrono::Utc::now() + chrono::Duration::hours(1),
+            &[],
+            &test_key(),
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+
+        let mut tx = pool.begin().await.unwrap();
+        clear_tokens_for_account(&mut tx, account_id).await.unwrap();
+        tx.commit().await.unwrap();
+
+        // Credential columns: both rows fully cleared.
+        let rows = sqlx::query!(
+            r#"
+            SELECT id, name, corporation_id, corporation_name,
+                   alliance_id, alliance_name, eve_character_id, is_main,
+                   encrypted_access_token, encrypted_refresh_token,
+                   access_token_expires_at, scopes
+            FROM eve_character
+            WHERE account_id = $1
+            ORDER BY eve_character_id ASC
+            "#,
+            account_id
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(rows.len(), 2);
+        for row in &rows {
+            assert!(row.encrypted_access_token.is_none());
+            assert!(row.encrypted_refresh_token.is_none());
+            assert!(row.access_token_expires_at.is_none());
+            assert!(row.scopes.is_empty());
+        }
+
+        // Identity columns: untouched on the row that had tokens.
+        let with_tokens_row = rows.iter().find(|r| r.id == with_tokens).unwrap();
+        assert_eq!(with_tokens_row.name, "Has Tokens");
+        assert_eq!(with_tokens_row.corporation_id, 1000001);
+        assert_eq!(with_tokens_row.corporation_name, "Corp One");
+        assert_eq!(with_tokens_row.alliance_id, Some(2000001));
+        assert_eq!(
+            with_tokens_row.alliance_name.as_deref(),
+            Some("Alliance One")
+        );
+        assert_eq!(with_tokens_row.eve_character_id, 99100);
+        assert!(with_tokens_row.is_main);
+
+        let without_tokens_row = rows.iter().find(|r| r.id == without_tokens).unwrap();
+        assert_eq!(without_tokens_row.name, "Already Clear");
+        assert!(!without_tokens_row.is_main);
+    }
+
+    #[sqlx::test]
+    async fn clear_tokens_for_account_only_touches_target_account(pool: PgPool) {
+        let target_account = accounts::create_account(&pool).await.unwrap();
+        let other_account = accounts::create_account(&pool).await.unwrap();
+
+        let mut tx = pool.begin().await.unwrap();
+        upsert_tokens(
+            &mut tx,
+            target_account,
+            99200,
+            "Target Pilot",
+            1000001,
+            "Corp One",
+            None,
+            None,
+            "client1",
+            "a",
+            "r",
+            chrono::Utc::now() + chrono::Duration::hours(1),
+            &["scope.target".to_string()],
+            &test_key(),
+        )
+        .await
+        .unwrap();
+        let other_char = upsert_tokens(
+            &mut tx,
+            other_account,
+            99201,
+            "Other Pilot",
+            1000001,
+            "Corp One",
+            None,
+            None,
+            "client1",
+            "a",
+            "r",
+            chrono::Utc::now() + chrono::Duration::hours(1),
+            &["scope.other".to_string()],
+            &test_key(),
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+
+        let mut tx = pool.begin().await.unwrap();
+        clear_tokens_for_account(&mut tx, target_account)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+
+        let other_row = sqlx::query!(
+            r#"
+            SELECT encrypted_access_token, encrypted_refresh_token,
+                   access_token_expires_at, scopes
+            FROM eve_character WHERE id = $1
+            "#,
+            other_char
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(other_row.encrypted_access_token.is_some());
+        assert!(other_row.encrypted_refresh_token.is_some());
+        assert!(other_row.access_token_expires_at.is_some());
+        assert_eq!(other_row.scopes, vec!["scope.other".to_string()]);
     }
 }

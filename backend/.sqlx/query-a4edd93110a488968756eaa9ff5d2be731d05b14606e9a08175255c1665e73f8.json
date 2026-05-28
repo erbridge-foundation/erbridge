@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT encrypted_access_token, encrypted_refresh_token,\n                   access_token_expires_at, scopes\n            FROM eve_character WHERE id = $1\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "encrypted_access_token",
+        "type_info": "Bytea"
+      },
+      {
+        "ordinal": 1,
+        "name": "encrypted_refresh_token",
+        "type_info": "Bytea"
+      },
+      {
+        "ordinal": 2,
+        "name": "access_token_expires_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 3,
+        "name": "scopes",
+        "type_info": "TextArray"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      true,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "a4edd93110a488968756eaa9ff5d2be731d05b14606e9a08175255c1665e73f8"
+}

@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE eve_character\n        SET encrypted_access_token = NULL,\n            encrypted_refresh_token = NULL,\n            access_token_expires_at = NULL,\n            scopes = '{}',\n            updated_at = now()\n        WHERE account_id = $1\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d44fa6a60639b74c77aa4d0aea605c70a6ecbe79e63e779ca5be1960ab95203f"
+}

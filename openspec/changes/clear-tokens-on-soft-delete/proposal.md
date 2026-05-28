@@ -1,36 +1,34 @@
 ## Why
 
-When an account is soft-deleted (`DELETE /api/v1/account`), the backend sets `account.status = 'soft_deleted'` and `delete_requested_at = now()` but **leaves `eve_character.encrypted_access_token` and `eve_character.encrypted_refresh_token` intact**. The encrypted token material remains on disk for the entire soft-delete window (currently undefined-but-discussed-as-30-days), protected only by `encryption_secret`.
+When an account is soft-deleted (`DELETE /api/v1/account`), the backend sets `account.status = 'soft_deleted'` and `delete_requested_at = now()` but leaves `eve_character.encrypted_access_token` and `eve_character.encrypted_refresh_token` intact. The encrypted token material remains on disk for the entire soft-delete window — protected only by `encryption_secret` — until hard-purge runs.
 
-This is a spec gap, not a code bug: the `account-management` capability says "character rows SHALL NOT be modified" on soft-delete, which a literal read interprets as "don't touch their columns either." Whether that interpretation is the right one is the open question.
+The user's mental model when they click "delete account" is "my credentials are gone from this service." The current behaviour silently violates that: an attacker with the database and `encryption_secret` retains usable refresh tokens for every linked character throughout the window. The reactivation-friction argument for keeping tokens (one click of SSO restores everything seamlessly) is also weaker than it looks — re-login only refreshes tokens for the *one* character that logged in; other alts already may or may not work depending on EVE-side state.
 
-There are competing concerns:
-
-- **Argument for clearing tokens on soft-delete.** A user who soft-deletes their account because of a security incident (compromised laptop, leaked DB snapshot, etc.) reasonably expects their EVE credentials to be revoked from this service. Keeping encrypted-but-functional tokens on disk for ~30 days weakens that.
-- **Argument against (the current behaviour).** Soft-delete is explicitly reversible per spec: a subsequent SSO login reactivates the account. If tokens are cleared on soft-delete, every linked character's `token_status` flips to `"expired"` on reactivation, forcing the user to re-do SSO for every character. That's a noisy UX for the "I changed my mind" happy path that soft-delete is *meant* to support.
-- **Possible middle ground.** Clear only `encrypted_access_token` (short-lived, ~20 min) on soft-delete and keep `encrypted_refresh_token` (the long-lived credential the spec already treats as the "is this character usable" signal). This matches the spec's existing rule that `token_status` is derived from the *refresh* token's presence, not the access token's. It also matches what an attacker would care about: an access token is useless after 20 minutes; a refresh token is the durable credential.
-
-This change is a **stub** — it captures the question so it isn't lost. The actual decision (clear both / clear neither / clear access-only / distinguish user-initiated vs admin-initiated) belongs in design.md after an `/opsx:explore` session.
+This change makes the spec say what users intuit: soft-delete clears our copy of the EVE credentials, framed in terms of the soft-delete *event* rather than the actor that triggered it, so the rule survives any future admin-initiated or system-initiated soft-delete path.
 
 ## What Changes
 
-To be decided in design.md. Candidate scopes:
+- **MODIFIED** `account-management`: the `DELETE /api/v1/account` requirement is rewritten to specify two things in one pass, both motivated by the same "delete = gone" mental model:
+  1. Whenever an `account` row transitions to `status = 'soft_deleted'`, every linked `eve_character` row has `encrypted_access_token`, `encrypted_refresh_token`, `access_token_expires_at`, and `scopes` set to NULL (or empty array for `scopes`) in the same transaction. The "Character rows SHALL NOT be modified" wording is removed.
+  2. The response carries EXACTLY ONE `Set-Cookie` header — the cookie-clearing one. The session-refresh middleware MUST NOT also emit a refreshed session cookie on this response (the pre-existing implementation did, leaving the browser logged in until the next request failed).
 
-- **MODIFIED** `account-management`: change the "Character rows SHALL NOT be modified" rule on `DELETE /api/v1/account` to explicitly state which columns are zeroed and which are kept. Add scenarios covering the chosen behaviour on soft-delete and on reactivation via re-login.
+  Scenarios cover the soft-delete write, the post-reactivation read (other alts come back as `token_status = "expired"`), the explicit non-promise that EVE-side app authorisation is revoked, and the single-Set-Cookie response shape.
 
 ## Capabilities
 
 ### Modified Capabilities
 
-- `account-management`: the `DELETE /api/v1/account` requirement needs an explicit position on encrypted token columns. The current "SHALL NOT be modified" is interpreted as "leave tokens intact" today; this change either reaffirms that with explicit reasoning, or narrows it to specific columns.
+- `account-management`: `DELETE /api/v1/account` requirement and its scenarios.
 
 ## Impact
 
-- **Backend**: `services/account.rs::delete_account` — likely a column-clearing statement on `eve_character` for the soft-deleted account.
-- **Spec**: `account-management` capability text.
-- **Frontend**: probably no change (the `/me` response's `token_status` will reflect cleared tokens automatically per the existing derivation rule).
-- **Reactivation UX**: depending on the decision, users who soft-delete and re-login may need to walk through SSO again for some/all characters.
-
-## Status
-
-**Stub.** This proposal exists to keep the question discoverable. Surfaced during the `add-account-page-and-api-keys` change while moving the delete-account UI to `/account`. Do not implement without an explore session and a position recorded in `design.md`.
+- **Backend**:
+  - `backend/src/db/accounts.rs` — `soft_delete` signature changes from `&PgPool` to `&mut Transaction<'_, Postgres>` so the account-status write and the character-token clear are atomic.
+  - `backend/src/db/characters.rs` — new `clear_tokens_for_account(tx, account_id)` that nulls the four columns for every `eve_character` row owned by the account.
+  - `backend/src/services/account.rs::delete_account` — opens a transaction, calls `soft_delete` then `clear_tokens_for_account`, commits.
+  - `backend/src/handlers/middleware.rs` — `RefreshedJwtSlot` becomes `pub` and gains a `pub fn suppress(&self)` that empties the slot so the wrapping `refresh_session_cookie` middleware writes no `Set-Cookie`. Tiny API surface increase; type was already in `request.extensions`.
+  - `backend/src/handlers/api/v1/account.rs::delete_account` — extracts `Extension<RefreshedJwtSlot>` and calls `.suppress()` after the service call succeeds so the browser cookie clear is not overwritten by a refreshed session cookie.
+  - Tests: existing `delete_account_*` sqlx tests gain assertions on the character-token columns; new test that an account with characters has all four columns nulled after `delete_account`; new integration test on `DELETE /api/v1/account` asserts exactly one `Set-Cookie` header on the response and that it clears the session (`Max-Age=0`); unit tests on `RefreshedJwtSlot::suppress`.
+- **Frontend**: no code changes. The `/me` response's `token_status` derives from refresh-token presence and will correctly report `"expired"` for every character of a reactivated account until each is re-SSO'd. The account page already surfaces per-character re-auth affordances.
+- **Reactivation UX**: a user who soft-deletes and re-logs in must walk through SSO once per character (other than the one that logged in to reactivate) to restore full functionality. This is an intentional trade for the cleaner security story.
+- **Out of scope**: calling EVE's SSO token-revocation endpoint. The spec explicitly notes that soft-delete clears *our* copy only and does not revoke the app's EVE-side authorisation; users concerned about credential compromise are directed to revoke authorisation at EVE SSO themselves. A future change may add server-side revocation as a follow-up.
