@@ -35,6 +35,7 @@
 	"about_section_versions": "Versionen",
 	"about_label_ui_version": "UI-Version",
 	"about_label_api_version": "API-Version",
+	"about_label_ui_commit": "UI-Commit",
 	"about_api_unreachable": "API: nicht erreichbar",
 	"about_section_source": "Quellcode",
 	"about_source_link": "Quellcode auf GitHub →",

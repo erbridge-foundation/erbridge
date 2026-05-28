@@ -61,13 +61,32 @@ frontend-check:
 # Build both Docker images locally
 docker-build: docker-build-backend docker-build-frontend
 
+# Git-tag-derived version (leading "v" stripped; 0.0.0-dev.<sha> when no tag yet)
+# and short commit, computed from the local checkout. The Docker build context has
+# no .git/, so these are passed in as --build-arg. See RELEASING.md.
+_app-version:
+    #!/usr/bin/env sh
+    sha="$(git rev-parse --short HEAD)"
+    if git describe --tags --abbrev=0 >/dev/null 2>&1; then
+        described="$(git describe --tags --always --dirty)"
+        echo "${described#v}"
+    else
+        echo "0.0.0-dev.${sha}"
+    fi
+
 # Build the backend Docker image locally
 docker-build-backend:
-    docker build -t {{registry}}/erbridge-api:latest ./backend
+    docker build \
+        --build-arg APP_VERSION="$(just _app-version)" \
+        --build-arg GIT_COMMIT_SHA="$(git rev-parse --short HEAD)" \
+        -t {{registry}}/erbridge-api:latest ./backend
 
 # Build the frontend Docker image locally
 docker-build-frontend:
-    docker build -t {{registry}}/erbridge-web:latest ./frontend
+    docker build \
+        --build-arg APP_VERSION="$(just _app-version)" \
+        --build-arg GIT_COMMIT_SHA="$(git rev-parse --short HEAD)" \
+        -t {{registry}}/erbridge-web:latest ./frontend
 
 # ─── maintenance ─────────────────────────────────────────────────────────────
 

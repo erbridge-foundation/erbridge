@@ -1,7 +1,8 @@
 {
 	"name": "frontend",
 	"private": true,
-	"version": "0.0.1",
+	"comment_version": "Non-authoritative — the real version is git-tag-derived at build time (APP_VERSION) and inlined as PUBLIC_UI_VERSION by vite.config.ts. This sentinel is only the fallback for a build with no APP_VERSION. See RELEASING.md.",
+	"version": "0.0.0",
 	"type": "module",
 	"scripts": {
 		"dev": "vite dev",

@@ -13,9 +13,11 @@ declare global {
 		// interface Platform {}
 	}
 
-	// UI version inlined from package.json at build time (see vite.config.ts).
+	// UI version + git commit inlined at build time (see vite.config.ts):
+	// git-tag-derived APP_VERSION / GIT_COMMIT_SHA, with documented fallbacks.
 	interface ImportMetaEnv {
 		readonly PUBLIC_UI_VERSION: string;
+		readonly PUBLIC_GIT_COMMIT: string;
 	}
 	interface ImportMeta {
 		readonly env: ImportMetaEnv;

@@ -5,6 +5,7 @@
 	let { data }: { data: PageData } = $props();
 
 	const uiVersion = import.meta.env.PUBLIC_UI_VERSION;
+	const uiCommit = import.meta.env.PUBLIC_GIT_COMMIT;
 
 	// Curated by the maintainers — editing this list is a code change (design §7).
 	const acknowledgements = [
@@ -62,7 +63,10 @@
 		<h2 class="section-label">{m.about_section_versions()}</h2>
 		<div class="version-row">
 			<span class="label">{m.about_label_ui_version()}</span>
-			<span class="value">{uiVersion}</span>
+			<span class="value"
+				>{uiVersion} ·
+				<span class="commit">{uiCommit}</span></span
+			>
 		</div>
 		<div class="version-row">
 			<span class="label">{m.about_label_api_version()}</span>

@@ -72,9 +72,11 @@ A `RELEASING.md` SHALL document that a release is performed by creating and push
 - **WHEN** a developer needs to cut a release
 - **THEN** `RELEASING.md` describes creating a `v<semver>` tag and what the resulting image tags and version strings will be
 
-### Requirement: Docker tag scheme is verified, not changed
+### Requirement: Images are published for develop and release tags only
 
-The existing image tag scheme SHALL be retained: `:<branch>` on branch pushes (`:develop`), `:v<semver>` on tag pushes, `:sha-<short>` always, and `:latest` only on `v*` release tags. This change SHALL NOT modify the tag scheme; the "semver on develop" need is met by the `APP_VERSION` baked into and reported by the develop image, not by a new image tag.
+CI SHALL publish images only for the `develop` branch (the staging line) and `v*` release tags (production). A push to `main` SHALL run the check job but SHALL NOT publish an image: `main` is the branch releases are cut **from** and is not itself a deployed environment. Pull requests SHALL run the check job and never publish.
+
+The image tag scheme SHALL be: `:develop` on a develop push, `:v<semver>` on a tag push, `:sha-<short>` always (on every publish), and `:latest` only on `v*` release tags. The "semver on develop" need is met by the `APP_VERSION` baked into and reported by the develop image, not by a new image tag.
 
 #### Scenario: Release image tags
 - **WHEN** CI publishes images from a `v1.2.3` tag
@@ -83,6 +85,10 @@ The existing image tag scheme SHALL be retained: `:<branch>` on branch pushes (`
 #### Scenario: Develop image tags
 - **WHEN** CI publishes images from a `develop` push
 - **THEN** the images carry `:develop` and `:sha-<short>` (no `:latest`), and report a `-pre.` version on `/api/health`
+
+#### Scenario: Main pushes are check-only
+- **WHEN** a commit is pushed to `main`
+- **THEN** the check job runs and the publish job does not run, so no image is published for `main`
 
 ### Requirement: Release versions are immutable
 

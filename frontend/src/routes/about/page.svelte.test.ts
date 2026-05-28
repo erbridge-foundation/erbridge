@@ -30,6 +30,16 @@ describe('/about +page.svelte', () => {
 		expect(screen.queryByText('API: unreachable')).not.toBeInTheDocument();
 	});
 
+	it('renders the UI version and UI commit (inlined at build time)', () => {
+		render(AboutPage, { props: { data: pageData(healthy, null) } });
+		// Under vitest no APP_VERSION/GIT_COMMIT_SHA is set, so vite.config.ts inlines
+		// the package.json sentinel + the "unknown" commit fallback (see RELEASING.md).
+		const uiVersion = import.meta.env.PUBLIC_UI_VERSION;
+		const uiCommit = import.meta.env.PUBLIC_GIT_COMMIT;
+		expect(screen.getByText(new RegExp(uiVersion))).toBeInTheDocument();
+		expect(screen.getByText(uiCommit)).toBeInTheDocument();
+	});
+
 	it('renders "API: unreachable" when health is null', () => {
 		render(AboutPage, { props: { data: pageData(null, { message: 'down' }) } });
 		expect(screen.getByText('API: unreachable')).toBeInTheDocument();

@@ -9,6 +9,16 @@ COPY .sqlx ./.sqlx
 
 ENV SQLX_OFFLINE=true
 
+# Git-tag-derived version + short commit, computed outside the image (the build
+# context has no .git/) and passed in by CI / `just docker-build-backend`. build.rs
+# reads these envs: APP_VERSION overrides CARGO_PKG_VERSION, GIT_COMMIT_SHA is baked
+# in. With no build args they default empty → manifest version + "unknown" commit.
+# See RELEASING.md.
+ARG APP_VERSION=""
+ARG GIT_COMMIT_SHA=""
+ENV APP_VERSION=${APP_VERSION}
+ENV GIT_COMMIT_SHA=${GIT_COMMIT_SHA}
+
 RUN cargo build --release
 
 FROM debian:bookworm-slim

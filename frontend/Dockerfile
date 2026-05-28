@@ -10,6 +10,16 @@ RUN pnpm install --frozen-lockfile
 
 COPY . .
 
+# Git-tag-derived version + short commit, computed outside the image (the build
+# context has no .git/) and passed in by CI / `just docker-build-frontend`.
+# vite.config.ts reads these envs and inlines them as PUBLIC_UI_VERSION /
+# PUBLIC_GIT_COMMIT. With no build args they default empty → package.json sentinel
+# version + "unknown" commit. See RELEASING.md.
+ARG APP_VERSION=""
+ARG GIT_COMMIT_SHA=""
+ENV APP_VERSION=${APP_VERSION}
+ENV GIT_COMMIT_SHA=${GIT_COMMIT_SHA}
+
 RUN pnpm run build && pnpm prune --prod
 
 FROM node:lts-slim

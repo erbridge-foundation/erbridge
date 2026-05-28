@@ -1,6 +1,9 @@
 [package]
 name = "backend"
-version = "0.1.0"
+# Non-authoritative. The real version is derived from git tags at build time and
+# baked into CARGO_PKG_VERSION by build.rs (via the APP_VERSION build arg). This
+# sentinel is only used by a plain `cargo build` with no APP_VERSION. See RELEASING.md.
+version = "0.0.0"
 edition = "2024"
 
 [dependencies]

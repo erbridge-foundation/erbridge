@@ -4,11 +4,18 @@ import { defineConfig } from 'vitest/config';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-// UI version, sourced from package.json at build time and inlined into the
-// client bundle as import.meta.env.PUBLIC_UI_VERSION (consumed by /about).
+// Version + commit are git-tag-derived and computed outside the image (see
+// RELEASING.md), passed in as the APP_VERSION / GIT_COMMIT_SHA build-time env vars
+// by CI and `just docker-build-frontend`. They are inlined into the client bundle
+// as import.meta.env.PUBLIC_UI_VERSION / PUBLIC_GIT_COMMIT (consumed by /about).
+// With no env (a plain local build) UI version falls back to the frozen,
+// non-authoritative package.json sentinel and commit to "unknown".
 const pkg = JSON.parse(
 	readFileSync(fileURLToPath(new URL('./package.json', import.meta.url)), 'utf-8')
 ) as { version: string };
+
+const uiVersion = process.env.APP_VERSION?.trim() || pkg.version;
+const gitCommit = process.env.GIT_COMMIT_SHA?.trim() || 'unknown';
 
 export default defineConfig({
 	plugins: [
@@ -26,7 +33,8 @@ export default defineConfig({
 		})
 	],
 	define: {
-		'import.meta.env.PUBLIC_UI_VERSION': JSON.stringify(pkg.version)
+		'import.meta.env.PUBLIC_UI_VERSION': JSON.stringify(uiVersion),
+		'import.meta.env.PUBLIC_GIT_COMMIT': JSON.stringify(gitCommit)
 	},
 	test: {
 		environment: 'jsdom',
