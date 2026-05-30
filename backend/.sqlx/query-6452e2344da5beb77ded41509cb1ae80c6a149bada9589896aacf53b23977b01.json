@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO audit_log (event_type, details, target_type, target_id, target_name)\n             VALUES ($1, '{}'::jsonb, $2, $3, $4)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "6452e2344da5beb77ded41509cb1ae80c6a149bada9589896aacf53b23977b01"
+}

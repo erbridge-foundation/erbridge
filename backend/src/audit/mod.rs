@@ -34,6 +34,76 @@ impl ServerAdminGrantSource {
     }
 }
 
+/// How an `AuditTarget`'s `target_name` column is sourced. Lets `record_in_tx`
+/// know whether a write-time lookup is required, mirroring how the actor's
+/// character name is snapshotted.
+#[derive(Debug, Clone)]
+pub enum AuditTargetName {
+    /// The event already carries the target's name; write it directly.
+    Known(String),
+    /// The target is an account, whose name SHALL be resolved at write time as
+    /// the account's main character name (snapshot, fail-soft). Carries the
+    /// target account id to look up.
+    AccountMain(Uuid),
+    /// No name is available; `target_name` is left NULL.
+    None,
+}
+
+/// The entity an `AuditEvent` acted upon. Promoted to first-class, indexed
+/// `audit_log` columns so the dominant admin query ("who did X to whom") is a
+/// clean filter rather than a JSONB scan. `target_id` is stringified so a
+/// single column holds both EVE character BIGINTs and account/map/acl UUIDs,
+/// discriminated by `target_type`.
+#[derive(Debug, Clone)]
+pub struct AuditTarget {
+    pub target_type: &'static str,
+    pub target_id: String,
+    pub name: AuditTargetName,
+}
+
+impl AuditTarget {
+    fn character(eve_character_id: i64, name: Option<&str>) -> Self {
+        Self {
+            target_type: "character",
+            target_id: eve_character_id.to_string(),
+            name: match name {
+                Some(n) => AuditTargetName::Known(n.to_string()),
+                None => AuditTargetName::None,
+            },
+        }
+    }
+
+    fn account(account_id: Uuid) -> Self {
+        Self {
+            target_type: "account",
+            target_id: account_id.to_string(),
+            name: AuditTargetName::AccountMain(account_id),
+        }
+    }
+
+    fn map(map_id: Uuid, name: Option<&str>) -> Self {
+        Self {
+            target_type: "map",
+            target_id: map_id.to_string(),
+            name: match name {
+                Some(n) => AuditTargetName::Known(n.to_string()),
+                None => AuditTargetName::None,
+            },
+        }
+    }
+
+    fn acl(acl_id: Uuid, name: Option<&str>) -> Self {
+        Self {
+            target_type: "acl",
+            target_id: acl_id.to_string(),
+            name: match name {
+                Some(n) => AuditTargetName::Known(n.to_string()),
+                None => AuditTargetName::None,
+            },
+        }
+    }
+}
+
 /// Catalogue of recordable actions. Variants marked **dormant** are present
 /// from day one but emitted by no production code path yet — they activate
 /// when the feature that needs them lands. The catalogue is stable: existing
@@ -392,6 +462,77 @@ impl AuditEvent {
             }),
         }
     }
+
+    /// The entity this action targeted, used to populate the `target_*`
+    /// columns. Every variant in the current catalogue has a target; the
+    /// `Option` return permits a future target-less variant without a schema
+    /// change. The `match` has no wildcard arm, so a new variant fails to
+    /// compile until its target is declared.
+    pub fn target(&self) -> Option<AuditTarget> {
+        Some(match self {
+            // Account targets — name resolved at write time from the account's main.
+            Self::AccountRegistered { account_id, .. }
+            | Self::AccountDeletionRequested { account_id }
+            | Self::AccountReactivated { account_id }
+            | Self::AccountPurged { account_id }
+            | Self::ApiKeyCreated { account_id, .. }
+            | Self::ApiKeyRevoked { account_id, .. }
+            | Self::ServerAdminGranted { account_id, .. }
+            | Self::ServerAdminRevoked { account_id } => AuditTarget::account(*account_id),
+
+            // Character targets carrying a name.
+            Self::OrphanCharacterClaimed {
+                eve_character_id,
+                character_name,
+                ..
+            }
+            | Self::CharacterAdded {
+                eve_character_id,
+                character_name,
+                ..
+            } => AuditTarget::character(*eve_character_id, Some(character_name)),
+
+            // Character targets with no carried name.
+            Self::CharacterRemoved {
+                eve_character_id, ..
+            }
+            | Self::CharacterSetMain {
+                eve_character_id, ..
+            }
+            | Self::EveCharacterBlocked {
+                eve_character_id, ..
+            }
+            | Self::EveCharacterUnblocked { eve_character_id } => {
+                AuditTarget::character(*eve_character_id, None)
+            }
+
+            // Map targets carrying a name.
+            Self::MapCreated { map_id, name, .. }
+            | Self::MapDeleted { map_id, name, .. }
+            | Self::AdminMapHardDeleted { map_id, name } => AuditTarget::map(*map_id, Some(name)),
+
+            // Map target with no carried name.
+            Self::AdminMapOwnershipChanged { map_id, .. } => AuditTarget::map(*map_id, None),
+
+            // ACL targets carrying a name.
+            Self::AclCreated { acl_id, name, .. }
+            | Self::AclDeleted { acl_id, name, .. }
+            | Self::AdminAclHardDeleted { acl_id, name } => AuditTarget::acl(*acl_id, Some(name)),
+
+            // ACL rename targets the acl; its current name is the new name.
+            Self::AclRenamed {
+                acl_id, new_name, ..
+            } => AuditTarget::acl(*acl_id, Some(new_name)),
+
+            // ACL targets with no carried name.
+            Self::AclMemberAdded { acl_id, .. }
+            | Self::AclMemberPermissionChanged { acl_id, .. }
+            | Self::AclMemberRemoved { acl_id, .. }
+            | Self::AclAttachedToMap { acl_id, .. }
+            | Self::AclDetachedFromMap { acl_id, .. }
+            | Self::AdminAclOwnershipChanged { acl_id, .. } => AuditTarget::acl(*acl_id, None),
+        })
+    }
 }
 
 /// A row read back from `audit_log` — returned by `list_audit_log`.
@@ -405,6 +546,9 @@ pub struct AuditLogEntry {
     pub actor_character_name: Option<String>,
     pub event_type: String,
     pub details: Value,
+    pub target_type: Option<String>,
+    pub target_id: Option<String>,
+    pub target_name: Option<String>,
 }
 
 /// Writes a single audit event participating in the caller's transaction.
@@ -418,6 +562,14 @@ pub struct AuditLogEntry {
 /// 2. Else if `acting_as` is `Some`, those values are written directly. This
 ///    covers SSO-callback events that fire before a session exists.
 /// 3. Else all three actor columns are NULL (system events).
+///
+/// Target-column resolution (from `event.target()`):
+/// - `None` → all three target columns NULL.
+/// - `Some(t)` → `target_type`/`target_id` from `t`; `target_name` from `t.name`:
+///   a `Known` name is written as-is; an `AccountMain` name triggers a main
+///   lookup of the *target* account (reusing the actor lookup when the actor
+///   account is the target account) and snapshots its name, fail-soft on miss
+///   (`tracing::error!` + NULL); `None` leaves `target_name` NULL.
 pub async fn record_in_tx(
     tx: &mut Transaction<'_, Postgres>,
     actor_account_id: Option<Uuid>,
@@ -445,6 +597,37 @@ pub async fn record_in_tx(
         (None, None)
     };
 
+    let (target_type, target_id, target_name) = match event.target() {
+        None => (None, None, None),
+        Some(t) => {
+            let name = match t.name {
+                AuditTargetName::Known(n) => Some(n),
+                AuditTargetName::None => None,
+                AuditTargetName::AccountMain(target_account_id) => {
+                    // Reuse the actor snapshot when the actor is the target,
+                    // avoiding a redundant lookup for self-targeting events
+                    // (deletion request, key create/revoke on one's own account).
+                    if actor_account_id == Some(target_account_id) {
+                        actor_character_name.clone()
+                    } else {
+                        match characters::get_main_for_account_tx(tx, target_account_id).await? {
+                            Some((_, name)) => Some(name),
+                            None => {
+                                tracing::error!(
+                                    target_account_id = %target_account_id,
+                                    event_type,
+                                    "audit: target account has no main at write time — target_name left NULL"
+                                );
+                                None
+                            }
+                        }
+                    }
+                }
+            };
+            (Some(t.target_type), Some(t.target_id), name)
+        }
+    };
+
     sqlx::query!(
         r#"
         INSERT INTO audit_log (
@@ -452,15 +635,21 @@ pub async fn record_in_tx(
             actor_character_id,
             actor_character_name,
             event_type,
-            details
+            details,
+            target_type,
+            target_id,
+            target_name
         )
-        VALUES ($1, $2, $3, $4, $5)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         "#,
         actor_account_id,
         actor_character_id,
         actor_character_name,
         event_type,
         details,
+        target_type,
+        target_id,
+        target_name,
     )
     .execute(&mut **tx)
     .await
@@ -469,32 +658,48 @@ pub async fn record_in_tx(
     Ok(())
 }
 
-/// Reads audit-log entries newest-first, with three optional filters
-/// (`event_type`, `actor_account_id`, `before`) and a hard `limit`. Used by
-/// the admin audit-browser; `limit` is the caller's responsibility to clamp.
+/// Reads audit-log entries newest-first, with optional filters and a hard
+/// `limit`. Used by the admin audit-browser; `limit` is the caller's
+/// responsibility to clamp.
+///
+/// Filter axes (all conjunctive when supplied): `event_type`,
+/// `actor_account_id`, `target_type`, `target_id`, `target_name`
+/// (case-insensitive, backed by the `LOWER(target_name)` expression index),
+/// and the `before` keyset cursor.
 ///
 /// All filters bind as parameters — no string interpolation, no SQL injection
 /// surface.
+#[allow(clippy::too_many_arguments)]
 pub async fn list_audit_log(
     pool: &PgPool,
     event_type: Option<&str>,
     actor_account_id: Option<Uuid>,
+    target_type: Option<&str>,
+    target_id: Option<&str>,
+    target_name: Option<&str>,
     before: Option<DateTime<Utc>>,
     limit: i64,
 ) -> Result<Vec<AuditLogEntry>> {
     let rows = sqlx::query!(
         r#"
         SELECT id, occurred_at, actor_account_id, actor_character_id,
-               actor_character_name, event_type, details
+               actor_character_name, event_type, details,
+               target_type, target_id, target_name
         FROM audit_log
         WHERE ($1::TEXT IS NULL        OR event_type       = $1)
           AND ($2::UUID IS NULL        OR actor_account_id = $2)
-          AND ($3::TIMESTAMPTZ IS NULL OR occurred_at      < $3)
+          AND ($3::TEXT IS NULL        OR target_type      = $3)
+          AND ($4::TEXT IS NULL        OR target_id        = $4)
+          AND ($5::TEXT IS NULL        OR LOWER(target_name) = LOWER($5))
+          AND ($6::TIMESTAMPTZ IS NULL OR occurred_at      < $6)
         ORDER BY occurred_at DESC
-        LIMIT $4
+        LIMIT $7
         "#,
         event_type,
         actor_account_id,
+        target_type,
+        target_id,
+        target_name,
         before,
         limit,
     )
@@ -512,6 +717,9 @@ pub async fn list_audit_log(
             actor_character_name: r.actor_character_name,
             event_type: r.event_type,
             details: r.details,
+            target_type: r.target_type,
+            target_id: r.target_id,
+            target_name: r.target_name,
         })
         .collect())
 }
@@ -934,6 +1142,305 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
+    // target() shape tests — one assertion per variant. `target_type` and
+    // `target_id` are checked exactly; the name disposition is checked by kind
+    // (carried value / account-lookup marker / none).
+    // -----------------------------------------------------------------------
+
+    /// Asserts a variant's target type, id, and that its name is a known
+    /// (carried) string equal to `name`.
+    fn assert_named_target(event: &AuditEvent, ty: &str, id: &str, name: &str) {
+        let t = event.target().expect("variant should have a target");
+        assert_eq!(t.target_type, ty, "target_type for {}", event.event_type());
+        assert_eq!(t.target_id, id, "target_id for {}", event.event_type());
+        match t.name {
+            AuditTargetName::Known(n) => assert_eq!(n, name),
+            other => panic!(
+                "expected Known name, got {other:?} for {}",
+                event.event_type()
+            ),
+        }
+    }
+
+    /// Asserts a variant's target type and id, and that its name is sourced by
+    /// a write-time lookup of the given account's main.
+    fn assert_account_target(event: &AuditEvent, id: Uuid) {
+        let t = event.target().expect("variant should have a target");
+        assert_eq!(t.target_type, "account");
+        assert_eq!(t.target_id, id.to_string());
+        match t.name {
+            AuditTargetName::AccountMain(acc) => assert_eq!(acc, id),
+            other => panic!(
+                "expected AccountMain name, got {other:?} for {}",
+                event.event_type()
+            ),
+        }
+    }
+
+    /// Asserts a variant's target type and id, and that it carries no name.
+    fn assert_nameless_target(event: &AuditEvent, ty: &str, id: &str) {
+        let t = event.target().expect("variant should have a target");
+        assert_eq!(t.target_type, ty, "target_type for {}", event.event_type());
+        assert_eq!(t.target_id, id, "target_id for {}", event.event_type());
+        match t.name {
+            AuditTargetName::None => {}
+            other => panic!(
+                "expected None name, got {other:?} for {}",
+                event.event_type()
+            ),
+        }
+    }
+
+    #[test]
+    fn target_account_events() {
+        let id = test_uuid();
+        assert_account_target(
+            &AuditEvent::AccountRegistered {
+                account_id: id,
+                eve_character_id: 1,
+                character_name: "X".into(),
+            },
+            id,
+        );
+        assert_account_target(&AuditEvent::AccountDeletionRequested { account_id: id }, id);
+        assert_account_target(&AuditEvent::AccountReactivated { account_id: id }, id);
+        assert_account_target(&AuditEvent::AccountPurged { account_id: id }, id);
+        assert_account_target(
+            &AuditEvent::ApiKeyCreated {
+                account_id: id,
+                key_id: other_uuid(),
+                name: "k".into(),
+            },
+            id,
+        );
+        assert_account_target(
+            &AuditEvent::ApiKeyRevoked {
+                account_id: id,
+                key_id: other_uuid(),
+            },
+            id,
+        );
+        assert_account_target(
+            &AuditEvent::ServerAdminGranted {
+                account_id: id,
+                source: ServerAdminGrantSource::AdminGrant,
+            },
+            id,
+        );
+        assert_account_target(&AuditEvent::ServerAdminRevoked { account_id: id }, id);
+    }
+
+    #[test]
+    fn target_named_character_events() {
+        let id = test_uuid();
+        assert_named_target(
+            &AuditEvent::CharacterAdded {
+                account_id: id,
+                eve_character_id: 555,
+                character_name: "Alt".into(),
+            },
+            "character",
+            "555",
+            "Alt",
+        );
+        assert_named_target(
+            &AuditEvent::OrphanCharacterClaimed {
+                account_id: id,
+                eve_character_id: 7,
+                character_name: "Orphan".into(),
+            },
+            "character",
+            "7",
+            "Orphan",
+        );
+    }
+
+    #[test]
+    fn target_nameless_character_events() {
+        let id = test_uuid();
+        assert_nameless_target(
+            &AuditEvent::CharacterRemoved {
+                account_id: id,
+                eve_character_id: 42,
+            },
+            "character",
+            "42",
+        );
+        assert_nameless_target(
+            &AuditEvent::CharacterSetMain {
+                account_id: id,
+                eve_character_id: 99,
+            },
+            "character",
+            "99",
+        );
+        assert_nameless_target(
+            &AuditEvent::EveCharacterBlocked {
+                eve_character_id: 12345,
+                reason: None,
+            },
+            "character",
+            "12345",
+        );
+        assert_nameless_target(
+            &AuditEvent::EveCharacterUnblocked {
+                eve_character_id: 12345,
+            },
+            "character",
+            "12345",
+        );
+    }
+
+    #[test]
+    fn target_map_events() {
+        let account_id = test_uuid();
+        let map_id = other_uuid();
+        assert_named_target(
+            &AuditEvent::MapCreated {
+                account_id,
+                map_id,
+                name: "Chain".into(),
+            },
+            "map",
+            &map_id.to_string(),
+            "Chain",
+        );
+        assert_named_target(
+            &AuditEvent::MapDeleted {
+                account_id,
+                map_id,
+                name: "Chain".into(),
+            },
+            "map",
+            &map_id.to_string(),
+            "Chain",
+        );
+        assert_named_target(
+            &AuditEvent::AdminMapHardDeleted {
+                map_id,
+                name: "Chain".into(),
+            },
+            "map",
+            &map_id.to_string(),
+            "Chain",
+        );
+        assert_nameless_target(
+            &AuditEvent::AdminMapOwnershipChanged {
+                map_id,
+                old_owner: account_id,
+                new_owner: other_uuid(),
+            },
+            "map",
+            &map_id.to_string(),
+        );
+    }
+
+    #[test]
+    fn target_acl_events() {
+        let account_id = test_uuid();
+        let acl_id = other_uuid();
+        let member_id = Uuid::parse_str("00000000-0000-0000-0000-000000000003").unwrap();
+        assert_named_target(
+            &AuditEvent::AclCreated {
+                account_id,
+                acl_id,
+                name: "Corp".into(),
+            },
+            "acl",
+            &acl_id.to_string(),
+            "Corp",
+        );
+        assert_named_target(
+            &AuditEvent::AclDeleted {
+                account_id,
+                acl_id,
+                name: "Corp".into(),
+            },
+            "acl",
+            &acl_id.to_string(),
+            "Corp",
+        );
+        assert_named_target(
+            &AuditEvent::AdminAclHardDeleted {
+                acl_id,
+                name: "Corp".into(),
+            },
+            "acl",
+            &acl_id.to_string(),
+            "Corp",
+        );
+        // Rename targets the acl with its *new* name.
+        assert_named_target(
+            &AuditEvent::AclRenamed {
+                account_id,
+                acl_id,
+                old_name: "Old".into(),
+                new_name: "New".into(),
+            },
+            "acl",
+            &acl_id.to_string(),
+            "New",
+        );
+        assert_nameless_target(
+            &AuditEvent::AclMemberAdded {
+                account_id,
+                acl_id,
+                member_id,
+                member_type: "character".into(),
+                permission: "read".into(),
+            },
+            "acl",
+            &acl_id.to_string(),
+        );
+        assert_nameless_target(
+            &AuditEvent::AclMemberPermissionChanged {
+                account_id,
+                acl_id,
+                member_id,
+                permission: "read_write".into(),
+            },
+            "acl",
+            &acl_id.to_string(),
+        );
+        assert_nameless_target(
+            &AuditEvent::AclMemberRemoved {
+                account_id,
+                acl_id,
+                member_id,
+            },
+            "acl",
+            &acl_id.to_string(),
+        );
+        assert_nameless_target(
+            &AuditEvent::AclAttachedToMap {
+                account_id,
+                map_id: other_uuid(),
+                acl_id,
+            },
+            "acl",
+            &acl_id.to_string(),
+        );
+        assert_nameless_target(
+            &AuditEvent::AclDetachedFromMap {
+                account_id,
+                map_id: other_uuid(),
+                acl_id,
+            },
+            "acl",
+            &acl_id.to_string(),
+        );
+        assert_nameless_target(
+            &AuditEvent::AdminAclOwnershipChanged {
+                acl_id,
+                old_owner: account_id,
+                new_owner: member_id,
+            },
+            "acl",
+            &acl_id.to_string(),
+        );
+    }
+
+    // -----------------------------------------------------------------------
     // record_in_tx behaviour tests against the real DB.
     // -----------------------------------------------------------------------
 
@@ -1223,7 +1730,9 @@ mod tests {
         )
         .await;
 
-        let rows = list_audit_log(&pool, None, None, None, 10).await.unwrap();
+        let rows = list_audit_log(&pool, None, None, None, None, None, None, 10)
+            .await
+            .unwrap();
         assert_eq!(rows.len(), 3);
         assert!(rows[0].occurred_at > rows[1].occurred_at);
         assert!(rows[1].occurred_at > rows[2].occurred_at);
@@ -1236,9 +1745,18 @@ mod tests {
         insert_audit_row(&pool, None, "account_purged", t).await;
         insert_audit_row(&pool, None, "account_registered", t).await;
 
-        let rows = list_audit_log(&pool, Some("account_registered"), None, None, 10)
-            .await
-            .unwrap();
+        let rows = list_audit_log(
+            &pool,
+            Some("account_registered"),
+            None,
+            None,
+            None,
+            None,
+            None,
+            10,
+        )
+        .await
+        .unwrap();
         assert_eq!(rows.len(), 2);
         assert!(rows.iter().all(|r| r.event_type == "account_registered"));
     }
@@ -1252,7 +1770,7 @@ mod tests {
         insert_audit_row(&pool, Some(actor_b), "account_deletion_requested", t).await;
         insert_audit_row(&pool, None, "account_purged", t).await;
 
-        let rows = list_audit_log(&pool, None, Some(actor_a), None, 10)
+        let rows = list_audit_log(&pool, None, Some(actor_a), None, None, None, None, 10)
             .await
             .unwrap();
         assert_eq!(rows.len(), 1);
@@ -1269,12 +1787,297 @@ mod tests {
         insert_audit_row(&pool, None, "account_purged", t2).await;
         insert_audit_row(&pool, None, "account_purged", t3).await;
 
-        let rows = list_audit_log(&pool, None, None, Some(t3), 10)
+        let rows = list_audit_log(&pool, None, None, None, None, None, Some(t3), 10)
             .await
             .unwrap();
         assert_eq!(rows.len(), 2);
         // Newest-first: t2 then t1.
         assert!(rows[0].occurred_at < t3);
         assert!(rows[0].occurred_at > rows[1].occurred_at);
+    }
+
+    // -----------------------------------------------------------------------
+    // record_in_tx target-column behaviour against the real DB.
+    // -----------------------------------------------------------------------
+
+    #[sqlx::test]
+    async fn record_in_tx_writes_character_target(pool: PgPool) {
+        let account_id = insert_account_with_main(&pool, 7777, "Main Pilot").await;
+
+        let mut tx = pool.begin().await.unwrap();
+        record_in_tx(
+            &mut tx,
+            Some(account_id),
+            None,
+            AuditEvent::CharacterAdded {
+                account_id,
+                eve_character_id: 555,
+                character_name: "Alt Pilot".into(),
+            },
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+
+        let row = sqlx::query!(
+            "SELECT target_type, target_id, target_name
+             FROM audit_log WHERE event_type = 'character_added'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(row.target_type.as_deref(), Some("character"));
+        assert_eq!(row.target_id.as_deref(), Some("555"));
+        assert_eq!(row.target_name.as_deref(), Some("Alt Pilot"));
+    }
+
+    #[sqlx::test]
+    async fn record_in_tx_snapshots_target_account_main_not_actor(pool: PgPool) {
+        // Actor and target are different accounts; target_name must come from
+        // the TARGET account's main, independent of the actor's main.
+        let actor_id = insert_account_with_main(&pool, 1111, "Admin Actor").await;
+        let target_id = insert_account_with_main(&pool, 2222, "Boss Pilot").await;
+
+        let mut tx = pool.begin().await.unwrap();
+        record_in_tx(
+            &mut tx,
+            Some(actor_id),
+            None,
+            AuditEvent::ServerAdminGranted {
+                account_id: target_id,
+                source: ServerAdminGrantSource::AdminGrant,
+            },
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+
+        let row = sqlx::query!(
+            "SELECT actor_character_name, target_type, target_id, target_name
+             FROM audit_log WHERE event_type = 'server_admin_granted'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(row.actor_character_name.as_deref(), Some("Admin Actor"));
+        assert_eq!(row.target_type.as_deref(), Some("account"));
+        assert_eq!(row.target_id.as_deref(), Some(&*target_id.to_string()));
+        assert_eq!(row.target_name.as_deref(), Some("Boss Pilot"));
+    }
+
+    #[sqlx::test]
+    async fn record_in_tx_target_account_missing_main_falls_soft(pool: PgPool) {
+        use std::io::Write;
+        use std::sync::{Arc, Mutex};
+        use tracing_subscriber::fmt::MakeWriter;
+
+        #[derive(Clone)]
+        struct CapturingWriter(Arc<Mutex<Vec<u8>>>);
+        impl Write for CapturingWriter {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                #[allow(clippy::unwrap_used)]
+                self.0.lock().unwrap().extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        impl<'a> MakeWriter<'a> for CapturingWriter {
+            type Writer = CapturingWriter;
+            fn make_writer(&'a self) -> Self::Writer {
+                self.clone()
+            }
+        }
+
+        // Actor has a main; the TARGET account has none.
+        let actor_id = insert_account_with_main(&pool, 1111, "Admin Actor").await;
+        let target_id = accounts::create_account(&pool).await.unwrap();
+
+        let buf = Arc::new(Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::ERROR)
+            .with_writer(CapturingWriter(buf.clone()))
+            .with_ansi(false)
+            .with_target(false)
+            .finish();
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        let mut tx = pool.begin().await.unwrap();
+        record_in_tx(
+            &mut tx,
+            Some(actor_id),
+            None,
+            AuditEvent::ServerAdminGranted {
+                account_id: target_id,
+                source: ServerAdminGrantSource::AdminGrant,
+            },
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+
+        let row = sqlx::query!(
+            "SELECT target_type, target_id, target_name
+             FROM audit_log WHERE event_type = 'server_admin_granted'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        // Row still inserted; target id present, name NULL.
+        assert_eq!(row.target_type.as_deref(), Some("account"));
+        assert_eq!(row.target_id.as_deref(), Some(&*target_id.to_string()));
+        assert!(row.target_name.is_none());
+
+        #[allow(clippy::unwrap_used)]
+        let captured = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
+        assert!(
+            captured.contains("audit: target account has no main at write time"),
+            "expected tracing::error! about missing target main, got: {captured}"
+        );
+        assert!(
+            captured.contains(&target_id.to_string()),
+            "expected captured log to include the target account_id, got: {captured}"
+        );
+    }
+
+    #[sqlx::test]
+    async fn record_in_tx_nameless_character_target(pool: PgPool) {
+        let mut tx = pool.begin().await.unwrap();
+        record_in_tx(
+            &mut tx,
+            None,
+            None,
+            AuditEvent::EveCharacterBlocked {
+                eve_character_id: 314159,
+                reason: Some("botting".into()),
+            },
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+
+        let row = sqlx::query!(
+            "SELECT target_type, target_id, target_name
+             FROM audit_log WHERE event_type = 'eve_character_blocked'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(row.target_type.as_deref(), Some("character"));
+        assert_eq!(row.target_id.as_deref(), Some("314159"));
+        assert!(row.target_name.is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // list_audit_log target-filter behaviour against the real DB.
+    // -----------------------------------------------------------------------
+
+    /// Inserts a row carrying target columns directly (the list filters key off
+    /// the columns, not the write path).
+    async fn insert_targeted_row(
+        pool: &PgPool,
+        event_type: &str,
+        target_type: &str,
+        target_id: &str,
+        target_name: Option<&str>,
+    ) {
+        sqlx::query!(
+            "INSERT INTO audit_log (event_type, details, target_type, target_id, target_name)
+             VALUES ($1, '{}'::jsonb, $2, $3, $4)",
+            event_type,
+            target_type,
+            target_id,
+            target_name,
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    #[sqlx::test]
+    async fn list_audit_log_filter_by_target_id(pool: PgPool) {
+        insert_targeted_row(&pool, "character_added", "character", "555", Some("Alt")).await;
+        insert_targeted_row(&pool, "character_added", "character", "999", Some("Other")).await;
+        insert_targeted_row(&pool, "map_created", "map", "555", Some("Coincidental")).await;
+
+        let rows = list_audit_log(
+            &pool,
+            None,
+            None,
+            Some("character"),
+            Some("555"),
+            None,
+            None,
+            10,
+        )
+        .await
+        .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].target_type.as_deref(), Some("character"));
+        assert_eq!(rows[0].target_id.as_deref(), Some("555"));
+    }
+
+    #[sqlx::test]
+    async fn list_audit_log_filter_by_target_name_is_case_insensitive(pool: PgPool) {
+        insert_targeted_row(
+            &pool,
+            "server_admin_granted",
+            "account",
+            &Uuid::new_v4().to_string(),
+            Some("Boss Pilot"),
+        )
+        .await;
+        insert_targeted_row(
+            &pool,
+            "server_admin_granted",
+            "account",
+            &Uuid::new_v4().to_string(),
+            Some("Other Pilot"),
+        )
+        .await;
+
+        let rows = list_audit_log(&pool, None, None, None, None, Some("boss pilot"), None, 10)
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].target_name.as_deref(), Some("Boss Pilot"));
+    }
+
+    #[sqlx::test]
+    async fn list_audit_log_target_filters_combine_with_event_type(pool: PgPool) {
+        let uuid = Uuid::new_v4().to_string();
+        insert_targeted_row(
+            &pool,
+            "server_admin_granted",
+            "account",
+            &uuid,
+            Some("Boss Pilot"),
+        )
+        .await;
+        // Same target name, different event_type — excluded by the event_type filter.
+        insert_targeted_row(
+            &pool,
+            "server_admin_revoked",
+            "account",
+            &uuid,
+            Some("Boss Pilot"),
+        )
+        .await;
+
+        let rows = list_audit_log(
+            &pool,
+            Some("server_admin_granted"),
+            None,
+            None,
+            None,
+            Some("boss pilot"),
+            None,
+            10,
+        )
+        .await
+        .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].event_type, "server_admin_granted");
     }
 }

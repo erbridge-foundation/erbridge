@@ -1,0 +1,32 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT target_type, target_id, target_name\n             FROM audit_log WHERE event_type = 'server_admin_granted'",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "target_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "target_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "target_name",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "dd2cc350a51e39f3f5bc9c52a5fe767316eabd4ad3360047d11157b1b5290b62"
+}

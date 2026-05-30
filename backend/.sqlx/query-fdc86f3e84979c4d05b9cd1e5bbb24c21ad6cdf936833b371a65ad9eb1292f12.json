@@ -1,0 +1,32 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT target_type, target_id, target_name\n             FROM audit_log WHERE event_type = 'character_added'",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "target_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "target_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "target_name",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "fdc86f3e84979c4d05b9cd1e5bbb24c21ad6cdf936833b371a65ad9eb1292f12"
+}

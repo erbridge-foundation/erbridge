@@ -83,11 +83,15 @@ struct AuditRow {
     actor_character_id: Option<i64>,
     actor_character_name: Option<String>,
     details: serde_json::Value,
+    target_type: Option<String>,
+    target_id: Option<String>,
+    target_name: Option<String>,
 }
 
 async fn fetch_audit(pool: &PgPool) -> Vec<AuditRow> {
     sqlx::query!(
-        "SELECT event_type, actor_account_id, actor_character_id, actor_character_name, details
+        "SELECT event_type, actor_account_id, actor_character_id, actor_character_name, details,
+                target_type, target_id, target_name
          FROM audit_log ORDER BY occurred_at, id"
     )
     .fetch_all(pool)
@@ -100,6 +104,9 @@ async fn fetch_audit(pool: &PgPool) -> Vec<AuditRow> {
         actor_character_id: r.actor_character_id,
         actor_character_name: r.actor_character_name,
         details: r.details,
+        target_type: r.target_type,
+        target_id: r.target_id,
+        target_name: r.target_name,
     })
     .collect()
 }
@@ -140,6 +147,9 @@ async fn test_first_account_registration_writes_account_registered_and_bootstrap
     );
     assert_eq!(registered.details["eve_character_id"], 11111i64);
     assert_eq!(registered.details["character_name"], "Tester Alpha");
+    // Registration targets the new account; its name snapshots the new main.
+    assert_eq!(registered.target_type.as_deref(), Some("account"));
+    assert_eq!(registered.target_name.as_deref(), Some("Tester Alpha"));
 
     let granted = rows
         .iter()
@@ -556,6 +566,10 @@ async fn test_create_api_key_writes_api_key_created(pool: PgPool) {
     assert_eq!(r.actor_character_name.as_deref(), Some("Owner Pilot"));
     assert_eq!(r.details["key_id"], created.id.to_string());
     assert_eq!(r.details["name"], "ci");
+    // Key events target the owning account; self-targeting → name is the owner's main.
+    assert_eq!(r.target_type.as_deref(), Some("account"));
+    assert_eq!(r.target_id.as_deref(), Some(&*account_id.to_string()));
+    assert_eq!(r.target_name.as_deref(), Some("Owner Pilot"));
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -756,6 +770,10 @@ async fn router_delete_account_succeeds_and_writes_audit_row(pool: PgPool) {
     assert_eq!(rows[0].actor_account_id, Some(user_id));
     assert_eq!(rows[0].actor_character_id, Some(19191));
     assert_eq!(rows[0].actor_character_name.as_deref(), Some("User"));
+    // Self-targeting account event: target is the deleting account; name is its main.
+    assert_eq!(rows[0].target_type.as_deref(), Some("account"));
+    assert_eq!(rows[0].target_id.as_deref(), Some(&*user_id.to_string()));
+    assert_eq!(rows[0].target_name.as_deref(), Some("User"));
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -801,6 +819,10 @@ async fn router_set_main_succeeds_and_writes_audit_row(pool: PgPool) {
     assert_eq!(rows[0].actor_character_name.as_deref(), Some("Pilot A"));
     // Details carry the incoming main — Pilot B.
     assert_eq!(rows[0].details["eve_character_id"], 20201_i64);
+    // Target is the character being promoted (Pilot B); no carried name.
+    assert_eq!(rows[0].target_type.as_deref(), Some("character"));
+    assert_eq!(rows[0].target_id.as_deref(), Some("20201"));
+    assert!(rows[0].target_name.is_none());
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -841,6 +863,10 @@ async fn router_delete_character_succeeds_and_writes_audit_row(pool: PgPool) {
     assert_eq!(rows[0].actor_account_id, Some(account_id));
     assert_eq!(rows[0].actor_character_id, Some(21210));
     assert_eq!(rows[0].details["eve_character_id"], 21211_i64);
+    // Target is the removed character (Alt); no carried name.
+    assert_eq!(rows[0].target_type.as_deref(), Some("character"));
+    assert_eq!(rows[0].target_id.as_deref(), Some("21211"));
+    assert!(rows[0].target_name.is_none());
 }
 
 // Silence unused-import warnings for utility re-exports.
