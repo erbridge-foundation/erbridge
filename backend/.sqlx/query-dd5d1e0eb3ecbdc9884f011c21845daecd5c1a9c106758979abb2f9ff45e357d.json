@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO eve_character (eve_character_id, name, corporation_id, corporation_name)\n             VALUES ($1, 'Orphan', 1_000_001, 'Test Corp')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "dd5d1e0eb3ecbdc9884f011c21845daecd5c1a9c106758979abb2f9ff45e357d"
+}

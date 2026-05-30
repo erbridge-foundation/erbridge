@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO audit_log (actor_account_id, event_type, details, occurred_at)\n             VALUES ($1, $2, '{}'::jsonb, $3)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "82b1ee17137306b498f7f92f9a463dcef3b7d29051104d4a256695e30379e3a4"
+}

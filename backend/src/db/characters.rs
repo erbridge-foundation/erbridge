@@ -196,6 +196,16 @@ pub async fn delete_character(pool: &PgPool, id: Uuid) -> Result<bool> {
     Ok(result.rows_affected() > 0)
 }
 
+/// Transactional variant of [`delete_character`] for callers that need to
+/// commit the delete alongside an audit emission in one transaction.
+pub async fn delete_character_in_tx(tx: &mut Transaction<'_, Postgres>, id: Uuid) -> Result<bool> {
+    let result = sqlx::query!("DELETE FROM eve_character WHERE id = $1", id)
+        .execute(&mut **tx)
+        .await
+        .context("failed to delete character")?;
+    Ok(result.rows_affected() > 0)
+}
+
 pub async fn set_main(
     tx: &mut Transaction<'_, Postgres>,
     account_id: Uuid,
@@ -264,6 +274,66 @@ pub async fn is_main(pool: &PgPool, id: Uuid) -> Result<Option<(Uuid, bool)>> {
     .context("failed to fetch character main status")?;
 
     Ok(row.and_then(|r| r.account_id.map(|acc_id| (acc_id, r.is_main))))
+}
+
+/// Looks up the `(account_id, eve_character_id, is_main)` for an internal
+/// character UUID. Returns `None` when no row exists or the row is an orphan
+/// (`account_id IS NULL`). Used by audit-emitting services that need the EVE
+/// ID alongside the ownership check.
+pub async fn lookup_for_account(pool: &PgPool, id: Uuid) -> Result<Option<(Uuid, i64, bool)>> {
+    let row = sqlx::query!(
+        "SELECT account_id, eve_character_id, is_main
+         FROM eve_character WHERE id = $1",
+        id
+    )
+    .fetch_optional(pool)
+    .await
+    .context("failed to look up character for account")?;
+
+    Ok(row.and_then(|r| {
+        r.account_id
+            .map(|acc_id| (acc_id, r.eve_character_id, r.is_main))
+    }))
+}
+
+/// Returns the `account_id` binding of an existing `eve_character` row keyed by
+/// `eve_character_id`. The outer `Option` discriminates "no row exists" vs.
+/// "row exists"; the inner `Option<Uuid>` discriminates orphan (NULL account_id)
+/// vs. bound. Used by the SSO callback to decide whether an add-character flow
+/// is claiming an orphan or adding a fresh character.
+pub async fn find_account_id_for_eve_character(
+    tx: &mut Transaction<'_, Postgres>,
+    eve_character_id: i64,
+) -> Result<Option<Option<Uuid>>> {
+    let row = sqlx::query!(
+        "SELECT account_id FROM eve_character WHERE eve_character_id = $1",
+        eve_character_id
+    )
+    .fetch_optional(&mut **tx)
+    .await
+    .context("failed to look up eve_character account_id")?;
+
+    Ok(row.map(|r| r.account_id))
+}
+
+/// Returns the `(eve_character_id, name)` of the main character for `account_id`,
+/// or `None` if the account has no characters yet. Used by the audit module to
+/// snapshot the actor character at write time.
+pub async fn get_main_for_account_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    account_id: Uuid,
+) -> Result<Option<(i64, String)>> {
+    let row = sqlx::query!(
+        "SELECT eve_character_id, name FROM eve_character
+         WHERE account_id = $1 AND is_main = TRUE
+         LIMIT 1",
+        account_id
+    )
+    .fetch_optional(&mut **tx)
+    .await
+    .context("failed to fetch main character for account")?;
+
+    Ok(row.map(|r| (r.eve_character_id, r.name)))
 }
 
 #[cfg(test)]
@@ -655,5 +725,69 @@ mod tests {
         assert!(other_row.encrypted_refresh_token.is_some());
         assert!(other_row.access_token_expires_at.is_some());
         assert_eq!(other_row.scopes, vec!["scope.other".to_string()]);
+    }
+
+    #[sqlx::test]
+    async fn get_main_for_account_tx_returns_main(pool: PgPool) {
+        let account_id = accounts::create_account(&pool).await.unwrap();
+        let mut tx = pool.begin().await.unwrap();
+        let main_char = upsert_tokens(
+            &mut tx,
+            account_id,
+            42_000,
+            "Main Pilot",
+            1_000_001,
+            "Corp One",
+            None,
+            None,
+            "client1",
+            "a",
+            "r",
+            chrono::Utc::now() + chrono::Duration::hours(1),
+            &[],
+            &test_key(),
+        )
+        .await
+        .unwrap();
+        promote_if_no_main(&mut tx, account_id, main_char)
+            .await
+            .unwrap();
+        // A second, non-main character should not be returned.
+        let _alt = upsert_tokens(
+            &mut tx,
+            account_id,
+            42_001,
+            "Alt Pilot",
+            1_000_001,
+            "Corp One",
+            None,
+            None,
+            "client1",
+            "a",
+            "r",
+            chrono::Utc::now() + chrono::Duration::hours(1),
+            &[],
+            &test_key(),
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+
+        let mut tx = pool.begin().await.unwrap();
+        let main = get_main_for_account_tx(&mut tx, account_id).await.unwrap();
+        tx.commit().await.unwrap();
+
+        assert_eq!(main, Some((42_000_i64, "Main Pilot".to_string())));
+    }
+
+    #[sqlx::test]
+    async fn get_main_for_account_tx_returns_none_when_no_main(pool: PgPool) {
+        let account_id = accounts::create_account(&pool).await.unwrap();
+
+        let mut tx = pool.begin().await.unwrap();
+        let main = get_main_for_account_tx(&mut tx, account_id).await.unwrap();
+        tx.commit().await.unwrap();
+
+        assert!(main.is_none());
     }
 }

@@ -1,4 +1,5 @@
 pub mod app_state;
+pub mod audit;
 pub mod config;
 pub mod db;
 pub mod dto;

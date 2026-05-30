@@ -9,9 +9,9 @@ use uuid::Uuid;
 
 use crate::{
     app_state::AppState,
-    db::{accounts, characters},
     error::AppError,
     handlers::{cookie, crypto},
+    services::auth::{SsoCompletionInput, complete_sso_callback},
     session::{InflightRecord, Session},
 };
 
@@ -195,35 +195,25 @@ pub async fn callback(
     let encryption_key = crypto::token_encryption_key(&state.config.encryption_secret)?;
     let access_token_expires_at = Utc::now() + Duration::seconds(token_resp.expires_in);
 
-    // Single Postgres transaction composing the DB steps.
-    let mut tx = state.db.begin().await.map_err(anyhow::Error::from)?;
-
-    let account_id =
-        accounts::resolve_or_create(&mut tx, inflight.account_id, eve_character_id).await?;
-
-    accounts::reactivate_if_soft_deleted(&mut tx, account_id).await?;
-
-    let character_id = characters::upsert_tokens(
-        &mut tx,
-        account_id,
-        eve_character_id,
-        &character_name,
-        corporation_id,
-        &corporation_name,
-        alliance_id,
-        alliance_name.as_deref(),
-        &state.config.esi_client_id,
-        &token_resp.access_token,
-        &token_resp.refresh_token,
-        access_token_expires_at,
-        &scopes,
-        &encryption_key,
+    let account_id = complete_sso_callback(
+        &state.db,
+        SsoCompletionInput {
+            add_character_account_id: inflight.account_id,
+            eve_character_id,
+            character_name: &character_name,
+            corporation_id,
+            corporation_name: &corporation_name,
+            alliance_id,
+            alliance_name: alliance_name.as_deref(),
+            esi_client_id: &state.config.esi_client_id,
+            access_token: &token_resp.access_token,
+            refresh_token: &token_resp.refresh_token,
+            access_token_expires_at,
+            scopes: &scopes,
+            encryption_key: &encryption_key,
+        },
     )
     .await?;
-
-    characters::promote_if_no_main(&mut tx, account_id, character_id).await?;
-
-    tx.commit().await.map_err(anyhow::Error::from)?;
 
     // Create the persistent session row. The session ID is a fresh UUID; the
     // cookie carries it as a signed JWT.

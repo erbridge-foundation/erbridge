@@ -1,0 +1,44 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT event_type, actor_account_id, actor_character_id, actor_character_name, details\n         FROM audit_log ORDER BY occurred_at, id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "event_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "actor_account_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "actor_character_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "actor_character_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "details",
+        "type_info": "Jsonb"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      true,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "d5c0e8bae71cabe71ccbdbbc674f504bb7352a5ea844a86d4bcedab4117bd28d"
+}

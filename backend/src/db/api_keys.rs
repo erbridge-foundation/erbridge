@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use sqlx::PgPool;
+use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
 use crate::db::DbError;
@@ -45,6 +45,32 @@ pub async fn insert_key(
         expires_at,
     )
     .fetch_one(pool)
+    .await?;
+
+    Ok((row.id, row.created_at))
+}
+
+/// Transactional variant of [`insert_key`] for callers that need to commit the
+/// insert alongside an audit emission in one transaction.
+pub async fn insert_key_in_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    account_id: Uuid,
+    name: &str,
+    key_hash: &str,
+    expires_at: Option<DateTime<Utc>>,
+) -> Result<(Uuid, DateTime<Utc>), DbError> {
+    let row = sqlx::query!(
+        r#"
+        INSERT INTO api_key (account_id, scope, name, key_hash, expires_at)
+        VALUES ($1, 'account', $2, $3, $4)
+        RETURNING id, created_at
+        "#,
+        account_id,
+        name,
+        key_hash,
+        expires_at,
+    )
+    .fetch_one(&mut **tx)
     .await?;
 
     Ok((row.id, row.created_at))
@@ -118,6 +144,30 @@ pub async fn delete_for_account(pool: &PgPool, id: Uuid, account_id: Uuid) -> Re
         account_id,
     )
     .execute(pool)
+    .await
+    .context("failed to delete api key")?;
+
+    Ok(result.rows_affected() > 0)
+}
+
+/// Transactional variant of [`delete_for_account`] for callers that need to
+/// commit the delete alongside an audit emission in one transaction.
+pub async fn delete_for_account_in_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    id: Uuid,
+    account_id: Uuid,
+) -> Result<bool> {
+    let result = sqlx::query!(
+        r#"
+        DELETE FROM api_key
+        WHERE id = $1
+          AND account_id = $2
+          AND scope = 'account'
+        "#,
+        id,
+        account_id,
+    )
+    .execute(&mut **tx)
     .await
     .context("failed to delete api key")?;
 

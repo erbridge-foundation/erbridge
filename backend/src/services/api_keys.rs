@@ -3,11 +3,13 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
+    audit::{self, AuditEvent},
     db::{DbError, api_keys as db},
     error::{AppError, ConflictKind},
     handlers::api_key,
 };
 
+#[derive(Debug)]
 pub struct CreatedKey {
     pub id: Uuid,
     pub plaintext: String,
@@ -27,7 +29,12 @@ pub async fn create_key(
     let plaintext = api_key::generate();
     let key_hash = api_key::hash(&plaintext);
 
-    let (id, created_at) = db::insert_key(pool, account_id, name, &key_hash, expires_at)
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?;
+
+    let (id, created_at) = db::insert_key_in_tx(&mut tx, account_id, name, &key_hash, expires_at)
         .await
         .map_err(|e| match e {
             DbError::UniqueViolation { .. } => {
@@ -35,6 +42,23 @@ pub async fn create_key(
             }
             DbError::Other(err) => AppError::Internal(err),
         })?;
+
+    audit::record_in_tx(
+        &mut tx,
+        Some(account_id),
+        None,
+        AuditEvent::ApiKeyCreated {
+            account_id,
+            key_id: id,
+            name: name.to_string(),
+        },
+    )
+    .await
+    .map_err(AppError::Internal)?;
+
+    tx.commit()
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?;
 
     Ok(CreatedKey {
         id,
@@ -67,9 +91,40 @@ pub async fn list_keys(
 }
 
 pub async fn delete_key(pool: &PgPool, id: Uuid, account_id: Uuid) -> Result<bool, AppError> {
-    db::delete_for_account(pool, id, account_id)
+    let mut tx = pool
+        .begin()
         .await
-        .map_err(AppError::Internal)
+        .map_err(|e| AppError::Internal(e.into()))?;
+
+    let deleted = db::delete_for_account_in_tx(&mut tx, id, account_id)
+        .await
+        .map_err(AppError::Internal)?;
+
+    if !deleted {
+        // Nothing to audit — roll back the empty tx and return.
+        tx.rollback()
+            .await
+            .map_err(|e| AppError::Internal(e.into()))?;
+        return Ok(false);
+    }
+
+    audit::record_in_tx(
+        &mut tx,
+        Some(account_id),
+        None,
+        AuditEvent::ApiKeyRevoked {
+            account_id,
+            key_id: id,
+        },
+    )
+    .await
+    .map_err(AppError::Internal)?;
+
+    tx.commit()
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?;
+
+    Ok(true)
 }
 
 /// Validates that a name is non-empty after trimming.

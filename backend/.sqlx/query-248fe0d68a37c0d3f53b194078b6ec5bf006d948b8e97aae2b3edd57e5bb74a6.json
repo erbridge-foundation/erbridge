@@ -1,0 +1,38 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT actor_account_id, actor_character_id, actor_character_name, event_type\n             FROM audit_log WHERE event_type = 'account_deletion_requested'",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "actor_account_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "actor_character_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "actor_character_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "event_type",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      true,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "248fe0d68a37c0d3f53b194078b6ec5bf006d948b8e97aae2b3edd57e5bb74a6"
+}

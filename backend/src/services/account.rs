@@ -2,6 +2,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
+    audit::{self, AuditEvent},
     db::{accounts, characters},
     dto::account::TokenStatus,
     error::{AppError, ConflictKind},
@@ -74,20 +75,32 @@ pub async fn set_main_character(
     account_id: Uuid,
     character_id: Uuid,
 ) -> Result<CharacterInfo, AppError> {
-    // Verify ownership.
-    let info = characters::is_main(pool, character_id)
+    // Verify ownership and capture the new main's EVE ID for the audit payload.
+    let new_main_eve_id = match characters::lookup_for_account(pool, character_id)
         .await
-        .map_err(AppError::Internal)?;
-
-    match info {
-        Some((owner_id, _)) if owner_id == account_id => {}
+        .map_err(AppError::Internal)?
+    {
+        Some((owner_id, eve_id, _)) if owner_id == account_id => eve_id,
         _ => return Err(AppError::NotFound),
-    }
+    };
 
     let mut tx = pool
         .begin()
         .await
         .map_err(|e| AppError::Internal(e.into()))?;
+    // Emit the audit row *before* the is_main flip so the actor-character
+    // snapshot resolves to the outgoing main.
+    audit::record_in_tx(
+        &mut tx,
+        Some(account_id),
+        None,
+        AuditEvent::CharacterSetMain {
+            account_id,
+            eve_character_id: new_main_eve_id,
+        },
+    )
+    .await
+    .map_err(AppError::Internal)?;
     characters::set_main(&mut tx, account_id, character_id)
         .await
         .map_err(AppError::Internal)?;
@@ -129,6 +142,17 @@ pub async fn delete_account(pool: &PgPool, account_id: Uuid) -> Result<(), AppEr
         .begin()
         .await
         .map_err(|e| AppError::Internal(e.into()))?;
+    // Emit the audit row before the state change so the main lookup still
+    // resolves the outgoing main's snapshot — the soft-delete itself does not
+    // touch characters, but the discipline matches set-main below.
+    audit::record_in_tx(
+        &mut tx,
+        Some(account_id),
+        None,
+        AuditEvent::AccountDeletionRequested { account_id },
+    )
+    .await
+    .map_err(AppError::Internal)?;
     accounts::soft_delete(&mut tx, account_id)
         .await
         .map_err(AppError::Internal)?;
@@ -147,14 +171,14 @@ pub async fn delete_character(
     account_id: Uuid,
     character_id: Uuid,
 ) -> Result<(), AppError> {
-    let info = characters::is_main(pool, character_id)
-        .await
-        .map_err(AppError::Internal)?;
-
-    let (owner_id, is_main) = match info {
-        Some(v) => v,
-        None => return Err(AppError::NotFound),
-    };
+    let (owner_id, eve_character_id, is_main) =
+        match characters::lookup_for_account(pool, character_id)
+            .await
+            .map_err(AppError::Internal)?
+        {
+            Some(v) => v,
+            None => return Err(AppError::NotFound),
+        };
 
     if owner_id != account_id {
         return Err(AppError::NotFound);
@@ -172,9 +196,27 @@ pub async fn delete_character(
         return Err(AppError::Conflict(ConflictKind::CannotRemoveMain));
     }
 
-    characters::delete_character(pool, character_id)
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?;
+    audit::record_in_tx(
+        &mut tx,
+        Some(account_id),
+        None,
+        AuditEvent::CharacterRemoved {
+            account_id,
+            eve_character_id,
+        },
+    )
+    .await
+    .map_err(AppError::Internal)?;
+    characters::delete_character_in_tx(&mut tx, character_id)
         .await
         .map_err(AppError::Internal)?;
+    tx.commit()
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?;
 
     Ok(())
 }
@@ -208,7 +250,7 @@ mod tests {
     #[sqlx::test]
     async fn delete_account_blocks_last_server_admin(pool: PgPool) {
         let mut tx = pool.begin().await.unwrap();
-        let admin_id = accounts::resolve_or_create(&mut tx, None, 1001)
+        let (admin_id, _) = accounts::resolve_or_create(&mut tx, None, 1001)
             .await
             .unwrap();
         tx.commit().await.unwrap();
@@ -229,10 +271,10 @@ mod tests {
     #[sqlx::test]
     async fn delete_account_allows_admin_when_another_admin_exists(pool: PgPool) {
         let mut tx = pool.begin().await.unwrap();
-        let first = accounts::resolve_or_create(&mut tx, None, 1001)
+        let (first, _) = accounts::resolve_or_create(&mut tx, None, 1001)
             .await
             .unwrap();
-        let second = accounts::resolve_or_create(&mut tx, None, 1002)
+        let (second, _) = accounts::resolve_or_create(&mut tx, None, 1002)
             .await
             .unwrap();
         tx.commit().await.unwrap();
@@ -257,10 +299,10 @@ mod tests {
     #[sqlx::test]
     async fn delete_account_allows_non_admin(pool: PgPool) {
         let mut tx = pool.begin().await.unwrap();
-        let _admin = accounts::resolve_or_create(&mut tx, None, 1001)
+        let (_admin, _) = accounts::resolve_or_create(&mut tx, None, 1001)
             .await
             .unwrap();
-        let user = accounts::resolve_or_create(&mut tx, None, 1002)
+        let (user, _) = accounts::resolve_or_create(&mut tx, None, 1002)
             .await
             .unwrap();
         tx.commit().await.unwrap();
@@ -277,10 +319,10 @@ mod tests {
     #[sqlx::test]
     async fn delete_account_is_atomic_on_account_with_characters(pool: PgPool) {
         let mut tx = pool.begin().await.unwrap();
-        let _admin = accounts::resolve_or_create(&mut tx, None, 1001)
+        let (_admin, _) = accounts::resolve_or_create(&mut tx, None, 1001)
             .await
             .unwrap();
-        let user = accounts::resolve_or_create(&mut tx, None, 1002)
+        let (user, _) = accounts::resolve_or_create(&mut tx, None, 1002)
             .await
             .unwrap();
         tx.commit().await.unwrap();
