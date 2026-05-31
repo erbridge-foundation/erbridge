@@ -189,7 +189,7 @@ The main-character lookup for the actor and for an account target MAY be the sam
 - **WHEN** `record_in_tx` is called
 - **THEN** the inserted row has `target_type = NULL`, `target_id = NULL`, and `target_name = NULL`
 
-### Requirement: list_audit_log reads newest-first with filter axes and a keyset cursor
+### Requirement: list_audit_log reads newest-first with three filter axes and a keyset cursor
 
 The system SHALL provide an async function `audit::list_audit_log` returning `Vec<AuditLogEntry>` where each `AuditLogEntry` carries `id`, `occurred_at`, `actor_account_id`, `actor_character_id`, `actor_character_name`, `event_type`, `details`, `target_type`, `target_id`, and `target_name`.
 
