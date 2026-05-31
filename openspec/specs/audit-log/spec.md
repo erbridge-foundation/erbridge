@@ -94,13 +94,13 @@ The per-variant target mapping SHALL be:
 - `CharacterRemoved`, `CharacterSetMain` → target_type `"character"`, target_id the `eve_character_id`, name not carried (NULL).
 - `ApiKeyCreated`, `ApiKeyRevoked` → target_type `"account"`, target_id the `account_id` (the key belongs to the actor's account; the account is the target entity), name resolved from the account's main.
 - `ServerAdminGranted`, `ServerAdminRevoked` → target_type `"account"`, target_id the affected `account_id`, name resolved from the account's main.
-- `EveCharacterBlocked`, `EveCharacterUnblocked` → target_type `"character"`, target_id the `eve_character_id`, name not carried (NULL).
+- `EveCharacterBlocked`, `EveCharacterUnblocked`, `BlockedLoginRejected` → target_type `"character"`, target_id the `eve_character_id`, name not carried (NULL).
 - `MapCreated`, `MapDeleted`, `AdminMapHardDeleted` → target_type `"map"`, target_id the `map_id`, name the carried map `name`.
 - `AdminMapOwnershipChanged` → target_type `"map"`, target_id the `map_id`, name not carried (NULL).
 - `AclCreated`, `AclRenamed`, `AclDeleted`, `AdminAclHardDeleted` → target_type `"acl"`, target_id the `acl_id`, name the carried acl `name` (for `AclRenamed`, the `new_name`).
 - `AclMemberAdded`, `AclMemberPermissionChanged`, `AclMemberRemoved`, `AclAttachedToMap`, `AclDetachedFromMap`, `AdminAclOwnershipChanged` → target_type `"acl"`, target_id the `acl_id`, name not carried (NULL).
 
-The catalogue SHALL contain the variants and `event_type` strings already defined by the shipped capability (unchanged by this change), plus `ServerAdminGrantSource` as specified there. This change adds no variant and renames none; it adds only the `target()` method and the mapping above.
+The catalogue SHALL contain the variants and `event_type` strings already defined by the shipped capability, plus `ServerAdminGrantSource` as specified there, plus the `BlockedLoginRejected { eve_character_id }` variant introduced by the server-administration / block-list change. `BlockedLoginRejected` is **(emitted)** by the SSO callback when a blocked character is refused (per the `eve-sso-auth` capability); it records a rejected *attempt* rather than a committed state change — a deliberate, narrow extension of the audit log for a security-relevant event. It is emitted with `actor_account_id = NULL` (no account is authenticated) and carries the subject `eve_character_id` in `details`.
 
 The exact JSON shape of `details()` per variant SHALL be unchanged by this change.
 
@@ -118,6 +118,11 @@ The exact JSON shape of `details()` per variant SHALL be unchanged by this chang
 - **GIVEN** an `AuditEvent::EveCharacterBlocked { eve_character_id, reason }`
 - **WHEN** `target()` is called
 - **THEN** it returns `Some(AuditTarget)` with `target_type = "character"`, `target_id = eve_character_id.to_string()`, and no name (so `target_name` will be NULL)
+
+#### Scenario: BlockedLoginRejected targets the subject character and is emitted with a NULL actor
+- **GIVEN** an `AuditEvent::BlockedLoginRejected { eve_character_id }`
+- **WHEN** `target()` is called
+- **THEN** it returns `Some(AuditTarget)` with `target_type = "character"`, `target_id = eve_character_id.to_string()`, and no name (so `target_name` will be NULL); `details()` contains `eve_character_id`, and the event is emitted with `actor_account_id = NULL` (the rejected character is the subject, not an actor)
 
 #### Scenario: Every variant returns a target
 - **WHEN** `target()` is called for any variant defined in the catalogue

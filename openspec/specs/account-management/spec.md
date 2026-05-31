@@ -213,3 +213,15 @@ For `CharacterSetMain`, the actor-character snapshot reflects the account's main
 #### Scenario: Rejected requests do not write audit rows
 - **WHEN** `DELETE /api/v1/characters/:id` is rejected with HTTP 409 (e.g. `cannot_remove_main` or `cannot_remove_last_character`)
 - **THEN** no `audit_log` row is written for the rejected request
+
+### Requirement: is_server_admin from /me gates the admin UI affordance
+
+`GET /api/v1/me` already returns `data.account.is_server_admin` (per the existing `GET /api/v1/me` requirement). The frontend SHALL use that field to decide whether to surface the admin-navigation affordance and whether to attempt admin routes. This requirement introduces no behavioural change to `GET /api/v1/me`; it records that the existing field is the authority for the admin-UI gate, so the gate and the backend's `AdminAccount` extractor agree on a single source of truth.
+
+#### Scenario: Admin field drives the affordance
+- **WHEN** `GET /api/v1/me` returns `data.account.is_server_admin = true`
+- **THEN** the frontend MAY surface the admin affordance; when it is `false`, the frontend SHALL NOT surface it
+
+#### Scenario: /me itself is unchanged
+- **WHEN** any caller fetches `GET /api/v1/me`
+- **THEN** the response shape and fields are exactly as defined by the existing `GET /api/v1/me` requirement; this change adds no field and removes none
