@@ -66,6 +66,19 @@ pub fn build_router(state: AppState) -> Router {
         .with_state(state)
 }
 
+/// Returns all `/api/v1/admin/*` routes as `(path, method)` pairs for the
+/// fail-closed admin-coverage test. Every entry here MUST be gated by the
+/// `AdminAccount` extractor; the coverage test enforces that behaviourally by
+/// asserting each route rejects an unauthenticated caller (401) and a
+/// non-admin session (403). A handler that forgets the extractor would answer
+/// differently and fail the test.
+///
+/// Kept in lockstep with the routes nested under `/api/v1/admin` in
+/// `build_router`. Populated as the admin handlers land.
+pub fn registered_admin_routes() -> Vec<(String, String)> {
+    vec![]
+}
+
 /// Returns all `/api/v1/*` routes as `(path, method)` pairs for doc-coverage tests.
 pub fn registered_api_v1_routes() -> Vec<(String, String)> {
     vec![

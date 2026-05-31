@@ -119,6 +119,65 @@ where
     }
 }
 
+/// Axum extractor that resolves an authenticated **server-admin** account ID.
+///
+/// Unlike [`AuthenticatedAccount`], this extractor is **session-cookie only**:
+/// it deliberately does NOT consult `Authorization: Bearer erb_…` API keys. A
+/// leaked API key must never confer admin power — an admin action requires a
+/// fresh-ish (7-day sliding) browser session. (The first-class story for server
+/// automation remains the `scope = 'server'` API key, not admin user-actions.)
+///
+/// Rejections:
+/// - no/invalid session cookie → `AppError::Unauthorized` (401 `unauthenticated`)
+/// - valid session for a non-admin account → `AppError::ForbiddenAdminRequired`
+///   (403 `forbidden_admin_required`)
+///
+/// Unlike the cookie path of `AuthenticatedAccount`, this extractor does NOT
+/// refresh the session cookie. Admin actions are infrequent and always
+/// accompanied by ordinary `/me`-style requests that already slide the window;
+/// keeping the refresh out of here keeps the extractor's single responsibility
+/// (authorise an admin) clean.
+#[derive(Debug)]
+pub struct AdminAccount(pub Uuid);
+
+impl<S> FromRequestParts<S> for AdminAccount
+where
+    AppState: FromRef<S>,
+    S: Send + Sync,
+{
+    type Rejection = AppError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let state = AppState::from_ref(state);
+
+        // Session cookie only — never the bearer header.
+        let jwt = cookie::extract_session_jwt(&parts.headers).ok_or(AppError::Unauthorized)?;
+        let key_bytes =
+            crypto::jwt_signing_key(&state.config.encryption_secret).map_err(AppError::Internal)?;
+        let session_id =
+            crypto::verify_session_jwt(&jwt, &key_bytes).map_err(|_| AppError::Unauthorized)?;
+        let session = state
+            .session_store
+            .get(&session_id)
+            .await
+            .map_err(AppError::Internal)?
+            .ok_or(AppError::Unauthorized)?;
+
+        // Load the account and require the admin flag. A missing account row for
+        // a live session is an invariant violation, treated as unauthenticated.
+        let account = accounts::get_account(&state.db, session.account_id)
+            .await
+            .map_err(AppError::Internal)?
+            .ok_or(AppError::Unauthorized)?;
+
+        if !account.is_server_admin {
+            return Err(AppError::ForbiddenAdminRequired);
+        }
+
+        Ok(AdminAccount(session.account_id))
+    }
+}
+
 /// Axum middleware that installs a per-request `RefreshedJwtSlot`, runs the
 /// inner stack, and (if the slot was filled by the extractor) writes a fresh
 /// `Set-Cookie` header back on the response.
@@ -215,6 +274,133 @@ mod tests {
         assert_eq!(
             extract_bearer(&headers),
             Some("some_other_token".to_string())
+        );
+    }
+
+    // ── AdminAccount extractor ────────────────────────────────────────────────
+
+    use crate::{
+        app_state::AppState,
+        config::Config,
+        db::accounts,
+        esi::EsiMetadata,
+        handlers::crypto,
+        session::{InflightStore, SessionStore},
+    };
+    use axum::http::{Request, header};
+    use sqlx::PgPool;
+    use std::sync::Arc;
+
+    const TEST_SECRET: &str = "0000000000000000000000000000000000000000000000000000000000000000";
+
+    fn build_state(pool: PgPool) -> AppState {
+        AppState {
+            config: Arc::new(Config {
+                app_url: "http://localhost:3000".into(),
+                encryption_secret: TEST_SECRET.into(),
+                esi_client_id: "test_client_id".into(),
+                esi_client_secret: "test_client_secret".into(),
+                database_url: String::new(),
+            }),
+            db: pool.clone(),
+            esi_metadata: Arc::new(EsiMetadata {
+                authorization_endpoint: "https://login.eveonline.com/v2/oauth/authorize".into(),
+                token_endpoint: "https://login.eveonline.com/v2/oauth/token".into(),
+                jwks_uri: "https://login.eveonline.com/oauth/jwks".into(),
+            }),
+            session_store: SessionStore::new(pool.clone()),
+            inflight_store: InflightStore::new(),
+            http_client: reqwest::Client::new().into(),
+        }
+    }
+
+    /// Creates an account (optionally promoted to admin) with a live session and
+    /// returns `(account_id, session_cookie_value)`.
+    async fn account_with_session(state: &AppState, admin: bool) -> (Uuid, String) {
+        let account_id = accounts::create_account(&state.db).await.unwrap();
+        if admin {
+            let mut tx = state.db.begin().await.unwrap();
+            accounts::set_server_admin(&mut tx, account_id, true)
+                .await
+                .unwrap();
+            tx.commit().await.unwrap();
+        }
+        let session_id = Uuid::new_v4().to_string();
+        state
+            .session_store
+            .add(&session_id, account_id, None, false)
+            .await
+            .unwrap();
+        let key_bytes = crypto::jwt_signing_key(&state.config.encryption_secret).unwrap();
+        let jwt = crypto::sign_session_jwt(&session_id, &key_bytes).unwrap();
+        (account_id, format!("session={jwt}"))
+    }
+
+    /// Drives the `AdminAccount` extractor against a constructed request.
+    async fn extract_admin(
+        state: &AppState,
+        cookie: Option<&str>,
+        bearer: Option<&str>,
+    ) -> Result<AdminAccount, AppError> {
+        let mut builder = Request::builder().uri("/api/v1/admin/accounts");
+        if let Some(c) = cookie {
+            builder = builder.header(header::COOKIE, c);
+        }
+        if let Some(b) = bearer {
+            builder = builder.header(header::AUTHORIZATION, format!("Bearer {b}"));
+        }
+        let req = builder.body(Body::empty()).unwrap();
+        let (mut parts, _) = req.into_parts();
+        AdminAccount::from_request_parts(&mut parts, state).await
+    }
+
+    #[sqlx::test]
+    async fn admin_extractor_rejects_no_cookie_with_401(pool: PgPool) {
+        let state = build_state(pool);
+        let err = extract_admin(&state, None, None).await.unwrap_err();
+        assert!(matches!(err, AppError::Unauthorized));
+    }
+
+    #[sqlx::test]
+    async fn admin_extractor_rejects_non_admin_with_403(pool: PgPool) {
+        let state = build_state(pool);
+        let (_id, cookie) = account_with_session(&state, false).await;
+        let err = extract_admin(&state, Some(&cookie), None)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AppError::ForbiddenAdminRequired));
+    }
+
+    #[sqlx::test]
+    async fn admin_extractor_accepts_admin_cookie(pool: PgPool) {
+        let state = build_state(pool);
+        let (account_id, cookie) = account_with_session(&state, true).await;
+        let AdminAccount(resolved) = extract_admin(&state, Some(&cookie), None).await.unwrap();
+        assert_eq!(resolved, account_id);
+    }
+
+    #[sqlx::test]
+    async fn admin_extractor_ignores_bearer_key_for_admin_account(pool: PgPool) {
+        // An account-scoped API key whose account IS an admin must NOT confer
+        // admin via the bearer header — the extractor is cookie-only, so with no
+        // cookie present it rejects with 401 regardless of the key.
+        let state = build_state(pool);
+        let account_id = accounts::create_account(&state.db).await.unwrap();
+        let mut tx = state.db.begin().await.unwrap();
+        accounts::set_server_admin(&mut tx, account_id, true)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        let key = crate::services::api_keys::create_key(&state.db, account_id, "k", None)
+            .await
+            .unwrap();
+
+        let err = extract_admin(&state, None, Some(&key.plaintext))
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, AppError::Unauthorized),
+            "bearer key must never satisfy the cookie-only admin extractor"
         );
     }
 }

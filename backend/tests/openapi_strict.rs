@@ -188,6 +188,84 @@ fn all_registered_v1_routes_declare_auth() {
     }
 }
 
+// ── fail-closed admin-coverage ─────────────────────────────────────────────────
+//
+// Admin gating is opt-in per handler (the AdminAccount extractor), so a new
+// /api/v1/admin/* handler that forgets it is silently NOT admin-gated. This
+// test makes the admin surface fail-closed *behaviourally*: every route in
+// registered_admin_routes() MUST reject an unauthenticated caller (401) and a
+// non-admin session (403). A handler missing the extractor would answer
+// differently (e.g. 200/404/405) and fail here. Mirrors
+// `all_registered_v1_routes_declare_auth` for the admin tier.
+
+/// Substitutes placeholder values for known path params so a registered route
+/// template becomes a concrete request URI.
+fn concrete_admin_uri(path: &str) -> String {
+    path.replace("{id}", &Uuid::new_v4().to_string())
+        .replace("{eve_character_id}", "12345")
+}
+
+fn method_from(method: &str) -> Method {
+    Method::from_bytes(method.to_uppercase().as_bytes()).expect("valid method")
+}
+
+#[sqlx::test]
+async fn admin_routes_reject_unauthenticated_401(pool: PgPool) {
+    let state = build_state(pool);
+    let router = backend::build_router(state);
+
+    for (path, method) in backend::registered_admin_routes() {
+        let uri = concrete_admin_uri(&path);
+        let resp = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(method_from(&method))
+                    .uri(&uri)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::UNAUTHORIZED,
+            "admin route {method} {path} must reject an unauthenticated caller with 401 \
+             (is it missing the AdminAccount extractor?)"
+        );
+    }
+}
+
+#[sqlx::test]
+async fn admin_routes_reject_non_admin_403(pool: PgPool) {
+    let state = build_state(pool);
+    // A plain session (create_session makes a non-admin account).
+    let (_account_id, cookie) = create_session(&state).await;
+    let router = backend::build_router(state);
+
+    for (path, method) in backend::registered_admin_routes() {
+        let uri = concrete_admin_uri(&path);
+        let resp = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(method_from(&method))
+                    .uri(&uri)
+                    .header(header::COOKIE, &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::FORBIDDEN,
+            "admin route {method} {path} must reject a non-admin session with 403 \
+             (is it missing the AdminAccount extractor?)"
+        );
+    }
+}
+
 // ── 2d.6 strict-drift ─────────────────────────────────────────────────────────
 
 #[sqlx::test]

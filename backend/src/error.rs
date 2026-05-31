@@ -71,8 +71,14 @@ pub enum AppError {
     #[error("account soft deleted")]
     AccountSoftDeleted,
 
+    #[error("account blocked")]
+    AccountBlocked,
+
     #[error("forbidden")]
     Forbidden,
+
+    #[error("forbidden: server admin required")]
+    ForbiddenAdminRequired,
 
     #[error("not found")]
     NotFound,
@@ -103,10 +109,20 @@ impl IntoResponse for AppError {
                 "account_soft_deleted",
                 "This account has been soft-deleted".to_string(),
             ),
+            AppError::AccountBlocked => (
+                StatusCode::UNAUTHORIZED,
+                "account_blocked",
+                "This account is blocked".to_string(),
+            ),
             AppError::Forbidden => (
                 StatusCode::FORBIDDEN,
                 "forbidden",
                 "Access denied".to_string(),
+            ),
+            AppError::ForbiddenAdminRequired => (
+                StatusCode::FORBIDDEN,
+                "forbidden_admin_required",
+                "Server administrator access is required".to_string(),
             ),
             AppError::NotFound => (
                 StatusCode::NOT_FOUND,
@@ -144,6 +160,18 @@ mod tests {
         err.into_response().status()
     }
 
+    async fn body_json(err: AppError) -> serde_json::Value {
+        use http_body_util::BodyExt;
+        let bytes = err
+            .into_response()
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
     #[test]
     fn unauthorized_maps_to_401() {
         assert_eq!(status(AppError::Unauthorized), StatusCode::UNAUTHORIZED);
@@ -158,8 +186,33 @@ mod tests {
     }
 
     #[test]
+    fn account_blocked_maps_to_401() {
+        assert_eq!(status(AppError::AccountBlocked), StatusCode::UNAUTHORIZED);
+    }
+
+    #[test]
     fn forbidden_maps_to_403() {
         assert_eq!(status(AppError::Forbidden), StatusCode::FORBIDDEN);
+    }
+
+    #[test]
+    fn forbidden_admin_required_maps_to_403() {
+        assert_eq!(
+            status(AppError::ForbiddenAdminRequired),
+            StatusCode::FORBIDDEN
+        );
+    }
+
+    #[tokio::test]
+    async fn account_blocked_body_has_expected_code() {
+        let body = body_json(AppError::AccountBlocked).await;
+        assert_eq!(body["error"]["code"], "account_blocked");
+    }
+
+    #[tokio::test]
+    async fn forbidden_admin_required_body_has_expected_code() {
+        let body = body_json(AppError::ForbiddenAdminRequired).await;
+        assert_eq!(body["error"]["code"], "forbidden_admin_required");
     }
 
     #[test]

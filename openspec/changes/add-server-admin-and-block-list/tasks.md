@@ -19,10 +19,10 @@
 
 ## 4. AdminAccount extractor + coverage test
 
-- [ ] 4.1 Add `AdminAccount(pub Uuid)` extractor (in `handlers/middleware.rs` or a sibling). Session-cookie only — it SHALL NOT consult API keys. Resolve the session → account_id, load the account, require `is_server_admin = TRUE`. Reject: 401 `unauthenticated` (no session), 403 `forbidden_admin_required` (authenticated non-admin). Add `AppError::ForbiddenAdminRequired` if not already representable.
-- [ ] 4.2 Add `AppError::AccountBlocked` → HTTP 401 `account_blocked` in `error.rs`.
-- [ ] 4.3 Unit tests for the extractor: no cookie → 401; non-admin cookie → 403; admin cookie → Ok; bearer key for an admin account → 401 (keys never confer admin).
-- [ ] 4.4 Add an `admin_auth_coverage` integration test mirroring the existing v1 auth-coverage test: enumerate every registered `/api/v1/admin/*` route and assert each handler extracts `AdminAccount` (a route missing it fails the test). Add a `registered_admin_routes()` helper in `lib.rs` if needed.
+- [x] 4.1 Add `AdminAccount(pub Uuid)` extractor (in `handlers/middleware.rs` or a sibling). Session-cookie only — it SHALL NOT consult API keys. Resolve the session → account_id, load the account, require `is_server_admin = TRUE`. Reject: 401 `unauthenticated` (no session), 403 `forbidden_admin_required` (authenticated non-admin). Add `AppError::ForbiddenAdminRequired` if not already representable.
+- [x] 4.2 Add `AppError::AccountBlocked` → HTTP 401 `account_blocked` in `error.rs`.
+- [x] 4.3 Unit tests for the extractor: no cookie → 401; non-admin cookie → 403; admin cookie → Ok; bearer key for an admin account → 401 (keys never confer admin).
+- [x] 4.4 Add an `admin_auth_coverage` integration test mirroring the existing v1 auth-coverage test: enumerate every registered `/api/v1/admin/*` route and assert each handler extracts `AdminAccount` (a route missing it fails the test). Added a `registered_admin_routes()` helper in `lib.rs` (returns empty until section 7 adds routes); the coverage test is behavioural — it asserts each registered admin route rejects no-credentials (401) and a non-admin session (403), so a handler that omits the extractor fails. Enforces vacuously now, fully as section 7 populates the helper.
 
 ## 5. Block enforcement: bearer branch + SSO callback
 
