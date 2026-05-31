@@ -43,11 +43,11 @@
 
 ## 7. Handler layer + routing
 
-- [ ] 7.1 Add `backend/src/handlers/api/v1/admin.rs` with handlers for: `GET /accounts`, `GET /characters/search`, `POST /accounts/:id/grant-admin`, `POST /accounts/:id/revoke-admin`, `GET /blocks`, `POST /blocks`, `DELETE /blocks/:eve_character_id`, `GET /audit`. Each takes `AdminAccount(admin_id)`. Validate request bodies in the handler; wrap responses in the `ApiResponse` envelope; map service errors to `AppError`.
-- [ ] 7.2 Add DTOs in `backend/src/dto/admin.rs` (request + response shapes; `From<DbModel>` impls; never serialize DB models directly).
-- [ ] 7.3 Register the `/api/v1/admin/*` routes in `lib.rs` (nested router) and add them to `registered_api_v1_routes()` / a new `registered_admin_routes()` for the coverage tests.
-- [ ] 7.4 Add `#[utoipa::path]` annotations so the admin endpoints appear in the OpenAPI doc; update `openapi.rs` if it enumerates paths.
-- [ ] 7.5 Integration tests for each handler (happy + key error paths): grant/revoke incl. last-admin 409; block incl. self-block 409 and account-teardown; unblock incl. 404; search; audit list + filter (incl. `target_name` case-insensitive + `target_type`/`target_id`) + pagination cursor; all `/admin/*` reject non-admin (403) and unauthenticated (401) and bearer (401).
+- [x] 7.1 Added `backend/src/handlers/api/v1/admin.rs` with all eight handlers, each taking `AdminAccount` (the value is used where needed — grant/revoke/block/unblock pass `admin_id` as the audit actor; the read endpoints take `_admin` purely to gate). Bodies validated in the handler; responses wrapped in `ApiResponse`; service `AppError`s propagate. The block handler does the best-effort ESI snapshot fetch (`fetch_character_block_snapshot`) before calling the HTTP-free service.
+- [x] 7.2 Added DTOs in `backend/src/dto/admin.rs` (request + response shapes; `From<DbModel>` impls; no DB model is serialised directly). Includes `AuditLogPageDto` with the `next_before` keyset cursor.
+- [x] 7.3 Registered the `/api/v1/admin/*` routes in `lib.rs` (nested under `/api/v1/admin`) and populated `registered_admin_routes()` — the section-4 fail-closed coverage tests now exercise all eight real routes (401/403) instead of vacuously.
+- [x] 7.4 Added `#[utoipa::path]` annotations to all eight handlers; registered the paths, the new schemas, and an `admin` tag in `openapi.rs`.
+- [x] 7.5 Integration tests in `tests/admin.rs` (13 tests): accounts-with-characters list; search resolves to owning account; grant→revoke; grant 404; last-admin revoke 409; block→list→unblock; self-block 409; unblock 404; audit list + `event_type`/`target_id` filter + `next_before` cursor; case-insensitive `target_name` filter; non-admin 403; unauthenticated 401; bearer-key 401. Account-teardown semantics (token-clear + session-delete) are covered at the service layer (§6.7); the handler block path uses a fast-failing ESI client so the snapshot is null and tests stay hermetic.
 
 ## 8. HURL coverage
 

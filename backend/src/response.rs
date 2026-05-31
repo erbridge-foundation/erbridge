@@ -3,6 +3,7 @@ use utoipa::ToSchema;
 
 use crate::dto::{
     account::{CharacterDto, MeDto},
+    admin::{AdminAccountDto, AuditLogPageDto, BlockedCharacterDto, CharacterSearchResultDto},
     keys::{CreatedKeyDto, KeyMetadataDto},
     preferences::PreferencesDto,
 };
@@ -43,4 +44,24 @@ pub struct CharacterResponse {
 #[derive(Serialize, ToSchema)]
 pub struct PreferencesResponse {
     pub data: PreferencesDto,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct AdminAccountListResponse {
+    pub data: Vec<AdminAccountDto>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct CharacterSearchResponse {
+    pub data: Vec<CharacterSearchResultDto>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct BlockListResponse {
+    pub data: Vec<BlockedCharacterDto>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct AuditLogPageResponse {
+    pub data: AuditLogPageDto,
 }

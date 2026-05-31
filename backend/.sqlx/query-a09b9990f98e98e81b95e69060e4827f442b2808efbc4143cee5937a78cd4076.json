@@ -1,0 +1,68 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT a.id, a.status, a.delete_requested_at, a.is_server_admin,\n               a.created_at, a.updated_at,\n               c.eve_character_id AS \"eve_character_id?\",\n               c.name AS \"character_name?\",\n               c.is_main AS \"is_main?\"\n        FROM account a\n        LEFT JOIN eve_character c ON c.account_id = a.id\n        ORDER BY a.created_at DESC, c.is_main DESC, c.name ASC\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "status",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "delete_requested_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 3,
+        "name": "is_server_admin",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 4,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 5,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 6,
+        "name": "eve_character_id?",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 7,
+        "name": "character_name?",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "is_main?",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "a09b9990f98e98e81b95e69060e4827f442b2808efbc4143cee5937a78cd4076"
+}

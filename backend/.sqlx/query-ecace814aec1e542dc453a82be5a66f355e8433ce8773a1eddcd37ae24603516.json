@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO eve_character (account_id, eve_character_id, name, corporation_id, corporation_name, is_main)\n         VALUES ($1, 9001, 'Admin Main', 1, 'Corp', TRUE)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "ecace814aec1e542dc453a82be5a66f355e8433ce8773a1eddcd37ae24603516"
+}

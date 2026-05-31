@@ -230,6 +230,65 @@ pub async fn list_accounts_admin(pool: &PgPool) -> Result<Vec<Account>> {
         .collect())
 }
 
+/// An account together with a lightweight view of its characters
+/// (`eve_character_id`, `name`, `is_main`) — what the admin accounts list needs
+/// to identify accounts by pilot, without the credential columns.
+pub struct AccountWithCharacters {
+    pub account: Account,
+    pub characters: Vec<(i64, String, bool)>,
+}
+
+/// Every account (newest first) with its characters, assembled in one query
+/// (LEFT JOIN so character-less accounts still appear). Characters within an
+/// account are ordered main-first then by name for a stable display.
+pub async fn list_accounts_with_characters(pool: &PgPool) -> Result<Vec<AccountWithCharacters>> {
+    let rows = sqlx::query!(
+        r#"
+        SELECT a.id, a.status, a.delete_requested_at, a.is_server_admin,
+               a.created_at, a.updated_at,
+               c.eve_character_id AS "eve_character_id?",
+               c.name AS "character_name?",
+               c.is_main AS "is_main?"
+        FROM account a
+        LEFT JOIN eve_character c ON c.account_id = a.id
+        ORDER BY a.created_at DESC, c.is_main DESC, c.name ASC
+        "#
+    )
+    .fetch_all(pool)
+    .await
+    .context("failed to list accounts with characters")?;
+
+    // Group consecutive rows by account id (the ORDER BY keeps each account's
+    // rows contiguous).
+    let mut out: Vec<AccountWithCharacters> = Vec::new();
+    for r in rows {
+        let needs_new = out.last().map(|e| e.account.id != r.id).unwrap_or(true);
+        if needs_new {
+            out.push(AccountWithCharacters {
+                account: Account {
+                    id: r.id,
+                    status: r.status,
+                    delete_requested_at: r.delete_requested_at,
+                    is_server_admin: r.is_server_admin,
+                    created_at: r.created_at,
+                    updated_at: r.updated_at,
+                },
+                characters: Vec::new(),
+            });
+        }
+        if let (Some(eve_id), Some(name), Some(is_main)) =
+            (r.eve_character_id, r.character_name, r.is_main)
+        {
+            #[allow(clippy::unwrap_used)]
+            out.last_mut()
+                .unwrap()
+                .characters
+                .push((eve_id, name, is_main));
+        }
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

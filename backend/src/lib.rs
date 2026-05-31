@@ -50,12 +50,35 @@ pub fn build_router(state: AppState) -> Router {
             delete(handlers::api::v1::account::delete_account),
         );
 
+    let admin_routes = Router::new()
+        .route("/accounts", get(handlers::api::v1::admin::list_accounts))
+        .route(
+            "/characters/search",
+            get(handlers::api::v1::admin::search_characters),
+        )
+        .route(
+            "/accounts/{id}/grant-admin",
+            post(handlers::api::v1::admin::grant_admin),
+        )
+        .route(
+            "/accounts/{id}/revoke-admin",
+            post(handlers::api::v1::admin::revoke_admin),
+        )
+        .route("/blocks", get(handlers::api::v1::admin::list_blocks))
+        .route("/blocks", post(handlers::api::v1::admin::block_character))
+        .route(
+            "/blocks/{eve_character_id}",
+            delete(handlers::api::v1::admin::unblock_character),
+        )
+        .route("/audit", get(handlers::api::v1::admin::list_audit));
+
     Router::new()
         .route("/auth/login", get(handlers::auth::login))
         .route("/auth/callback", get(handlers::auth::callback))
         .route("/auth/logout", get(handlers::auth::logout))
         .route("/auth/characters/add", get(handlers::auth::add_character))
         .nest("/api/v1", api_v1_routes)
+        .nest("/api/v1/admin", admin_routes)
         // Public, unenveloped: the documented api-contract carve-out for /api/health.
         // Public by construction — get_health does not take the AuthenticatedAccount extractor.
         .route("/api/health", get(handlers::health::get_health))
@@ -74,9 +97,30 @@ pub fn build_router(state: AppState) -> Router {
 /// differently and fail the test.
 ///
 /// Kept in lockstep with the routes nested under `/api/v1/admin` in
-/// `build_router`. Populated as the admin handlers land.
+/// `build_router`.
 pub fn registered_admin_routes() -> Vec<(String, String)> {
-    vec![]
+    vec![
+        ("/api/v1/admin/accounts".to_string(), "get".to_string()),
+        (
+            "/api/v1/admin/characters/search".to_string(),
+            "get".to_string(),
+        ),
+        (
+            "/api/v1/admin/accounts/{id}/grant-admin".to_string(),
+            "post".to_string(),
+        ),
+        (
+            "/api/v1/admin/accounts/{id}/revoke-admin".to_string(),
+            "post".to_string(),
+        ),
+        ("/api/v1/admin/blocks".to_string(), "get".to_string()),
+        ("/api/v1/admin/blocks".to_string(), "post".to_string()),
+        (
+            "/api/v1/admin/blocks/{eve_character_id}".to_string(),
+            "delete".to_string(),
+        ),
+        ("/api/v1/admin/audit".to_string(), "get".to_string()),
+    ]
 }
 
 /// Returns all `/api/v1/*` routes as `(path, method)` pairs for doc-coverage tests.

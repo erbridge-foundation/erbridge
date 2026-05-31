@@ -237,9 +237,14 @@ pub async fn unblock_character(
     Ok(())
 }
 
-/// All accounts, newest first (pass-through for the admin accounts list).
-pub async fn list_accounts(pool: &PgPool) -> Result<Vec<accounts::Account>, AppError> {
-    accounts::list_accounts_admin(pool)
+/// An account with its characters, as surfaced by the admin accounts list.
+/// Re-exported from the db layer so the DTO maps from a service-owned type.
+pub use crate::db::accounts::AccountWithCharacters as AdminAccountInfo;
+
+/// All accounts (newest first) each with its characters, for the admin accounts
+/// list.
+pub async fn list_accounts(pool: &PgPool) -> Result<Vec<AdminAccountInfo>, AppError> {
+    accounts::list_accounts_with_characters(pool)
         .await
         .map_err(AppError::Internal)
 }
