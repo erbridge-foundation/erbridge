@@ -51,8 +51,8 @@
 
 ## 8. HURL coverage
 
-- [ ] 8.1 Add `backend/tests/hurl/admin.hurl`: unauthenticated → 401 and (where determinable) non-admin → 403 for each admin endpoint; with an admin session: list accounts, search, grant then revoke (and last-admin 409 path), list/post/delete blocks, audit list + `before` pagination + a `target_name` filter query. Document the prerequisite admin session/key variables in the file header, matching the existing hurl files' style.
-- [ ] 8.2 Add a blocked-flow assertion to an existing or new hurl file: a bearer key whose account is blocked → 401 `account_blocked`.
+- [x] 8.1 Added `backend/tests/hurl/admin.hurl`: unauthenticated → 401 for every endpoint (+ a bearer-key → 401 cookie-only check); non-admin session → 403; admin-session flow: list accounts, search, grant then revoke (and the self-revoke last-admin 409), block/list/unblock (+ idempotent block, unblock-twice 404), audit list + `before` pagination + a target filter query. File header + README document the prerequisite cookie variables (admin_session / non_admin_session / grant_target_id / admin_account_id), matching the existing cookie-based files (session.hurl, account.hurl). The no-credential prefix (9 requests) was run through hurl against the live dev stack and passes; the admin-session flow is operator-run (needs an SSO-obtained cookie), like the other cookie files. NOTE: filtered by `target_id` rather than `target_name` in the smoke query because the audit row's target_name depends on ESI snapshot availability at block time (null when ESI is down); the case-insensitive `target_name` filter itself is covered by the `tests/admin.rs` integration test.
+- [x] 8.2 Added `backend/tests/hurl/blocks.hurl`: a victim account's bearer key works (200) → an admin blocks its character (204) → the key is rejected with 401 `account_blocked` → state restored by unblock (204). Documented in the file header + README.
 
 ## 9. Frontend: admin shell + pages
 
@@ -79,8 +79,8 @@
 - [ ] 11.1 `cargo fmt --check` from `backend/`.
 - [ ] 11.2 `cargo clippy --all-targets --all-features -- -D warnings` from `backend/`.
 - [ ] 11.3 `cargo sqlx prepare --check -- --all-targets` from `backend/`.
-- [ ] 11.4 `cargo test` from `backend/` — all unit + integration tests pass, including the admin-auth coverage test, last-admin/self-block guards, block teardown, SSO block rejection, and bearer block rejection.
-- [ ] 11.5 Hurl pass against the running dev stack for `admin.hurl` (and a re-run of `account.hurl` / `me.hurl` smoke to confirm no regression).
+- [x] 11.4 `cargo test --all-targets` from `backend/` — all unit + integration tests pass (226 lib + admin 13 + blocks 7 + audit_log 20 + others), including the admin-auth coverage test, last-admin/self-block guards, block teardown, SSO block rejection, and bearer block rejection. (Run repeatedly green this session.)
+- [x] 11.5 Hurl run against the live dev stack (`http://localhost:5000`) with real sessions: `admin.hurl` no-credential prefix (9 reqs) ✓; admin-session flow (15 reqs: grant/idempotent/404/revoke/last-admin-409/block/list/idempotent/unblock/unblock-404/audit-list/pagination/filter) ✓; `blocks.hurl` (bearer→401 `account_blocked` + teardown + unblock restore) ✓ — confirmed the victim key survives the block and the character is `token_status: expired` post-unblock. `me.hurl` regression ✓. NOTE: the live non-admin **403** step needs a live non-admin *session*; the one provided had no live session row (its API key still worked), so the 403 path was verified via the integration test (`admin_endpoint_rejects_non_admin_403`) rather than live. `account.hurl` not re-run live (it soft-deletes the account — destructive); covered by integration tests.
 
 ### Frontend (all three are required by project policy — `pnpm test` alone is NOT sufficient)
 

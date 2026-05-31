@@ -103,3 +103,44 @@ hurl --test \
      --variable session=$SESSION \
      tests/hurl/session.hurl
 ```
+
+### admin.hurl
+
+Tests the `/api/v1/admin/*` surface. Admin endpoints are **session-cookie only** (they reject `Authorization: Bearer`, so a leaked key cannot confer admin), so this file authenticates with cookies, not `ERB_API_KEY`.
+
+The unauthenticated (no-cookie) assertions — every endpoint → 401, and the bearer-key → 401 — run with no extra variables:
+
+```sh
+# No-credential assertions only (steps 1–2): always runnable.
+hurl --test --variable base_url=$BASE_URL tests/hurl/admin.hurl
+```
+
+The full flow (non-admin 403, list/search, grant→revoke incl. the last-admin 409, block/list/unblock, audit list + `before` pagination + a `target_id` filter) needs an admin and non-admin session JWT (obtained after SSO login, like `SESSION`) plus a disposable grant target:
+
+```sh
+hurl --test \
+     --variable base_url=$BASE_URL \
+     --variable admin_session=$ADMIN_SESSION \
+     --variable non_admin_session=$NON_ADMIN_SESSION \
+     --variable admin_account_id=$ADMIN_ACCOUNT_ID \
+     --variable grant_target_id=$GRANT_TARGET_ID \
+     --secret    erb_api_key=$ERB_API_KEY \
+     tests/hurl/admin.hurl
+```
+
+**Note:** the grant/revoke and block/unblock steps mutate state. Use a disposable `grant_target_id`. The last-admin 409 step assumes `admin_account_id` is the only admin at that point.
+
+### blocks.hurl
+
+Asserts block enforcement on the bearer route: once an admin blocks a character owned by an account, that account's API key is rejected with 401 `account_blocked` (the key row is not deleted). Restores state by unblocking at the end (tokens/sessions are not restored — re-SSO required).
+
+Requires the **victim** account's `ERB_API_KEY`, an **admin** session (a different account), and an `eve_character_id` owned by the victim:
+
+```sh
+hurl --test \
+     --variable base_url=$BASE_URL \
+     --variable admin_session=$ADMIN_SESSION \
+     --variable victim_eve_character_id=$VICTIM_CHAR_ID \
+     --secret    erb_api_key=$VICTIM_API_KEY \
+     tests/hurl/blocks.hurl
+```
