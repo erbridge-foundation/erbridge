@@ -410,6 +410,84 @@ pub async fn get_main_for_account_tx(
     Ok(row.map(|r| (r.eve_character_id, r.name)))
 }
 
+/// The stored EVE-token material for a character, needed to perform an
+/// authenticated ESI call on its behalf. The access/refresh tokens are returned
+/// still-encrypted; the caller decrypts transiently.
+pub struct CharacterTokenMaterial {
+    pub eve_character_id: i64,
+    pub encrypted_access_token: Option<Vec<u8>>,
+    pub encrypted_refresh_token: Option<Vec<u8>>,
+    pub access_token_expires_at: Option<DateTime<Utc>>,
+    pub scopes: Vec<String>,
+}
+
+/// Reads the token material for an account's main character, or `None` if the
+/// account has no main. Used to perform an authenticated ESI call (e.g. the
+/// admin character search) on behalf of the admin's own main.
+pub async fn get_main_token_material(
+    pool: &PgPool,
+    account_id: Uuid,
+) -> Result<Option<CharacterTokenMaterial>> {
+    let row = sqlx::query!(
+        r#"
+        SELECT eve_character_id, encrypted_access_token, encrypted_refresh_token,
+               access_token_expires_at, scopes
+        FROM eve_character
+        WHERE account_id = $1 AND is_main = TRUE
+        LIMIT 1
+        "#,
+        account_id
+    )
+    .fetch_optional(pool)
+    .await
+    .context("failed to fetch main character token material")?;
+
+    Ok(row.map(|r| CharacterTokenMaterial {
+        eve_character_id: r.eve_character_id,
+        encrypted_access_token: r.encrypted_access_token,
+        encrypted_refresh_token: r.encrypted_refresh_token,
+        access_token_expires_at: r.access_token_expires_at,
+        scopes: r.scopes,
+    }))
+}
+
+/// Persists refreshed EVE tokens for a character (by `eve_character_id`),
+/// encrypting them with `encryption_key`. Used after a best-effort access-token
+/// refresh. Returns the number of rows updated (0 if the character vanished).
+pub async fn update_tokens_by_eve_id(
+    pool: &PgPool,
+    eve_character_id: i64,
+    access_token_plaintext: &str,
+    refresh_token_plaintext: &str,
+    access_token_expires_at: DateTime<Utc>,
+    encryption_key: &[u8],
+) -> Result<u64> {
+    let encrypted_access = crypto::encrypt_token(access_token_plaintext, encryption_key)
+        .context("failed to encrypt refreshed access token")?;
+    let encrypted_refresh = crypto::encrypt_token(refresh_token_plaintext, encryption_key)
+        .context("failed to encrypt refreshed refresh token")?;
+
+    let result = sqlx::query!(
+        r#"
+        UPDATE eve_character
+        SET encrypted_access_token = $2,
+            encrypted_refresh_token = $3,
+            access_token_expires_at = $4,
+            updated_at = now()
+        WHERE eve_character_id = $1
+        "#,
+        eve_character_id,
+        encrypted_access.as_slice(),
+        encrypted_refresh.as_slice(),
+        access_token_expires_at,
+    )
+    .execute(pool)
+    .await
+    .context("failed to update refreshed character tokens")?;
+
+    Ok(result.rows_affected())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

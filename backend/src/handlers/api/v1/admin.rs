@@ -11,16 +11,17 @@ use crate::{
     app_state::AppState,
     dto::admin::{
         AdminAccountDto, AuditLogEntryDto, AuditLogPageDto, BlockCharacterRequest,
-        BlockedCharacterDto, CharacterSearchResultDto,
+        BlockedCharacterDto, CharacterSearchResultDto, EsiCharacterSearchPageDto,
+        EsiCharacterSearchResultDto,
     },
     error::{AppError, ErrorEnvelope},
-    esi::public_info,
+    esi::{public_info, search},
     handlers::middleware::AdminAccount,
     response::{
         AdminAccountListResponse, ApiResponse, AuditLogPageResponse, BlockListResponse,
-        CharacterSearchResponse,
+        CharacterSearchResponse, EsiCharacterSearchResponse,
     },
-    services::admin as svc,
+    services::admin::{self as svc, EsiSearchContext, EsiSearchOutcome},
 };
 
 #[utoipa::path(
@@ -75,6 +76,66 @@ pub async fn search_characters(
         .map(CharacterSearchResultDto::from)
         .collect();
     Ok(Json(ApiResponse::data(dtos)))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/admin/characters/esi-search",
+    params(
+        ("q" = String, Query, description = "Case-insensitive name fragment (min 3 chars)"),
+        ("limit" = Option<i64>, Query, description = "Max results (clamped)"),
+    ),
+    responses(
+        (status = 200, description = "Matching ESI characters, or an unavailable indicator", body = EsiCharacterSearchResponse),
+        (status = 400, description = "Fragment shorter than 3 characters", body = ErrorEnvelope),
+        (status = 401, description = "Unauthenticated", body = ErrorEnvelope),
+        (status = 403, description = "Server admin required", body = ErrorEnvelope),
+    ),
+    security(("session_cookie" = [])),
+    tag = "admin",
+)]
+pub async fn esi_search_characters(
+    State(state): State<AppState>,
+    AdminAccount(admin_id): AdminAccount,
+    Query(query): Query<SearchQuery>,
+) -> Result<Json<ApiResponse<EsiCharacterSearchPageDto>>, AppError> {
+    // Enforce ESI's minimum fragment length before any token/ESI work.
+    if query.q.chars().count() < search::MIN_SEARCH_LEN {
+        return Err(AppError::BadRequest(format!(
+            "search term must be at least {} characters",
+            search::MIN_SEARCH_LEN
+        )));
+    }
+
+    let encryption_key =
+        crate::handlers::crypto::token_encryption_key(&state.config.encryption_secret)
+            .map_err(AppError::Internal)?;
+
+    let ctx = EsiSearchContext {
+        http: &state.http_client,
+        esi_base_url: public_info::ESI_BASE,
+        token_endpoint: &state.esi_metadata.token_endpoint,
+        client_id: &state.config.esi_client_id,
+        client_secret: &state.config.esi_client_secret,
+        encryption_key: &encryption_key,
+    };
+
+    let page =
+        match svc::esi_search_characters(&state.db, ctx, admin_id, &query.q, query.limit).await? {
+            EsiSearchOutcome::Available(results) => EsiCharacterSearchPageDto {
+                results: results
+                    .into_iter()
+                    .map(EsiCharacterSearchResultDto::from)
+                    .collect(),
+                unavailable: false,
+            },
+            EsiSearchOutcome::Unavailable => EsiCharacterSearchPageDto {
+                results: Vec::new(),
+                unavailable: true,
+            },
+        };
+
+    Ok(Json(ApiResponse::data(page)))
 }
 
 #[utoipa::path(

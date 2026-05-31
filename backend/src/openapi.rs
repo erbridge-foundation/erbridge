@@ -9,6 +9,7 @@ use crate::{
         admin::{
             AdminAccountCharacterDto, AdminAccountDto, AuditLogEntryDto, AuditLogPageDto,
             BlockCharacterRequest, BlockedCharacterDto, CharacterSearchResultDto,
+            EsiCharacterSearchPageDto, EsiCharacterSearchResultDto,
         },
         health::{ComponentHealth, ComponentStatus, HealthResponse, HealthStatus},
         keys::{CreateKeyRequest, CreatedKeyDto, KeyMetadataDto},
@@ -17,8 +18,8 @@ use crate::{
     error::{ErrorDetail, ErrorEnvelope},
     response::{
         AdminAccountListResponse, AuditLogPageResponse, BlockListResponse, CharacterResponse,
-        CharacterSearchResponse, CreatedKeyResponse, KeyListResponse, MeResponse,
-        PreferencesResponse,
+        CharacterSearchResponse, CreatedKeyResponse, EsiCharacterSearchResponse, KeyListResponse,
+        MeResponse, PreferencesResponse,
     },
 };
 
@@ -40,6 +41,7 @@ use crate::{
         crate::handlers::api::v1::account::delete_account,
         crate::handlers::api::v1::admin::list_accounts,
         crate::handlers::api::v1::admin::search_characters,
+        crate::handlers::api::v1::admin::esi_search_characters,
         crate::handlers::api::v1::admin::grant_admin,
         crate::handlers::api::v1::admin::revoke_admin,
         crate::handlers::api::v1::admin::list_blocks,
@@ -74,6 +76,9 @@ use crate::{
         AdminAccountCharacterDto,
         CharacterSearchResponse,
         CharacterSearchResultDto,
+        EsiCharacterSearchResponse,
+        EsiCharacterSearchPageDto,
+        EsiCharacterSearchResultDto,
         BlockListResponse,
         BlockedCharacterDto,
         BlockCharacterRequest,

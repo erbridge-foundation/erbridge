@@ -36,6 +36,11 @@ HTTP 401
 [Asserts]
 jsonpath "$.error.code" == "unauthenticated"
 
+GET {{base_url}}/api/v1/admin/characters/esi-search?q=wasp
+HTTP 401
+[Asserts]
+jsonpath "$.error.code" == "unauthenticated"
+
 POST {{base_url}}/api/v1/admin/accounts/00000000-0000-0000-0000-000000000000/grant-admin
 HTTP 401
 [Asserts]
@@ -87,6 +92,12 @@ HTTP 403
 [Asserts]
 jsonpath "$.error.code" == "forbidden_admin_required"
 
+GET {{base_url}}/api/v1/admin/characters/esi-search?q=wasp
+Cookie: session={{non_admin_session}}
+HTTP 403
+[Asserts]
+jsonpath "$.error.code" == "forbidden_admin_required"
+
 # ── 4. Admin lists accounts → 200 (each with characters) ─────────────────────
 
 GET {{base_url}}/api/v1/admin/accounts
@@ -106,6 +117,29 @@ Cookie: session={{admin_session}}
 HTTP 200
 [Asserts]
 jsonpath "$.data" isCollection
+jsonpath "$.data[0].portrait_url" exists
+jsonpath "$.data[0].already_blocked" isBoolean
+
+# ── 5b. ESI character search: short fragment → 400 ───────────────────────────
+#
+# The 3-char minimum is enforced before any token/ESI work, so this is
+# hermetic (no live ESI needed). A full-length query exercises the real ESI
+# call and is operator-run: depending on the admin's token scope/ESI health it
+# returns 200 with either matches or `unavailable: true` — both are a 200, so
+# the assertion only checks the envelope shape, not the match contents.
+
+GET {{base_url}}/api/v1/admin/characters/esi-search?q=wa
+Cookie: session={{admin_session}}
+HTTP 400
+[Asserts]
+jsonpath "$.error.code" == "bad_request"
+
+GET {{base_url}}/api/v1/admin/characters/esi-search?q=wasp
+Cookie: session={{admin_session}}
+HTTP 200
+[Asserts]
+jsonpath "$.data.results" isCollection
+jsonpath "$.data.unavailable" isBoolean
 
 # ── 6. Grant admin to the target account → 204 ───────────────────────────────
 

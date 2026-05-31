@@ -37,3 +37,4 @@ reqwest-tracing = "0.5"
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
 jsonschema = "0.17"
+wiremock = "0.6"

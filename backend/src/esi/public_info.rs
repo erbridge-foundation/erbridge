@@ -1,6 +1,6 @@
 // Uses the documented ESI base URL directly rather than the well-known discovery
 // document — public-info endpoints are stable and not listed in the OIDC metadata.
-const ESI_BASE: &str = "https://esi.evetech.net/latest";
+pub(crate) const ESI_BASE: &str = "https://esi.evetech.net/latest";
 
 pub async fn fetch_corporation_name(
     http: &reqwest_middleware::ClientWithMiddleware,

@@ -5,8 +5,8 @@ use uuid::Uuid;
 
 use crate::{
     audit::AuditLogEntry,
-    db::{blocks::BlockedEveCharacter, characters::CharacterSearchResult},
-    services::admin::AdminAccountInfo,
+    db::blocks::BlockedEveCharacter,
+    services::admin::{AdminAccountInfo, AdminCharacterSearchResult, EsiCharacterSearchResult},
 };
 
 // ── accounts list ──────────────────────────────────────────────────────────────
@@ -61,17 +61,53 @@ pub struct CharacterSearchResultDto {
     pub is_main: bool,
     /// `None` for an orphan character (no owning account).
     pub account_id: Option<Uuid>,
+    /// Deterministic ESI portrait image URL.
+    pub portrait_url: String,
+    /// Whether this character is already in the block list.
+    pub already_blocked: bool,
 }
 
-impl From<CharacterSearchResult> for CharacterSearchResultDto {
-    fn from(c: CharacterSearchResult) -> Self {
+impl From<AdminCharacterSearchResult> for CharacterSearchResultDto {
+    fn from(c: AdminCharacterSearchResult) -> Self {
         Self {
             eve_character_id: c.eve_character_id,
             name: c.name,
             is_main: c.is_main,
             account_id: c.account_id,
+            portrait_url: c.portrait_url,
+            already_blocked: c.already_blocked,
         }
     }
+}
+
+/// A character matched via ESI (no local account context).
+#[derive(Serialize, ToSchema)]
+pub struct EsiCharacterSearchResultDto {
+    pub eve_character_id: i64,
+    pub name: String,
+    pub portrait_url: String,
+    pub already_blocked: bool,
+}
+
+impl From<EsiCharacterSearchResult> for EsiCharacterSearchResultDto {
+    fn from(c: EsiCharacterSearchResult) -> Self {
+        Self {
+            eve_character_id: c.eve_character_id,
+            name: c.name,
+            portrait_url: c.portrait_url,
+            already_blocked: c.already_blocked,
+        }
+    }
+}
+
+/// Page wrapper for the ESI character search. `unavailable` is `true` when the
+/// search could not be performed (the admin's token lacks the search scope, is
+/// unrefreshable, or ESI is down); in that case `results` is empty and the UI
+/// shows an "ESI search unavailable" notice rather than "no matches".
+#[derive(Serialize, ToSchema)]
+pub struct EsiCharacterSearchPageDto {
+    pub results: Vec<EsiCharacterSearchResultDto>,
+    pub unavailable: bool,
 }
 
 // ── blocks ─────────────────────────────────────────────────────────────────────

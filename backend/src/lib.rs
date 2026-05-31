@@ -57,6 +57,10 @@ pub fn build_router(state: AppState) -> Router {
             get(handlers::api::v1::admin::search_characters),
         )
         .route(
+            "/characters/esi-search",
+            get(handlers::api::v1::admin::esi_search_characters),
+        )
+        .route(
             "/accounts/{id}/grant-admin",
             post(handlers::api::v1::admin::grant_admin),
         )
@@ -103,6 +107,10 @@ pub fn registered_admin_routes() -> Vec<(String, String)> {
         ("/api/v1/admin/accounts".to_string(), "get".to_string()),
         (
             "/api/v1/admin/characters/search".to_string(),
+            "get".to_string(),
+        ),
+        (
+            "/api/v1/admin/characters/esi-search".to_string(),
             "get".to_string(),
         ),
         (

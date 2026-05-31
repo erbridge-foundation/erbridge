@@ -168,6 +168,101 @@ async fn search_characters_resolves_to_owning_account(pool: PgPool) {
     assert_eq!(results.len(), 1);
     assert_eq!(results[0]["eve_character_id"], 7777);
     assert_eq!(results[0]["account_id"], target.to_string());
+    // Enriched fields (block-search picker reuses this shape).
+    assert_eq!(results[0]["already_blocked"], false);
+    assert!(
+        results[0]["portrait_url"]
+            .as_str()
+            .unwrap()
+            .contains("/characters/7777/portrait")
+    );
+}
+
+// ── ESI character search ───────────────────────────────────────────────────────
+
+#[sqlx::test]
+async fn esi_search_rejects_short_fragment_400(pool: PgPool) {
+    let state = build_state(pool);
+    let (_admin, cookie) = session_for(&state, true).await;
+
+    let resp = backend::build_router(state)
+        .oneshot(req(
+            Method::GET,
+            "/api/v1/admin/characters/esi-search?q=wa",
+            Some(&cookie),
+            None,
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body = json_body(resp).await;
+    assert_eq!(body["error"]["code"], "bad_request");
+}
+
+#[sqlx::test]
+async fn esi_search_degrades_gracefully_when_esi_unreachable(pool: PgPool) {
+    // build_state uses a 1ms-timeout http client, so the admin's token refresh
+    // / ESI search fails fast → the endpoint returns 200 with unavailable=true,
+    // never a 5xx. The admin needs a main character with token material for the
+    // token path to be attempted; session_for(admin) creates the account, so add
+    // a main with an (expired) token to drive the refresh→unreachable path.
+    let state = build_state(pool);
+    let (admin_id, cookie) = session_for(&state, true).await;
+    sqlx::query!(
+        "INSERT INTO eve_character (account_id, eve_character_id, name, corporation_id, corporation_name, is_main, encrypted_refresh_token, access_token_expires_at)
+         VALUES ($1, 4242, 'Admin Main', 1, 'Corp', TRUE, '\\x00'::bytea, now() - interval '1 hour')",
+        admin_id
+    )
+    .execute(&state.db)
+    .await
+    .unwrap();
+
+    let resp = backend::build_router(state)
+        .oneshot(req(
+            Method::GET,
+            "/api/v1/admin/characters/esi-search?q=wasp",
+            Some(&cookie),
+            None,
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = json_body(resp).await;
+    assert_eq!(body["data"]["unavailable"], true);
+    assert!(body["data"]["results"].as_array().unwrap().is_empty());
+}
+
+#[sqlx::test]
+async fn esi_search_unauthenticated_401(pool: PgPool) {
+    let state = build_state(pool);
+    let resp = backend::build_router(state)
+        .oneshot(req(
+            Method::GET,
+            "/api/v1/admin/characters/esi-search?q=wasp",
+            None,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[sqlx::test]
+async fn esi_search_non_admin_403(pool: PgPool) {
+    let state = build_state(pool);
+    let (_id, cookie) = session_for(&state, false).await;
+    let resp = backend::build_router(state)
+        .oneshot(req(
+            Method::GET,
+            "/api/v1/admin/characters/esi-search?q=wasp",
+            Some(&cookie),
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
 
 // ── grant / revoke ─────────────────────────────────────────────────────────────

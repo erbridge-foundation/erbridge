@@ -2,11 +2,58 @@ use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use uuid::Uuid;
 
+use reqwest_middleware::ClientWithMiddleware;
+
 use crate::{
     audit::{self, AuditEvent, AuditLogEntry, ServerAdminGrantSource},
     db::{accounts, blocks, characters, sessions},
     error::{AppError, ConflictKind},
+    esi::{self, search, token},
+    handlers::crypto,
 };
+
+/// A character-search result enriched for the admin UI: the base match plus a
+/// deterministic portrait URL and whether the character is already blocked.
+pub struct AdminCharacterSearchResult {
+    pub eve_character_id: i64,
+    pub name: String,
+    pub is_main: bool,
+    pub account_id: Option<Uuid>,
+    pub portrait_url: String,
+    pub already_blocked: bool,
+}
+
+/// A character matched via ESI (no local account context). Portrait is
+/// deterministic; `already_blocked` is annotated from the block list.
+pub struct EsiCharacterSearchResult {
+    pub eve_character_id: i64,
+    pub name: String,
+    pub portrait_url: String,
+    pub already_blocked: bool,
+}
+
+/// The outcome of an ESI character search. `Unavailable` is a graceful,
+/// non-error state the handler maps to a `200` with an empty list and an
+/// `unavailable` indicator — never a 5xx. It is distinct from
+/// `Available(vec![])` ("the search ran and matched nothing").
+pub enum EsiSearchOutcome {
+    Available(Vec<EsiCharacterSearchResult>),
+    Unavailable,
+}
+
+/// Inputs the ESI search needs from config/state. Bundled so the service stays
+/// free of HTTP framework types while still receiving the client + credentials
+/// for the one authenticated outbound call.
+pub struct EsiSearchContext<'a> {
+    pub http: &'a ClientWithMiddleware,
+    /// ESI base URL for the search + name-resolution calls. Prod passes the real
+    /// ESI base; tests point it at a mock server.
+    pub esi_base_url: &'a str,
+    pub token_endpoint: &'a str,
+    pub client_id: &'a str,
+    pub client_secret: &'a str,
+    pub encryption_key: &'a [u8],
+}
 
 /// Default and maximum page size for the admin audit browser. A caller-supplied
 /// limit is clamped to `[1, MAX]`; `None` falls back to `DEFAULT`.
@@ -254,17 +301,176 @@ pub async fn list_blocks(pool: &PgPool) -> Result<Vec<blocks::BlockedEveCharacte
     blocks::list_blocks(pool).await.map_err(AppError::Internal)
 }
 
-/// Character name search for the grant UI. `limit` is clamped to the audit
-/// page-size bounds for a sane cap.
+/// Local character name search for the grant + block UIs. `limit` is clamped to
+/// the audit page-size bounds for a sane cap. Each result is enriched with a
+/// deterministic portrait URL and an `already_blocked` flag (so the block picker
+/// can mark pilots already on the list and the grant picker renders portraits).
 pub async fn search_characters(
     pool: &PgPool,
     q: &str,
     limit: Option<i64>,
-) -> Result<Vec<characters::CharacterSearchResult>, AppError> {
+) -> Result<Vec<AdminCharacterSearchResult>, AppError> {
     let limit = clamp_limit(limit);
-    characters::search_by_name(pool, q, limit)
+    let matches = characters::search_by_name(pool, q, limit)
         .await
-        .map_err(AppError::Internal)
+        .map_err(AppError::Internal)?;
+
+    let mut out = Vec::with_capacity(matches.len());
+    for m in matches {
+        let already_blocked = blocks::is_eve_character_blocked(pool, m.eve_character_id)
+            .await
+            .map_err(AppError::Internal)?;
+        out.push(AdminCharacterSearchResult {
+            portrait_url: esi::portrait_url(m.eve_character_id),
+            eve_character_id: m.eve_character_id,
+            name: m.name,
+            is_main: m.is_main,
+            account_id: m.account_id,
+            already_blocked,
+        });
+    }
+    Ok(out)
+}
+
+/// ESI-backed character name search, performed on behalf of `admin_account_id`'s
+/// own main character. Used as the block UI's fallback when a never-seen pilot
+/// is not in the local index. Resolves a usable access token (decrypt + a
+/// best-effort refresh on expiry), searches ESI (`strict=false` substring),
+/// resolves the returned IDs to names, and annotates each with a portrait URL +
+/// `already_blocked`. Any token/scope/ESI failure resolves to
+/// [`EsiSearchOutcome::Unavailable`] — never an error that becomes a 5xx.
+///
+/// The caller MUST guarantee `q.len() >= search::MIN_SEARCH_LEN`.
+pub async fn esi_search_characters(
+    pool: &PgPool,
+    ctx: EsiSearchContext<'_>,
+    admin_account_id: Uuid,
+    q: &str,
+    limit: Option<i64>,
+) -> Result<EsiSearchOutcome, AppError> {
+    let limit = clamp_limit(limit) as usize;
+
+    // Resolve a usable access token for the admin's main character. Any reason
+    // we can't get one → graceful Unavailable.
+    let token = match get_usable_main_access_token(pool, &ctx, admin_account_id).await? {
+        Some(t) => t,
+        None => return Ok(EsiSearchOutcome::Unavailable),
+    };
+
+    let ids = match search::character_search(
+        ctx.http,
+        ctx.esi_base_url,
+        token.eve_character_id,
+        &token.access_token,
+        q,
+    )
+    .await
+    {
+        Ok(ids) => ids,
+        // Both rejected (missing scope / bad token) and unavailable (network)
+        // degrade to the same graceful outcome for the UI.
+        Err(_) => return Ok(EsiSearchOutcome::Unavailable),
+    };
+
+    let resolved = search::resolve_character_names(ctx.http, ctx.esi_base_url, &ids, limit).await;
+
+    let mut out = Vec::with_capacity(resolved.len());
+    for (eve_character_id, name) in resolved {
+        let already_blocked = blocks::is_eve_character_blocked(pool, eve_character_id)
+            .await
+            .map_err(AppError::Internal)?;
+        out.push(EsiCharacterSearchResult {
+            portrait_url: esi::portrait_url(eve_character_id),
+            eve_character_id,
+            name,
+            already_blocked,
+        });
+    }
+
+    Ok(EsiSearchOutcome::Available(out))
+}
+
+/// A usable, decrypted access token for a character.
+struct UsableToken {
+    eve_character_id: i64,
+    access_token: String,
+}
+
+/// Obtains a usable access token for `account_id`'s main character: decrypts the
+/// stored access token, and if it is expired attempts a best-effort refresh
+/// (persisting the rotated tokens). Returns `None` — never an error — when no
+/// usable token can be obtained (no main, no stored tokens, refresh failed). The
+/// decrypted token is held only transiently and never returned to a client.
+async fn get_usable_main_access_token(
+    pool: &PgPool,
+    ctx: &EsiSearchContext<'_>,
+    account_id: Uuid,
+) -> Result<Option<UsableToken>, AppError> {
+    let material = match characters::get_main_token_material(pool, account_id)
+        .await
+        .map_err(AppError::Internal)?
+    {
+        Some(m) => m,
+        None => return Ok(None),
+    };
+
+    let expired = material
+        .access_token_expires_at
+        .map(|exp| exp <= Utc::now())
+        .unwrap_or(true);
+
+    if !expired {
+        // Decrypt the stored access token for transient use. Falls through to
+        // refresh if decrypt fails or no access token is stored.
+        if let Some(enc) = &material.encrypted_access_token
+            && let Ok(access_token) = crypto::decrypt_token(enc, ctx.encryption_key)
+        {
+            return Ok(Some(UsableToken {
+                eve_character_id: material.eve_character_id,
+                access_token,
+            }));
+        }
+    }
+
+    // Expired (or undecryptable): best-effort refresh using the stored refresh
+    // token. No refresh token, or a rejected refresh → no usable token.
+    let refresh_plaintext = match &material.encrypted_refresh_token {
+        Some(enc) => match crypto::decrypt_token(enc, ctx.encryption_key) {
+            Ok(t) => t,
+            Err(_) => return Ok(None),
+        },
+        None => return Ok(None),
+    };
+
+    let refreshed = match token::refresh_access_token(
+        ctx.http,
+        ctx.token_endpoint,
+        ctx.client_id,
+        ctx.client_secret,
+        &refresh_plaintext,
+    )
+    .await
+    {
+        Some(r) => r,
+        None => return Ok(None),
+    };
+
+    // Persist the rotated tokens (best-effort; a failed write still lets the
+    // current search proceed with the fresh access token).
+    let _ = characters::update_tokens_by_eve_id(
+        pool,
+        material.eve_character_id,
+        &refreshed.access_token,
+        &refreshed.refresh_token,
+        refreshed.access_token_expires_at,
+        ctx.encryption_key,
+    )
+    .await;
+
+    Ok(Some(UsableToken {
+        eve_character_id: material.eve_character_id,
+        access_token: refreshed.access_token,
+    }))
 }
 
 /// Audit-log pass-through forwarding every filter axis — including the
@@ -575,5 +781,289 @@ mod tests {
         let err = unblock_character(&pool, admin, 12345).await.unwrap_err();
         assert!(matches!(err, AppError::NotFound));
         assert_eq!(audit_count(&pool, "eve_character_unblocked").await, 0);
+    }
+
+    // ── character search enrichment + ESI search ────────────────────────────────
+
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn http() -> ClientWithMiddleware {
+        reqwest::Client::new().into()
+    }
+
+    /// An ESI context pointing search/resolve at `esi_base` and token refresh at
+    /// `token_endpoint`. Uses the all-zero test key matching `account_with_main`.
+    fn ctx<'a>(
+        http: &'a ClientWithMiddleware,
+        esi_base: &'a str,
+        token_endpoint: &'a str,
+    ) -> EsiSearchContext<'a> {
+        EsiSearchContext {
+            http,
+            esi_base_url: esi_base,
+            token_endpoint,
+            client_id: "client",
+            client_secret: "secret",
+            encryption_key: KEY,
+        }
+    }
+
+    const KEY: &[u8] = &[0u8; 32];
+
+    /// Seeds an account whose main character has an *expired* access token, so
+    /// the search path must refresh. Returns the account id.
+    async fn account_with_expired_main(pool: &PgPool, eve_id: i64) -> Uuid {
+        let account_id = accounts::create_account(pool).await.unwrap();
+        let mut tx = pool.begin().await.unwrap();
+        let char_id = char_db::upsert_tokens(
+            &mut tx,
+            account_id,
+            eve_id,
+            "Expired",
+            1,
+            "Corp",
+            None,
+            None,
+            "client",
+            "access",
+            "refresh",
+            Utc::now() - chrono::Duration::hours(1),
+            &[],
+            KEY,
+        )
+        .await
+        .unwrap();
+        char_db::promote_if_no_main(&mut tx, account_id, char_id)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        account_id
+    }
+
+    #[sqlx::test]
+    async fn search_characters_enriches_with_portrait_and_blocked_flag(pool: PgPool) {
+        // Two searchable characters; block one of them via a different admin.
+        account_with_main(&pool, 100, "Findme", false).await;
+        account_with_main(&pool, 200, "Findme Two", false).await;
+        let blocker = account_with_main(&pool, 300, "Blocker", true).await;
+        block_character(&pool, blocker, 200, None, None, None)
+            .await
+            .unwrap();
+
+        let results = search_characters(&pool, "Findme", None).await.unwrap();
+        let two = results
+            .iter()
+            .find(|r| r.eve_character_id == 200)
+            .expect("Findme Two present");
+        assert!(two.already_blocked);
+        assert!(two.portrait_url.contains("/characters/200/portrait"));
+
+        let one = results
+            .iter()
+            .find(|r| r.eve_character_id == 100)
+            .expect("Findme present");
+        assert!(!one.already_blocked);
+    }
+
+    #[sqlx::test]
+    async fn esi_search_unavailable_when_admin_has_no_main(pool: PgPool) {
+        // Account with no characters → no main token material → Unavailable.
+        let admin = accounts::create_account(&pool).await.unwrap();
+        let client = http();
+        let outcome = esi_search_characters(
+            &pool,
+            ctx(&client, "http://unused", "http://unused"),
+            admin,
+            "wasp",
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(matches!(outcome, EsiSearchOutcome::Unavailable));
+    }
+
+    #[sqlx::test]
+    async fn esi_search_available_resolves_and_annotates(pool: PgPool) {
+        let admin = account_with_main(&pool, 1, "Admin", true).await;
+        // Pre-block id 555 so the annotation is observable.
+        block_character(&pool, admin, 555, None, None, None)
+            .await
+            .unwrap();
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/characters/1/search/"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "character": [555, 777]
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/characters/555/"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({ "name": "Blocked Pilot" })),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/characters/777/"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({ "name": "Free Pilot" })),
+            )
+            .mount(&server)
+            .await;
+
+        let client = http();
+        let outcome = esi_search_characters(
+            &pool,
+            ctx(&client, &server.uri(), "http://unused"),
+            admin,
+            "pilot",
+            None,
+        )
+        .await
+        .unwrap();
+        let results = match outcome {
+            EsiSearchOutcome::Available(r) => r,
+            EsiSearchOutcome::Unavailable => panic!("expected Available"),
+        };
+        assert_eq!(results.len(), 2);
+        let blocked = results.iter().find(|r| r.eve_character_id == 555).unwrap();
+        assert_eq!(blocked.name, "Blocked Pilot");
+        assert!(blocked.already_blocked);
+        assert!(blocked.portrait_url.contains("/characters/555/portrait"));
+        let free = results.iter().find(|r| r.eve_character_id == 777).unwrap();
+        assert!(!free.already_blocked);
+    }
+
+    #[sqlx::test]
+    async fn esi_search_empty_is_available_not_unavailable(pool: PgPool) {
+        let admin = account_with_main(&pool, 1, "Admin", true).await;
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/characters/1/search/"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .mount(&server)
+            .await;
+
+        let client = http();
+        let outcome = esi_search_characters(
+            &pool,
+            ctx(&client, &server.uri(), "http://unused"),
+            admin,
+            "zzz",
+            None,
+        )
+        .await
+        .unwrap();
+        match outcome {
+            EsiSearchOutcome::Available(r) => assert!(r.is_empty()),
+            EsiSearchOutcome::Unavailable => {
+                panic!("empty result must be Available, not Unavailable")
+            }
+        }
+    }
+
+    #[sqlx::test]
+    async fn esi_search_unavailable_when_esi_rejects(pool: PgPool) {
+        let admin = account_with_main(&pool, 1, "Admin", true).await;
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/characters/1/search/"))
+            .respond_with(ResponseTemplate::new(403)) // missing scope
+            .mount(&server)
+            .await;
+
+        let client = http();
+        let outcome = esi_search_characters(
+            &pool,
+            ctx(&client, &server.uri(), "http://unused"),
+            admin,
+            "wasp",
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(matches!(outcome, EsiSearchOutcome::Unavailable));
+    }
+
+    #[sqlx::test]
+    async fn esi_search_refreshes_expired_token_then_searches(pool: PgPool) {
+        let admin = account_with_expired_main(&pool, 42).await;
+
+        let server = MockServer::start().await;
+        // Token endpoint returns a fresh token set.
+        Mock::given(method("POST"))
+            .and(path("/oauth/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "access_token": "fresh-access",
+                "refresh_token": "fresh-refresh",
+                "expires_in": 1200
+            })))
+            .mount(&server)
+            .await;
+        // ESI search succeeds (any bearer accepted by the mock).
+        Mock::given(method("GET"))
+            .and(path("/characters/42/search/"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({ "character": [42] })),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/characters/42/"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({ "name": "Self" })),
+            )
+            .mount(&server)
+            .await;
+
+        let token_endpoint = format!("{}/oauth/token", server.uri());
+        let client = http();
+        let outcome = esi_search_characters(
+            &pool,
+            ctx(&client, &server.uri(), &token_endpoint),
+            admin,
+            "sel",
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(matches!(outcome, EsiSearchOutcome::Available(_)));
+
+        // The rotated tokens were persisted: expiry moved into the future.
+        let material = char_db::get_main_token_material(&pool, admin)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(material.access_token_expires_at.unwrap() > Utc::now());
+    }
+
+    #[sqlx::test]
+    async fn esi_search_unavailable_when_expired_and_refresh_rejected(pool: PgPool) {
+        let admin = account_with_expired_main(&pool, 42).await;
+        let server = MockServer::start().await;
+        // Refresh is rejected (e.g. revoked refresh token).
+        Mock::given(method("POST"))
+            .and(path("/oauth/token"))
+            .respond_with(ResponseTemplate::new(400))
+            .mount(&server)
+            .await;
+
+        let token_endpoint = format!("{}/oauth/token", server.uri());
+        let client = http();
+        let outcome = esi_search_characters(
+            &pool,
+            ctx(&client, &server.uri(), &token_endpoint),
+            admin,
+            "sel",
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(matches!(outcome, EsiSearchOutcome::Unavailable));
     }
 }
