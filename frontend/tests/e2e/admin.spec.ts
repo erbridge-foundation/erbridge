@@ -88,20 +88,66 @@ test.describe('/admin (admin session)', () => {
 		await expect(page.locator('tbody').getByText('Promote Me')).toHaveCount(0);
 	});
 
-	test('block → unblock flow', async ({ page }) => {
+	test('block via local search → unblock flow', async ({ page }) => {
 		await page.goto('/admin/blocks');
 		await expect(page.getByText('No blocked characters.')).toBeVisible();
 
-		await page.getByLabel('EVE character ID').fill('90000123');
-		await page.getByRole('button', { name: 'block character' }).click();
+		// No raw character-ID field exists any more.
+		await expect(page.getByLabel('EVE character ID')).toHaveCount(0);
 
-		const blockedRow = page.locator('tr', { hasText: 'Char 90000123' });
+		// Search the local index by name and pick a result. "Promote Me" (id 2001)
+		// belongs to a non-admin account in the mock, so it is not a self-block.
+		await page.getByPlaceholder('search characters by name…').fill('Promote');
+		await page.getByRole('button', { name: 'search' }).click();
+		const result = page.locator('li', { hasText: 'Promote Me' });
+		await expect(result).toBeVisible();
+		await result.getByRole('button', { name: 'block' }).click();
+
+		// Confirmation enriched with corp (from the mocked public-ESI lookup).
+		const dialog = page.getByRole('alertdialog', { name: /Block Promote Me/ });
+		await expect(dialog).toBeVisible();
+		await dialog.getByRole('button', { name: 'block character' }).click();
+
+		// The blocked character appears in the list (mock names it "Char <id>").
+		const blockedRow = page.locator('tr', { hasText: 'Char 2001' });
 		await expect(blockedRow).toBeVisible();
 
 		await blockedRow.getByRole('button', { name: 'unblock' }).click();
-		await expect(page.getByRole('alertdialog')).toBeVisible();
-		await page.getByRole('button', { name: 'unblock character' }).click();
+		const unblockDialog = page.getByRole('alertdialog', { name: /Unblock/ });
+		await expect(unblockDialog).toBeVisible();
+		await unblockDialog.getByRole('button', { name: 'unblock character' }).click();
 
+		await expect(page.getByText('No blocked characters.')).toBeVisible();
+	});
+
+	test('block a never-seen pilot via ESI fallback', async ({ page }) => {
+		await page.goto('/admin/blocks');
+
+		// Local search for a name the index does not know → empty + ESI opt-in.
+		await page.getByPlaceholder('search characters by name…').fill('Esi Only');
+		await page.getByRole('button', { name: 'search' }).click();
+		await expect(page.getByText('No local characters match.')).toBeVisible();
+
+		await page.getByRole('button', { name: 'Not found? Search ESI' }).click();
+		const esiResult = page.locator('li', { hasText: 'Esi Only Pilot' });
+		await expect(esiResult).toBeVisible();
+		await esiResult.getByRole('button', { name: 'block' }).click();
+
+		const dialog = page.getByRole('alertdialog', { name: /Block Esi Only Pilot/ });
+		await expect(dialog).toBeVisible();
+		await dialog.getByRole('button', { name: 'block character' }).click();
+
+		await expect(page.locator('tr', { hasText: 'Char 90000123' })).toBeVisible();
+
+		// Clean up so the suite's shared mock state is reset for other tests.
+		await page
+			.locator('tr', { hasText: 'Char 90000123' })
+			.getByRole('button', { name: 'unblock' })
+			.click();
+		await page
+			.getByRole('alertdialog', { name: /Unblock/ })
+			.getByRole('button', { name: 'unblock character' })
+			.click();
 		await expect(page.getByText('No blocked characters.')).toBeVisible();
 	});
 });

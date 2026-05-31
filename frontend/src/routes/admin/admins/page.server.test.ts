@@ -63,7 +63,14 @@ describe('admin/admins load', () => {
 describe('admin/admins search action', () => {
 	it('returns matching characters with their owning account', async () => {
 		vi.mocked(searchCharacters).mockResolvedValue([
-			{ eve_character_id: 1, name: 'Pilot One', is_main: true, account_id: 'acc-1' }
+			{
+				eve_character_id: 1,
+				name: 'Pilot One',
+				is_main: true,
+				account_id: 'acc-1',
+				portrait_url: 'https://images.evetech.net/characters/1/portrait?size=128',
+				already_blocked: false
+			}
 		]);
 		const result = await actions.search(makeActionEvent({ q: 'pil' }));
 		expect(result).toMatchObject({

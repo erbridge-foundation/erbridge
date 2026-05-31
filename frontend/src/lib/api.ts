@@ -80,6 +80,20 @@ export interface CharacterSearchResultDto {
 	name: string;
 	is_main: boolean;
 	account_id: string | null;
+	portrait_url: string;
+	already_blocked: boolean;
+}
+
+export interface EsiCharacterSearchResultDto {
+	eve_character_id: number;
+	name: string;
+	portrait_url: string;
+	already_blocked: boolean;
+}
+
+export interface EsiCharacterSearchPageDto {
+	results: EsiCharacterSearchResultDto[];
+	unavailable: boolean;
 }
 
 export interface BlockedCharacterDto {
@@ -298,6 +312,16 @@ export function searchCharacters(
 ): Promise<CharacterSearchResultDto[]> {
 	const url = `${backendUrl}/api/v1/admin/characters/search?q=${encodeURIComponent(q)}`;
 	return request<CharacterSearchResultDto[]>(fetch, url, { headers: { cookie } });
+}
+
+export function searchCharactersEsi(
+	fetch: typeof globalThis.fetch,
+	backendUrl: string,
+	q: string,
+	cookie: string
+): Promise<EsiCharacterSearchPageDto> {
+	const url = `${backendUrl}/api/v1/admin/characters/esi-search?q=${encodeURIComponent(q)}`;
+	return request<EsiCharacterSearchPageDto>(fetch, url, { headers: { cookie } });
 }
 
 export function grantAdmin(

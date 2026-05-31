@@ -187,6 +187,22 @@ const server = http.createServer(async (req, res) => {
 			return;
 		}
 
+		if (method === 'GET' && url.startsWith('/api/v1/admin/characters/esi-search')) {
+			const q = (new URL(url, 'http://x').searchParams.get('q') ?? '').toLowerCase();
+			// A pilot the local index does not know, found only via ESI.
+			const esiPool = [{ eve_character_id: 90000123, name: 'Esi Only Pilot' }];
+			const results = esiPool
+				.filter((c) => c.name.toLowerCase().includes(q))
+				.map((c) => ({
+					eve_character_id: c.eve_character_id,
+					name: c.name,
+					portrait_url: `https://images.evetech.net/characters/${c.eve_character_id}/portrait?size=128`,
+					already_blocked: blocks.some((b) => b.eve_character_id === c.eve_character_id)
+				}));
+			json(res, 200, { data: { results, unavailable: false } });
+			return;
+		}
+
 		if (method === 'GET' && url.startsWith('/api/v1/admin/characters/search')) {
 			const q = (new URL(url, 'http://x').searchParams.get('q') ?? '').toLowerCase();
 			const results = adminAccounts
@@ -195,7 +211,9 @@ const server = http.createServer(async (req, res) => {
 						eve_character_id: c.eve_character_id,
 						name: c.name,
 						is_main: c.is_main,
-						account_id: a.id
+						account_id: a.id,
+						portrait_url: `https://images.evetech.net/characters/${c.eve_character_id}/portrait?size=128`,
+						already_blocked: blocks.some((b) => b.eve_character_id === c.eve_character_id)
 					}))
 				)
 				.filter((c) => c.name.toLowerCase().includes(q));
@@ -273,6 +291,19 @@ const server = http.createServer(async (req, res) => {
 		}
 
 		notFound(res);
+		return;
+	}
+
+	// Public ESI proxy stand-ins for the /admin/blocks corp lookup (ESI_PUBLIC_BASE
+	// points here in e2e). Public info, no auth.
+	const esiCharMatch = url.match(/^\/esi\/characters\/(\d+)\/$/);
+	if (method === 'GET' && esiCharMatch) {
+		json(res, 200, { corporation_id: 500, name: `Char ${esiCharMatch[1]}` });
+		return;
+	}
+	const esiCorpMatch = url.match(/^\/esi\/corporations\/(\d+)\/$/);
+	if (method === 'GET' && esiCorpMatch) {
+		json(res, 200, { name: 'Mock Corp' });
 		return;
 	}
 

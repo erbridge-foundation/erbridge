@@ -6,7 +6,9 @@ vi.mock('$lib/api', async (importOriginal) => {
 		...actual,
 		listBlocks: vi.fn(),
 		blockCharacter: vi.fn(),
-		unblockCharacter: vi.fn()
+		unblockCharacter: vi.fn(),
+		searchCharacters: vi.fn(),
+		searchCharactersEsi: vi.fn()
 	};
 });
 
@@ -14,7 +16,8 @@ vi.mock('$lib/server/env', () => ({
 	backend_internal_url: () => 'http://backend:3000'
 }));
 
-const { listBlocks, blockCharacter, unblockCharacter, ApiError } = await import('$lib/api');
+const { listBlocks, blockCharacter, unblockCharacter, searchCharacters, searchCharactersEsi, ApiError } =
+	await import('$lib/api');
 const { load, actions } = await import('./+page.server');
 
 type LoadEvent = Parameters<typeof load>[0];
@@ -43,6 +46,8 @@ beforeEach(() => {
 	vi.mocked(listBlocks).mockReset();
 	vi.mocked(blockCharacter).mockReset();
 	vi.mocked(unblockCharacter).mockReset();
+	vi.mocked(searchCharacters).mockReset();
+	vi.mocked(searchCharactersEsi).mockReset();
 });
 
 describe('admin/blocks load', () => {
@@ -124,5 +129,104 @@ describe('admin/blocks unblock action', () => {
 			status: 404,
 			data: { action: 'unblock', code: 'not_found', eveCharacterId: 42 }
 		});
+	});
+});
+
+describe('admin/blocks search action (local DB)', () => {
+	it('returns local results for a ≥3-char query', async () => {
+		vi.mocked(searchCharacters).mockResolvedValue([
+			{
+				eve_character_id: 7,
+				name: 'Wasp 223',
+				is_main: true,
+				account_id: 'acc-1',
+				portrait_url: 'https://images.evetech.net/characters/7/portrait?size=128',
+				already_blocked: false
+			}
+		]);
+		const result = await actions.search(makeActionEvent({ q: 'wasp' }));
+		expect(result).toMatchObject({ action: 'search', query: 'wasp' });
+		expect((result as { results: unknown[] }).results).toHaveLength(1);
+	});
+
+	it('rejects a query shorter than 3 chars with too_short', async () => {
+		const result = await actions.search(makeActionEvent({ q: 'wa' }));
+		expect(result).toMatchObject({ status: 400, data: { action: 'search', code: 'too_short' } });
+		expect(searchCharacters).not.toHaveBeenCalled();
+	});
+});
+
+describe('admin/blocks esiSearch action (fallback)', () => {
+	it('passes through results and the unavailable indicator', async () => {
+		vi.mocked(searchCharactersEsi).mockResolvedValue({
+			results: [
+				{
+					eve_character_id: 99,
+					name: 'Never Seen',
+					portrait_url: 'https://images.evetech.net/characters/99/portrait?size=128',
+					already_blocked: false
+				}
+			],
+			unavailable: false
+		});
+		const result = await actions.esiSearch(makeActionEvent({ q: 'never' }));
+		expect(result).toMatchObject({ action: 'esiSearch', query: 'never', unavailable: false });
+		expect((result as { results: unknown[] }).results).toHaveLength(1);
+	});
+
+	it('surfaces unavailable=true gracefully (empty results)', async () => {
+		vi.mocked(searchCharactersEsi).mockResolvedValue({ results: [], unavailable: true });
+		const result = await actions.esiSearch(makeActionEvent({ q: 'never' }));
+		expect(result).toMatchObject({ action: 'esiSearch', unavailable: true });
+		expect((result as { results: unknown[] }).results).toHaveLength(0);
+	});
+
+	it('rejects a query shorter than 3 chars', async () => {
+		const result = await actions.esiSearch(makeActionEvent({ q: 'ne' }));
+		expect(result).toMatchObject({ status: 400, data: { action: 'esiSearch', code: 'too_short' } });
+		expect(searchCharactersEsi).not.toHaveBeenCalled();
+	});
+});
+
+describe('admin/blocks corpLookup action', () => {
+	it('resolves the corp name from public ESI (best-effort)', async () => {
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify({ corporation_id: 500 }), { status: 200 })
+			)
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify({ name: 'Test Corp' }), { status: 200 })
+			);
+		const event = {
+			request: new Request('http://localhost', {
+				method: 'POST',
+				headers: { 'content-type': 'application/x-www-form-urlencoded' },
+				body: new URLSearchParams({ eve_character_id: '7' }).toString()
+			}),
+			fetch: fetchMock
+		} as unknown as ActionEvent;
+
+		const result = await actions.corpLookup(event);
+		expect(result).toMatchObject({
+			action: 'corpLookup',
+			eve_character_id: 7,
+			corporation_name: 'Test Corp'
+		});
+	});
+
+	it('returns null corp when ESI is unreachable (best-effort)', async () => {
+		const fetchMock = vi.fn().mockRejectedValue(new Error('network'));
+		const event = {
+			request: new Request('http://localhost', {
+				method: 'POST',
+				headers: { 'content-type': 'application/x-www-form-urlencoded' },
+				body: new URLSearchParams({ eve_character_id: '7' }).toString()
+			}),
+			fetch: fetchMock
+		} as unknown as ActionEvent;
+
+		const result = await actions.corpLookup(event);
+		expect(result).toMatchObject({ action: 'corpLookup', corporation_name: null });
 	});
 });
