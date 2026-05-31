@@ -1,7 +1,11 @@
 <script lang="ts">
 	import UserMenu from './UserMenu.svelte';
 
-	let { portraitUrl, name }: { portraitUrl: string; name: string } = $props();
+	let {
+		portraitUrl,
+		name,
+		isAdmin = false
+	}: { portraitUrl: string; name: string; isAdmin?: boolean } = $props();
 
 	let open = $state(false);
 	let chipAnchor: HTMLDivElement;
@@ -67,7 +71,7 @@
 	</button>
 
 	{#if open}
-		<UserMenu onclose={close} />
+		<UserMenu onclose={close} {isAdmin} />
 	{/if}
 </div>
 

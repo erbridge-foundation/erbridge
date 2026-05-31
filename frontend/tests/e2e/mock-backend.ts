@@ -15,6 +15,11 @@
  *   unauthenticated state) and the authenticated suites share the same mock
  *   without interfering.
  *
+ *   The admin suites set the session value to "admin-session": the mock then
+ *   returns is_server_admin: true from /api/v1/me and serves the /api/v1/admin/*
+ *   endpoints. Any other non-empty value is a non-admin session, for which the
+ *   admin endpoints (and the /admin route group, server-side) 404.
+ *
  * Seeded data (returned when authenticated):
  *   - Account: id "acc1", active
  *   - Characters:
@@ -24,6 +29,22 @@
  */
 
 import http from 'node:http';
+
+const ADMIN_COOKIE_VALUE = 'admin-session';
+
+function meResponse(isAdmin: boolean) {
+	return {
+		data: {
+			account: {
+				id: 'acc1',
+				status: 'active',
+				is_server_admin: isAdmin,
+				created_at: '2025-01-01T00:00:00Z'
+			},
+			characters: ME_RESPONSE.data.characters
+		}
+	};
+}
 
 const ME_RESPONSE = {
 	data: {
@@ -81,15 +102,66 @@ function unauthorised(res: http.ServerResponse) {
 	json(res, 401, { error: { code: 'unauthorised', message: 'No session' } });
 }
 
-function hasValidSession(req: http.IncomingMessage): boolean {
+function sessionValue(req: http.IncomingMessage): string | null {
 	const cookieHeader = req.headers['cookie'] ?? '';
 	const match = cookieHeader.split(/;\s*/).find((c) => c.startsWith('session='));
-	if (!match) return false;
+	if (!match) return null;
 	const value = match.slice('session='.length);
-	return value.length > 0;
+	return value.length > 0 ? value : null;
 }
 
-const server = http.createServer((req, res) => {
+function hasValidSession(req: http.IncomingMessage): boolean {
+	return sessionValue(req) !== null;
+}
+
+function isAdminSession(req: http.IncomingMessage): boolean {
+	return sessionValue(req) === ADMIN_COOKIE_VALUE;
+}
+
+function readBody(req: http.IncomingMessage): Promise<string> {
+	return new Promise((resolve) => {
+		let data = '';
+		req.on('data', (chunk) => (data += chunk));
+		req.on('end', () => resolve(data));
+	});
+}
+
+// Mutable admin state so grant→revoke and block→unblock e2e flows observe the
+// change on reload. "acc1" is the seeded admin viewing the page; "acc2" (owner
+// of "Promote Me") starts as a non-admin so it can be promoted then revoked.
+type AdminAccount = {
+	id: string;
+	status: string;
+	is_server_admin: boolean;
+	created_at: string;
+	characters: { eve_character_id: number; name: string; is_main: boolean }[];
+};
+const adminAccounts: AdminAccount[] = [
+	{
+		id: 'acc1',
+		status: 'active',
+		is_server_admin: true,
+		created_at: '2025-01-01T00:00:00Z',
+		characters: [{ eve_character_id: 1001, name: 'Main Pilot', is_main: true }]
+	},
+	{
+		id: 'acc2',
+		status: 'active',
+		is_server_admin: false,
+		created_at: '2025-02-01T00:00:00Z',
+		characters: [{ eve_character_id: 2001, name: 'Promote Me', is_main: true }]
+	}
+];
+let blocks: {
+	eve_character_id: number;
+	character_name: string | null;
+	corporation_name: string | null;
+	reason: string | null;
+	blocked_by: string | null;
+	blocked_at: string;
+}[] = [];
+
+const server = http.createServer(async (req, res) => {
 	const url = req.url ?? '/';
 	const method = req.method ?? 'GET';
 
@@ -98,7 +170,109 @@ const server = http.createServer((req, res) => {
 			unauthorised(res);
 			return;
 		}
-		json(res, 200, ME_RESPONSE);
+		json(res, 200, meResponse(isAdminSession(req)));
+		return;
+	}
+
+	// ── /api/v1/admin/* — only an admin session is served; otherwise 404
+	//    (mirroring the backend's AdminAccount extractor / non-disclosure). ──
+	if (url.startsWith('/api/v1/admin/')) {
+		if (!isAdminSession(req)) {
+			notFound(res);
+			return;
+		}
+
+		if (method === 'GET' && url === '/api/v1/admin/accounts') {
+			json(res, 200, { data: adminAccounts });
+			return;
+		}
+
+		if (method === 'GET' && url.startsWith('/api/v1/admin/characters/search')) {
+			const q = (new URL(url, 'http://x').searchParams.get('q') ?? '').toLowerCase();
+			const results = adminAccounts
+				.flatMap((a) =>
+					a.characters.map((c) => ({
+						eve_character_id: c.eve_character_id,
+						name: c.name,
+						is_main: c.is_main,
+						account_id: a.id
+					}))
+				)
+				.filter((c) => c.name.toLowerCase().includes(q));
+			json(res, 200, { data: results });
+			return;
+		}
+
+		const grantMatch = url.match(/^\/api\/v1\/admin\/accounts\/([^/]+)\/grant-admin$/);
+		if (method === 'POST' && grantMatch) {
+			const acc = adminAccounts.find((a) => a.id === grantMatch[1]);
+			if (!acc) {
+				json(res, 404, { error: { code: 'not_found', message: 'Account not found' } });
+				return;
+			}
+			acc.is_server_admin = true;
+			noContent(res);
+			return;
+		}
+
+		const revokeMatch = url.match(/^\/api\/v1\/admin\/accounts\/([^/]+)\/revoke-admin$/);
+		if (method === 'POST' && revokeMatch) {
+			const acc = adminAccounts.find((a) => a.id === revokeMatch[1]);
+			if (!acc) {
+				json(res, 404, { error: { code: 'not_found', message: 'Account not found' } });
+				return;
+			}
+			if (adminAccounts.filter((a) => a.is_server_admin).length <= 1 && acc.is_server_admin) {
+				json(res, 409, {
+					error: { code: 'cannot_remove_last_server_admin', message: 'last admin' }
+				});
+				return;
+			}
+			acc.is_server_admin = false;
+			noContent(res);
+			return;
+		}
+
+		if (method === 'GET' && url === '/api/v1/admin/blocks') {
+			json(res, 200, { data: blocks });
+			return;
+		}
+
+		if (method === 'POST' && url === '/api/v1/admin/blocks') {
+			const body = JSON.parse((await readBody(req)) || '{}');
+			if (!blocks.some((b) => b.eve_character_id === body.eve_character_id)) {
+				blocks.unshift({
+					eve_character_id: body.eve_character_id,
+					character_name: `Char ${body.eve_character_id}`,
+					corporation_name: null,
+					reason: body.reason ?? null,
+					blocked_by: 'acc1',
+					blocked_at: new Date().toISOString()
+				});
+			}
+			noContent(res);
+			return;
+		}
+
+		const unblockMatch = url.match(/^\/api\/v1\/admin\/blocks\/(\d+)$/);
+		if (method === 'DELETE' && unblockMatch) {
+			const id = Number(unblockMatch[1]);
+			const before = blocks.length;
+			blocks = blocks.filter((b) => b.eve_character_id !== id);
+			if (blocks.length === before) {
+				json(res, 404, { error: { code: 'not_found', message: 'Not blocked' } });
+				return;
+			}
+			noContent(res);
+			return;
+		}
+
+		if (method === 'GET' && url.startsWith('/api/v1/admin/audit')) {
+			json(res, 200, { data: { entries: [], next_before: null } });
+			return;
+		}
+
+		notFound(res);
 		return;
 	}
 

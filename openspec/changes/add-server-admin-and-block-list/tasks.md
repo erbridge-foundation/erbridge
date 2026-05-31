@@ -56,39 +56,39 @@
 
 ## 9. Frontend: admin shell + pages
 
-- [ ] 9.1 `frontend/src/routes/admin/+layout.server.ts`: load `/api/v1/me`; if `!is_server_admin`, throw a 404 (do not disclose existence). Forward cookies per the project's load-fetch pattern.
-- [ ] 9.2 `/admin/+page.svelte` overview (counts: admins, blocked characters) with its `+page.server.ts` load.
-- [ ] 9.3 `/admin/admins/+page.svelte` + `+page.server.ts`: list admin accounts (main character + portrait); "Add admin" → character-search (calls `GET /api/v1/admin/characters/search`) → confirm "Promote the account containing <name>?" → form action POSTing grant to the resolved `account_id`; per-row "Revoke" form action (disabled/last-admin-aware). Use the existing `ConfirmDialog` component.
-- [ ] 9.4 `/admin/blocks/+page.svelte` + `+page.server.ts`: list blocks (name, corp, reason, blocked_by, blocked_at); "Block character" form (EVE character ID + optional reason) → POST; per-row "Unblock" form action with confirm.
-- [ ] 9.5 `/admin/audit/+page.svelte` + `+page.server.ts`: filterable (event_type, actor, and target-first: `target_type`/`target_id`/`target_name` — name search being the primary human affordance), cursor-paginated (`before` → `next_before`) audit list; render each entry's target alongside its actor.
-- [ ] 9.6 `/blocked/+page.svelte`: informational landing for a blocked pilot (static; explains the block and points at contacting an admin).
-- [ ] 9.7 Add the "Admin" affordance to `GlobalNav` / `UserMenu`, shown only when `is_server_admin` (from the existing `/me` data the layout already loads).
-- [ ] 9.8 Add i18n message keys for all new UI copy (paraglide), per the `internationalisation` spec.
-- [ ] 9.9 Frontend unit/component tests (Vitest): layout 404-gates non-admins; admin nav affordance visibility; block form validation; character-search-to-grant resolves the account id; confirm dialogs wired.
-- [ ] 9.10 Playwright e2e: admin sees `/admin` and its pages; non-admin gets 404; grant→revoke flow; block→unblock flow; a blocked user lands on `/blocked`.
+- [x] 9.1 `frontend/src/routes/admin/+layout.server.ts`: load `/api/v1/me`; if `!is_server_admin`, throw a 404 (do not disclose existence). Forward cookies per the project's load-fetch pattern.
+- [x] 9.2 `/admin/+page.svelte` overview (counts: admins, blocked characters) with its `+page.server.ts` load.
+- [x] 9.3 `/admin/admins/+page.svelte` + `+page.server.ts`: list admin accounts (main character + portrait); "Add admin" → character-search (calls `GET /api/v1/admin/characters/search`) → confirm "Promote the account containing <name>?" → form action POSTing grant to the resolved `account_id`; per-row "Revoke" form action (disabled/last-admin-aware). Use the existing `ConfirmDialog` component.
+- [x] 9.4 `/admin/blocks/+page.svelte` + `+page.server.ts`: list blocks (name, corp, reason, blocked_by, blocked_at); "Block character" form (EVE character ID + optional reason) → POST; per-row "Unblock" form action with confirm.
+- [x] 9.5 `/admin/audit/+page.svelte` + `+page.server.ts`: filterable (event_type, actor, and target-first: `target_type`/`target_id`/`target_name` — name search being the primary human affordance), cursor-paginated (`before` → `next_before`) audit list; render each entry's target alongside its actor.
+- [x] 9.6 `/blocked/+page.svelte`: informational landing for a blocked pilot (static; explains the block and points at contacting an admin).
+- [x] 9.7 Add the "Admin" affordance to `GlobalNav` / `UserMenu`, shown only when `is_server_admin` (from the existing `/me` data the layout already loads).
+- [x] 9.8 Add i18n message keys for all new UI copy (paraglide), per the `internationalisation` spec.
+- [x] 9.9 Frontend unit/component tests (Vitest): layout 404-gates non-admins; admin nav affordance visibility; block form validation; character-search-to-grant resolves the account id; confirm dialogs wired.
+- [x] 9.10 Playwright e2e: admin sees `/admin` and its pages; non-admin gets 404; grant→revoke flow; block→unblock flow; a blocked user lands on `/blocked`.
 
 ## 10. Drift + tidy
 
-- [ ] 10.1 `cargo sqlx prepare -- --all-targets` from `backend/`; commit the regenerated `.sqlx/` cache.
-- [ ] 10.2 Confirm `GET /api/v1/me` still returns `is_server_admin` unchanged (no DTO drift); grep for any prose claiming admin is bootstrap-only and update.
+- [x] 10.1 `cargo sqlx prepare -- --all-targets` from `backend/`; commit the regenerated `.sqlx/` cache.
+- [x] 10.2 Confirm `GET /api/v1/me` still returns `is_server_admin` unchanged (no DTO drift); grep for any prose claiming admin is bootstrap-only and update.
 
 ## 11. Verification
 
 ### Backend
 
-- [ ] 11.1 `cargo fmt --check` from `backend/`.
-- [ ] 11.2 `cargo clippy --all-targets --all-features -- -D warnings` from `backend/`.
-- [ ] 11.3 `cargo sqlx prepare --check -- --all-targets` from `backend/`.
+- [x] 11.1 `cargo fmt --check` from `backend/`.
+- [x] 11.2 `cargo clippy --all-targets --all-features -- -D warnings` from `backend/`.
+- [x] 11.3 `cargo sqlx prepare --check -- --all-targets` from `backend/`.
 - [x] 11.4 `cargo test --all-targets` from `backend/` — all unit + integration tests pass (226 lib + admin 13 + blocks 7 + audit_log 20 + others), including the admin-auth coverage test, last-admin/self-block guards, block teardown, SSO block rejection, and bearer block rejection. (Run repeatedly green this session.)
 - [x] 11.5 Hurl run against the live dev stack (`http://localhost:5000`) with real sessions: `admin.hurl` no-credential prefix (9 reqs) ✓; admin-session flow (15 reqs: grant/idempotent/404/revoke/last-admin-409/block/list/idempotent/unblock/unblock-404/audit-list/pagination/filter) ✓; `blocks.hurl` (bearer→401 `account_blocked` + teardown + unblock restore) ✓ — confirmed the victim key survives the block and the character is `token_status: expired` post-unblock. `me.hurl` regression ✓. NOTE: the live non-admin **403** step needs a live non-admin *session*; the one provided had no live session row (its API key still worked), so the 403 path was verified via the integration test (`admin_endpoint_rejects_non_admin_403`) rather than live. `account.hurl` not re-run live (it soft-deletes the account — destructive); covered by integration tests.
 
 ### Frontend (all three are required by project policy — `pnpm test` alone is NOT sufficient)
 
-- [ ] 11.6 `pnpm --filter frontend test` — Vitest unit/component tests.
-- [ ] 11.7 `pnpm --filter frontend run check` — svelte-check (type checking + paraglide compile).
-- [ ] 11.8 `pnpm --filter frontend run test:e2e` — Playwright e2e tests.
+- [x] 11.6 `pnpm --filter frontend test` — Vitest unit/component tests.
+- [x] 11.7 `pnpm --filter frontend run check` — svelte-check (type checking + paraglide compile).
+- [x] 11.8 `pnpm --filter frontend run test:e2e` — Playwright e2e tests.
 
 ## 12. Wrap-up
 
-- [ ] 12.1 `openspec validate add-server-admin-and-block-list --strict` — must pass.
-- [ ] 12.2 Update memory: `project-frontend-status` (admin pages added) and note the admin/block model in a project memory if it isn't derivable from specs; cross-link `project-backend-auth-model` (now also covers `AdminAccount` + block enforcement).
+- [x] 12.1 `openspec validate add-server-admin-and-block-list --strict` — must pass.
+- [x] 12.2 Update memory: `project-frontend-status` (admin pages added) and note the admin/block model in a project memory if it isn't derivable from specs; cross-link `project-backend-auth-model` (now also covers `AdminAccount` + block enforcement).

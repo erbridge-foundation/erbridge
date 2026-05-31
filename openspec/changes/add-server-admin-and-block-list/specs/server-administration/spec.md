@@ -210,7 +210,7 @@ The re-validation SHOULD reuse the existing sliding-expiry mechanism: the same h
 
 ### Requirement: GET /api/v1/admin/audit exposes the audit log to admins
 
-`GET /api/v1/admin/audit` SHALL return audit-log entries newest-first via `audit::list_audit_log` (per the `audit-log` capability). It SHALL accept optional `event_type`, `actor` (account UUID), `target_type`, `target_id`, and `target_name` (case-insensitive) query parameters, and a `before` (RFC 3339 keyset cursor), and a `limit` clamped to a sensible maximum (defaulting when omitted). The target filters realise the dominant target-first admin query ("who did X to whom"); `target_name` is the axis a human searches on. All supplied filters combine conjunctively. The response SHALL include the entries and a `next_before` cursor (the oldest returned entry's `occurred_at`) for pagination. Each entry exposes `id`, `occurred_at`, `actor_account_id`, `actor_character_id`, `actor_character_name`, `event_type`, `details`, `target_type`, `target_id`, and `target_name`.
+`GET /api/v1/admin/audit` SHALL return audit-log entries newest-first via `audit::list_audit_log` (per the `audit-log` capability). It SHALL accept optional `event_type`, `actor` (account UUID), `target_type`, `target_id`, and `target_name` (case-insensitive substring match) query parameters, and a `before` (RFC 3339 keyset cursor), and a `limit` clamped to a sensible maximum (defaulting when omitted). The target filters realise the dominant target-first admin query ("who did X to whom"); `target_name` is the axis a human searches on, so it matches a substring fragment (e.g. `wasp` finds `Wasp 223`) rather than requiring the full name. All supplied filters combine conjunctively. The response SHALL include the entries and a `next_before` cursor (the oldest returned entry's `occurred_at`) for pagination. Each entry exposes `id`, `occurred_at`, `actor_account_id`, `actor_character_id`, `actor_character_name`, `event_type`, `details`, `target_type`, `target_id`, and `target_name`.
 
 #### Scenario: Admin reads the audit log
 - **WHEN** a server admin calls `GET /api/v1/admin/audit`
@@ -220,9 +220,9 @@ The re-validation SHOULD reuse the existing sliding-expiry mechanism: the same h
 - **WHEN** a server admin calls `GET /api/v1/admin/audit?event_type=eve_character_blocked&before=<ts>&limit=20`
 - **THEN** only `eve_character_blocked` entries older than `<ts>` are returned, at most 20, newest-first
 
-#### Scenario: Admin searches target-first by name
-- **WHEN** a server admin calls `GET /api/v1/admin/audit?target_name=boss%20pilot`
-- **THEN** only entries whose `target_name` matches "boss pilot" case-insensitively are returned, newest-first — answering "what was done to this pilot/account" regardless of who the actor was
+#### Scenario: Admin searches target-first by name fragment
+- **WHEN** a server admin calls `GET /api/v1/admin/audit?target_name=wasp`
+- **THEN** only entries whose `target_name` contains "wasp" case-insensitively (e.g. "Wasp 223") are returned, newest-first — answering "what was done to this pilot/account" regardless of who the actor was, without the admin needing to type the full name
 
 ### Requirement: Admin frontend is gated and surfaced only to admins
 

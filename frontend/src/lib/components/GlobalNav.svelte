@@ -8,6 +8,7 @@
 
 	let main = $derived(me?.characters.find((c) => c.is_main) ?? null);
 	let connected = $derived(me !== null);
+	let isAdmin = $derived(me?.account.is_server_admin ?? false);
 </script>
 
 <header class="global-nav">
@@ -41,7 +42,7 @@
 	</div>
 
 	{#if main}
-		<UserChip portraitUrl={main.portrait_url} name={main.name} />
+		<UserChip portraitUrl={main.portrait_url} name={main.name} {isAdmin} />
 	{:else}
 		<div class="user-chip-placeholder" aria-label={m.nav_not_signed_in()}></div>
 	{/if}

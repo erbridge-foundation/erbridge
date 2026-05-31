@@ -1,13 +1,17 @@
 <script lang="ts">
 	import { m } from '$lib/paraglide/messages';
 
-	let { onclose }: { onclose: () => void } = $props();
+	let { onclose, isAdmin = false }: { onclose: () => void; isAdmin?: boolean } = $props();
 </script>
 
 <div class="user-menu" role="menu" id="user-menu">
 	<a class="item" href="/preferences" role="menuitem" onclick={onclose}>{m.user_menu_preferences()}</a>
 	<a class="item" href="/account" role="menuitem" onclick={onclose}>{m.user_menu_account()}</a>
 	<a class="item" href="/about" role="menuitem" onclick={onclose}>{m.user_menu_about()}</a>
+	{#if isAdmin}
+		<hr class="divider" />
+		<a class="item" href="/admin" role="menuitem" onclick={onclose}>{m.user_menu_admin()}</a>
+	{/if}
 	<hr class="divider" />
 	<a class="item" href="/auth/logout" role="menuitem" onclick={onclose}>{m.user_menu_logout()}</a>
 </div>

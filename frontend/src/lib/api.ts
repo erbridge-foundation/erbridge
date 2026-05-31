@@ -60,6 +60,65 @@ export interface PreferencesDto {
 
 export type PreferencesPatch = Partial<PreferencesDto>;
 
+// keep in sync with: backend/src/dto/admin.rs
+export interface AdminAccountCharacterDto {
+	eve_character_id: number;
+	name: string;
+	is_main: boolean;
+}
+
+export interface AdminAccountDto {
+	id: string;
+	status: string;
+	is_server_admin: boolean;
+	created_at: string;
+	characters: AdminAccountCharacterDto[];
+}
+
+export interface CharacterSearchResultDto {
+	eve_character_id: number;
+	name: string;
+	is_main: boolean;
+	account_id: string | null;
+}
+
+export interface BlockedCharacterDto {
+	eve_character_id: number;
+	character_name: string | null;
+	corporation_name: string | null;
+	reason: string | null;
+	blocked_by: string | null;
+	blocked_at: string;
+}
+
+export interface AuditLogEntryDto {
+	id: string;
+	occurred_at: string;
+	actor_account_id: string | null;
+	actor_character_id: number | null;
+	actor_character_name: string | null;
+	event_type: string;
+	details: unknown;
+	target_type: string | null;
+	target_id: string | null;
+	target_name: string | null;
+}
+
+export interface AuditLogPageDto {
+	entries: AuditLogEntryDto[];
+	next_before: string | null;
+}
+
+export interface AuditLogQuery {
+	event_type?: string;
+	actor?: string;
+	target_type?: string;
+	target_id?: string;
+	target_name?: string;
+	before?: string;
+	limit?: number;
+}
+
 // keep in sync with: backend/src/dto/health.rs
 export type HealthStatus = 'ok' | 'degraded';
 
@@ -217,6 +276,106 @@ export function updatePreferences(
 		headers: { cookie, 'content-type': 'application/json' },
 		body: JSON.stringify(patch)
 	});
+}
+
+// ── admin (session-cookie only) ────────────────────────────────────────────────
+
+export function listAdminAccounts(
+	fetch: typeof globalThis.fetch,
+	backendUrl: string,
+	cookie: string
+): Promise<AdminAccountDto[]> {
+	return request<AdminAccountDto[]>(fetch, `${backendUrl}/api/v1/admin/accounts`, {
+		headers: { cookie }
+	});
+}
+
+export function searchCharacters(
+	fetch: typeof globalThis.fetch,
+	backendUrl: string,
+	q: string,
+	cookie: string
+): Promise<CharacterSearchResultDto[]> {
+	const url = `${backendUrl}/api/v1/admin/characters/search?q=${encodeURIComponent(q)}`;
+	return request<CharacterSearchResultDto[]>(fetch, url, { headers: { cookie } });
+}
+
+export function grantAdmin(
+	fetch: typeof globalThis.fetch,
+	backendUrl: string,
+	accountId: string,
+	cookie: string
+): Promise<void> {
+	return request<void>(fetch, `${backendUrl}/api/v1/admin/accounts/${accountId}/grant-admin`, {
+		method: 'POST',
+		headers: { cookie }
+	});
+}
+
+export function revokeAdmin(
+	fetch: typeof globalThis.fetch,
+	backendUrl: string,
+	accountId: string,
+	cookie: string
+): Promise<void> {
+	return request<void>(fetch, `${backendUrl}/api/v1/admin/accounts/${accountId}/revoke-admin`, {
+		method: 'POST',
+		headers: { cookie }
+	});
+}
+
+export function listBlocks(
+	fetch: typeof globalThis.fetch,
+	backendUrl: string,
+	cookie: string
+): Promise<BlockedCharacterDto[]> {
+	return request<BlockedCharacterDto[]>(fetch, `${backendUrl}/api/v1/admin/blocks`, {
+		headers: { cookie }
+	});
+}
+
+export function blockCharacter(
+	fetch: typeof globalThis.fetch,
+	backendUrl: string,
+	body: { eve_character_id: number; reason: string | null },
+	cookie: string
+): Promise<void> {
+	return request<void>(fetch, `${backendUrl}/api/v1/admin/blocks`, {
+		method: 'POST',
+		headers: { cookie, 'content-type': 'application/json' },
+		body: JSON.stringify(body)
+	});
+}
+
+export function unblockCharacter(
+	fetch: typeof globalThis.fetch,
+	backendUrl: string,
+	eveCharacterId: number,
+	cookie: string
+): Promise<void> {
+	return request<void>(fetch, `${backendUrl}/api/v1/admin/blocks/${eveCharacterId}`, {
+		method: 'DELETE',
+		headers: { cookie }
+	});
+}
+
+export function listAuditLog(
+	fetch: typeof globalThis.fetch,
+	backendUrl: string,
+	query: AuditLogQuery,
+	cookie: string
+): Promise<AuditLogPageDto> {
+	const params = new URLSearchParams();
+	if (query.event_type) params.set('event_type', query.event_type);
+	if (query.actor) params.set('actor', query.actor);
+	if (query.target_type) params.set('target_type', query.target_type);
+	if (query.target_id) params.set('target_id', query.target_id);
+	if (query.target_name) params.set('target_name', query.target_name);
+	if (query.before) params.set('before', query.before);
+	if (query.limit !== undefined) params.set('limit', String(query.limit));
+	const qs = params.toString();
+	const url = `${backendUrl}/api/v1/admin/audit${qs ? `?${qs}` : ''}`;
+	return request<AuditLogPageDto>(fetch, url, { headers: { cookie } });
 }
 
 // /api/health is public and returns a flat (unenveloped) document, so it does

@@ -10,7 +10,10 @@ export const load: LayoutServerLoad = async ({ fetch, url, locals, request }) =>
 	// findable); /login is public so unauthenticated visitors can sign in;
 	// /preferences is public so accessibility settings work before/without login.
 	const isPublicRoute =
-		isLoginRoute || url.pathname === '/about' || url.pathname === '/preferences';
+		isLoginRoute ||
+		url.pathname === '/about' ||
+		url.pathname === '/preferences' ||
+		url.pathname === '/blocked';
 	const cookie = request.headers.get('cookie') ?? '';
 
 	try {

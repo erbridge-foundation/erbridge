@@ -33,4 +33,16 @@ describe('UserMenu', () => {
 		await fireEvent.click(screen.getByRole('menuitem', { name: 'preferences' }));
 		expect(onclose).toHaveBeenCalledTimes(1);
 	});
+
+	it('does NOT render the admin link for a non-admin (isAdmin omitted)', () => {
+		render(UserMenu, { props: { onclose: () => {} } });
+		expect(screen.queryByRole('menuitem', { name: 'admin' })).toBeNull();
+	});
+
+	it('renders the admin link to /admin only when isAdmin is true', () => {
+		render(UserMenu, { props: { onclose: () => {}, isAdmin: true } });
+		const link = screen.getByRole('menuitem', { name: 'admin' });
+		expect(link.tagName).toBe('A');
+		expect(link).toHaveAttribute('href', '/admin');
+	});
 });
