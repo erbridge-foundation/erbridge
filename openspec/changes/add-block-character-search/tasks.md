@@ -46,7 +46,7 @@
 - [x] 7.2 `cargo clippy --all-targets --all-features -- -D warnings` from `backend/`.
 - [x] 7.3 `cargo sqlx prepare --check -- --all-targets` from `backend/`.
 - [x] 7.4 `cargo test --all-targets` from `backend/` — all unit + integration tests pass, including the admin-coverage test now covering esi-search, the 3-char guard, and the graceful-unavailable paths.
-- [ ] 7.5 Hurl run against the live dev stack: the no-credential + 400 prefix hermetically; the admin-session ESI flow operator-run.
+- [x] 7.5 Hurl run against the live dev stack: full `admin.hurl` passed 29/29 against `http://localhost:5000` (admin + non-admin SSO sessions). The esi-search happy path returned real ESI results with `unavailable: false` (first authenticated outbound ESI call confirmed live). Post-run state verified clean (grant target back to non-admin, block list empty).
 
 ### Frontend (all three are required by project policy — `pnpm test` alone is NOT sufficient)
 
