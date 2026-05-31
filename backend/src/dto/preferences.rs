@@ -37,6 +37,7 @@ pub enum Toggle {
 pub enum Locale {
     En,
     De,
+    Fr,
 }
 
 /// The full accessibility preference set as returned to clients. Absent keys
@@ -128,6 +129,9 @@ mod tests {
 
         let de: PreferencesPatch = serde_json::from_value(json!({"locale": "de"})).unwrap();
         assert_eq!(de.locale, Some(Locale::De));
+
+        let fr: PreferencesPatch = serde_json::from_value(json!({"locale": "fr"})).unwrap();
+        assert_eq!(fr.locale, Some(Locale::Fr));
     }
 
     #[test]

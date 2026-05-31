@@ -82,7 +82,8 @@
 
 	const localeOptions = [
 		{ value: 'en', label: m.prefs_locale_en() },
-		{ value: 'de', label: m.prefs_locale_de() }
+		{ value: 'de', label: m.prefs_locale_de() },
+		{ value: 'fr', label: m.prefs_locale_fr() }
 	];
 	const textSizeOptions = [
 		{ value: 'auto', label: m.prefs_option_auto() },

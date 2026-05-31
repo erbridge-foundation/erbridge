@@ -55,7 +55,7 @@ export interface PreferencesDto {
 	high_contrast: 'auto' | 'on' | 'off';
 	large_targets: 'off' | 'on';
 	dyslexia_font: 'off' | 'on';
-	locale: 'en' | 'de';
+	locale: 'en' | 'de' | 'fr';
 }
 
 export type PreferencesPatch = Partial<PreferencesDto>;

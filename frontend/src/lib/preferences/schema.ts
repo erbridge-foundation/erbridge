@@ -13,7 +13,7 @@ export type TriState = 'auto' | 'on' | 'off';
 export type Toggle = 'off' | 'on';
 // The interface language. Must stay in sync with the backend `Locale` enum
 // (dto/preferences.rs) and Paraglide's compiled locale list (project.inlang).
-export type Locale = 'en' | 'de';
+export type Locale = 'en' | 'de' | 'fr';
 
 export interface Preferences {
 	text_size: TextSize;
@@ -39,7 +39,7 @@ export const ALLOWED_VALUES: { [K in PreferenceKey]: ReadonlyArray<Preferences[K
 	high_contrast: ['auto', 'on', 'off'],
 	large_targets: ['off', 'on'],
 	dyslexia_font: ['off', 'on'],
-	locale: ['en', 'de']
+	locale: ['en', 'de', 'fr']
 };
 
 /** The defaults — every key resolves to these when unset. `auto`/`off` means "no override". */
