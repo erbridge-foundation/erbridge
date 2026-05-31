@@ -1,0 +1,50 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT eve_character_id, character_name, corporation_name, reason,\n               blocked_by, blocked_at\n        FROM blocked_eve_character\n        ORDER BY blocked_at DESC\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "eve_character_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "character_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "corporation_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "reason",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "blocked_by",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 5,
+        "name": "blocked_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      true,
+      true,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "1fdb83693567b8bb551c95d4328d15ee2cad364e66004c31f668327b370d3423"
+}

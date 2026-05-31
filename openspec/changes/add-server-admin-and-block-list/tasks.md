@@ -2,20 +2,20 @@
 
 ## 1. Database migration
 
-- [ ] 1.1 Create `backend/migrations/00000000000006_create_blocked_eve_character.sql`: `blocked_eve_character (eve_character_id BIGINT PRIMARY KEY, character_name TEXT, corporation_name TEXT, reason TEXT, blocked_by UUID REFERENCES account(id) ON DELETE SET NULL, blocked_at TIMESTAMPTZ NOT NULL DEFAULT now())`. No FK to `eve_character`.
-- [ ] 1.2 Apply the migration locally and confirm the table (no `eve_character` FK) in psql.
+- [x] 1.1 Create `backend/migrations/00000000000007_create_blocked_eve_character.sql` (the `00000000000006` slot was already taken by the shipped `add_audit_log_target_columns` migration, so the next free number is used): `blocked_eve_character (eve_character_id BIGINT PRIMARY KEY, character_name TEXT, corporation_name TEXT, reason TEXT, blocked_by UUID REFERENCES account(id) ON DELETE SET NULL, blocked_at TIMESTAMPTZ NOT NULL DEFAULT now())`. No FK to `eve_character`.
+- [x] 1.2 Apply the migration locally and confirm the table (no `eve_character` FK) in psql.
 
 ## 2. DB layer: blocks + admin queries
 
-- [ ] 2.1 Add `backend/src/db/blocks.rs` (new resource file) with: `insert_block(tx, eve_character_id, character_name, corporation_name, reason, blocked_by) -> bool` (true if newly inserted, idempotent on conflict); `delete_block(tx, eve_character_id) -> bool`; `list_blocks(pool) -> Vec<BlockedEveCharacter>` (newest first); `is_eve_character_blocked(pool, eve_character_id) -> bool`; `account_has_blocked_character(pool, account_id) -> bool` (join `eve_character`↔`blocked_eve_character`). Wire `pub mod blocks;` into `db/mod.rs`.
-- [ ] 2.2 Add to `backend/src/db/accounts.rs`: `set_server_admin(tx, account_id, value) -> bool`; `account_exists(pool, account_id) -> bool`; a transactional `count_server_admins_tx(tx) -> i64` (the existing pool-based `count_server_admins` stays for the soft-delete guard). Add `list_accounts_admin(pool) -> Vec<Account>` (newest first) if a wider admin list is needed.
-- [ ] 2.3 Add to `backend/src/db/characters.rs`: `search_by_name(pool, fragment, limit) -> Vec<(eve_character_id, name, is_main, account_id)>` using a case-insensitive `ILIKE` bound parameter; `find_account_for_eve_character(pool, eve_character_id) -> Option<Uuid>` (the owning account, or None for orphan/unknown).
-- [ ] 2.4 sqlx tests for every new DB fn: insert/delete/list/idempotency for blocks; `is_eve_character_blocked` and `account_has_blocked_character` true/false; `set_server_admin` flip; `search_by_name` match + cap + injection-safety (a `%`/`_` fragment is treated literally enough to not error); `find_account_for_eve_character` for owned/orphan/unknown.
+- [x] 2.1 Add `backend/src/db/blocks.rs` (new resource file) with: `insert_block(tx, eve_character_id, character_name, corporation_name, reason, blocked_by) -> bool` (true if newly inserted, idempotent on conflict); `delete_block(tx, eve_character_id) -> bool`; `list_blocks(pool) -> Vec<BlockedEveCharacter>` (newest first); `is_eve_character_blocked(pool, eve_character_id) -> bool`; `account_has_blocked_character(pool, account_id) -> bool` (join `eve_character`↔`blocked_eve_character`). Wire `pub mod blocks;` into `db/mod.rs`.
+- [x] 2.2 Add to `backend/src/db/accounts.rs`: `set_server_admin(tx, account_id, value) -> bool`; `account_exists(pool, account_id) -> bool`; a transactional `count_server_admins_tx(tx) -> i64` (the existing pool-based `count_server_admins` stays for the soft-delete guard). Add `list_accounts_admin(pool) -> Vec<Account>` (newest first) if a wider admin list is needed.
+- [x] 2.3 Add to `backend/src/db/characters.rs`: `search_by_name(pool, fragment, limit) -> Vec<(eve_character_id, name, is_main, account_id)>` using a case-insensitive `ILIKE` bound parameter; `find_account_for_eve_character(pool, eve_character_id) -> Option<Uuid>` (the owning account, or None for orphan/unknown).
+- [x] 2.4 sqlx tests for every new DB fn: insert/delete/list/idempotency for blocks; `is_eve_character_blocked` and `account_has_blocked_character` true/false; `set_server_admin` flip; `search_by_name` match + cap + injection-safety (a `%`/`_` fragment is treated literally enough to not error); `find_account_for_eve_character` for owned/orphan/unknown.
 
 ## 3. Audit: BlockedLoginRejected variant
 
-- [ ] 3.1 Add `BlockedLoginRejected { eve_character_id: i64 }` to `AuditEvent` in `backend/src/audit/mod.rs`: `event_type()` → `"blocked_login_rejected"`; `details()` → `{ "eve_character_id": … }`. (The other four admin/block variants already exist.)
-- [ ] 3.2 Unit test for the new variant's `event_type()` and `details()` shape.
+- [x] 3.1 Add `BlockedLoginRejected { eve_character_id: i64 }` to `AuditEvent` in `backend/src/audit/mod.rs`: `event_type()` → `"blocked_login_rejected"`; `details()` → `{ "eve_character_id": … }`. (The other four admin/block variants already exist.)
+- [x] 3.2 Unit test for the new variant's `event_type()` and `details()` shape.
 
 ## 4. AdminAccount extractor + coverage test
 

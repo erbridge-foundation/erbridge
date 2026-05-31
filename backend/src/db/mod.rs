@@ -1,5 +1,6 @@
 pub mod accounts;
 pub mod api_keys;
+pub mod blocks;
 pub mod characters;
 pub mod preferences;
 pub mod sessions;

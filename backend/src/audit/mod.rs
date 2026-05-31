@@ -172,6 +172,15 @@ pub enum AuditEvent {
     EveCharacterUnblocked {
         eve_character_id: i64,
     },
+    /// Emitted by the SSO callback when a blocked character is refused. Unlike
+    /// every other variant this records a rejected *attempt* rather than a
+    /// committed state change — a deliberate, narrow extension for a
+    /// security-relevant event. `actor_account_id` is NULL (no account is
+    /// authenticated); the rejected character is the subject, carried in
+    /// `details` / the target columns.
+    BlockedLoginRejected {
+        eve_character_id: i64,
+    },
     /// Dormant: emitted by a future map-create handler.
     MapCreated {
         account_id: Uuid,
@@ -277,6 +286,7 @@ impl AuditEvent {
             Self::ServerAdminRevoked { .. } => "server_admin_revoked",
             Self::EveCharacterBlocked { .. } => "eve_character_blocked",
             Self::EveCharacterUnblocked { .. } => "eve_character_unblocked",
+            Self::BlockedLoginRejected { .. } => "blocked_login_rejected",
             Self::MapCreated { .. } => "map_created",
             Self::MapDeleted { .. } => "map_deleted",
             Self::AclCreated { .. } => "acl_created",
@@ -370,6 +380,11 @@ impl AuditEvent {
                 "reason": reason,
             }),
             Self::EveCharacterUnblocked { eve_character_id } => json!({
+                "eve_character_id": eve_character_id,
+            }),
+            // actor is NULL (no session) — the rejected character is the subject,
+            // carried here so the row is self-contained.
+            Self::BlockedLoginRejected { eve_character_id } => json!({
                 "eve_character_id": eve_character_id,
             }),
             Self::MapCreated { map_id, name, .. } => json!({
@@ -502,7 +517,8 @@ impl AuditEvent {
             | Self::EveCharacterBlocked {
                 eve_character_id, ..
             }
-            | Self::EveCharacterUnblocked { eve_character_id } => {
+            | Self::EveCharacterUnblocked { eve_character_id }
+            | Self::BlockedLoginRejected { eve_character_id } => {
                 AuditTarget::character(*eve_character_id, None)
             }
 
@@ -926,6 +942,18 @@ mod tests {
     }
 
     #[test]
+    fn blocked_login_rejected_serialises_correctly() {
+        let event = AuditEvent::BlockedLoginRejected {
+            eve_character_id: 98765,
+        };
+        assert_eq!(event.event_type(), "blocked_login_rejected");
+        let d = event.details();
+        assert_eq!(d["eve_character_id"], 98765i64);
+        // The subject character is the only payload — actor is NULL at emit time.
+        assert_eq!(d.as_object().unwrap().len(), 1);
+    }
+
+    #[test]
     fn map_created_serialises_correctly() {
         let account_id = test_uuid();
         let map_id = other_uuid();
@@ -1288,6 +1316,13 @@ mod tests {
             },
             "character",
             "12345",
+        );
+        assert_nameless_target(
+            &AuditEvent::BlockedLoginRejected {
+                eve_character_id: 98765,
+            },
+            "character",
+            "98765",
         );
     }
 

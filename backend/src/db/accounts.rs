@@ -156,6 +156,80 @@ pub async fn count_server_admins(pool: &PgPool) -> Result<i64> {
     Ok(row.count)
 }
 
+/// The same active-admin count as `count_server_admins`, but participating in
+/// the caller's transaction. The revoke-admin last-admin guard runs this
+/// *inside* the revoke transaction so the count is consistent with the pending
+/// `UPDATE` (the pool-based variant stays for the soft-delete guard, which
+/// reads outside any transaction).
+pub async fn count_server_admins_tx(tx: &mut Transaction<'_, Postgres>) -> Result<i64> {
+    let row = sqlx::query!(
+        "SELECT COUNT(*) AS \"count!\" FROM account
+         WHERE is_server_admin = TRUE AND status = 'active'"
+    )
+    .fetch_one(&mut **tx)
+    .await
+    .context("failed to count server admins (tx)")?;
+    Ok(row.count)
+}
+
+/// Sets or clears `is_server_admin` on an account. Returns `true` if a row was
+/// actually changed (the flag flipped), `false` if the account already had the
+/// requested value — letting the service skip the audit emission on an
+/// idempotent no-op grant/revoke.
+pub async fn set_server_admin(
+    tx: &mut Transaction<'_, Postgres>,
+    account_id: Uuid,
+    value: bool,
+) -> Result<bool> {
+    let result = sqlx::query!(
+        "UPDATE account SET is_server_admin = $2, updated_at = now()
+         WHERE id = $1 AND is_server_admin <> $2",
+        account_id,
+        value,
+    )
+    .execute(&mut **tx)
+    .await
+    .context("failed to set server admin flag")?;
+    Ok(result.rows_affected() > 0)
+}
+
+/// Whether an account row exists for `account_id`. Used by grant/revoke to
+/// return 404 for a non-existent target without fetching the whole row.
+pub async fn account_exists(pool: &PgPool, account_id: Uuid) -> Result<bool> {
+    let row = sqlx::query!(
+        r#"SELECT EXISTS (SELECT 1 FROM account WHERE id = $1) AS "exists!""#,
+        account_id
+    )
+    .fetch_one(pool)
+    .await
+    .context("failed to check account existence")?;
+    Ok(row.exists)
+}
+
+/// Every account, newest first. Backs the admin accounts list; the service
+/// layer assembles each account's characters separately.
+pub async fn list_accounts_admin(pool: &PgPool) -> Result<Vec<Account>> {
+    let rows = sqlx::query!(
+        "SELECT id, status, delete_requested_at, is_server_admin, created_at, updated_at
+         FROM account ORDER BY created_at DESC"
+    )
+    .fetch_all(pool)
+    .await
+    .context("failed to list accounts")?;
+
+    Ok(rows
+        .into_iter()
+        .map(|r| Account {
+            id: r.id,
+            status: r.status,
+            delete_requested_at: r.delete_requested_at,
+            is_server_admin: r.is_server_admin,
+            created_at: r.created_at,
+            updated_at: r.updated_at,
+        })
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -370,5 +444,76 @@ mod tests {
         let account = get_account(&pool, id).await.unwrap().unwrap();
         assert_eq!(account.status, "soft_deleted");
         assert!(account.delete_requested_at.is_some());
+    }
+
+    #[sqlx::test]
+    async fn set_server_admin_flips_flag_and_reports_change(pool: PgPool) {
+        let id = create_account(&pool).await.unwrap();
+        assert!(
+            !get_account(&pool, id)
+                .await
+                .unwrap()
+                .unwrap()
+                .is_server_admin
+        );
+
+        let mut tx = pool.begin().await.unwrap();
+        let changed = set_server_admin(&mut tx, id, true).await.unwrap();
+        tx.commit().await.unwrap();
+        assert!(changed, "flipping false->true is a change");
+        assert!(
+            get_account(&pool, id)
+                .await
+                .unwrap()
+                .unwrap()
+                .is_server_admin
+        );
+
+        // Idempotent: setting the same value again changes no row.
+        let mut tx = pool.begin().await.unwrap();
+        let changed = set_server_admin(&mut tx, id, true).await.unwrap();
+        tx.commit().await.unwrap();
+        assert!(!changed, "setting true->true is a no-op");
+
+        // And flipping back reports a change.
+        let mut tx = pool.begin().await.unwrap();
+        let changed = set_server_admin(&mut tx, id, false).await.unwrap();
+        tx.commit().await.unwrap();
+        assert!(changed);
+        assert!(
+            !get_account(&pool, id)
+                .await
+                .unwrap()
+                .unwrap()
+                .is_server_admin
+        );
+    }
+
+    #[sqlx::test]
+    async fn account_exists_true_and_false(pool: PgPool) {
+        let id = create_account(&pool).await.unwrap();
+        assert!(account_exists(&pool, id).await.unwrap());
+        assert!(!account_exists(&pool, Uuid::new_v4()).await.unwrap());
+    }
+
+    #[sqlx::test]
+    async fn count_server_admins_tx_matches_pool_variant(pool: PgPool) {
+        let mut tx = pool.begin().await.unwrap();
+        let (_first, _) = resolve_or_create(&mut tx, None, 1001).await.unwrap();
+        let (_second, _) = resolve_or_create(&mut tx, None, 1002).await.unwrap();
+        // Within the same tx, only the bootstrapped first account is admin.
+        assert_eq!(count_server_admins_tx(&mut tx).await.unwrap(), 1);
+        tx.commit().await.unwrap();
+        assert_eq!(count_server_admins(&pool).await.unwrap(), 1);
+    }
+
+    #[sqlx::test]
+    async fn list_accounts_admin_is_newest_first(pool: PgPool) {
+        let first = create_account(&pool).await.unwrap();
+        let second = create_account(&pool).await.unwrap();
+        let accounts = list_accounts_admin(&pool).await.unwrap();
+        assert_eq!(accounts.len(), 2);
+        assert_eq!(accounts[0].id, second, "newest (created_at DESC) first");
+        assert_eq!(accounts[1].id, first);
     }
 }

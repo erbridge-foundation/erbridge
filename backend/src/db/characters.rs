@@ -316,6 +316,80 @@ pub async fn find_account_id_for_eve_character(
     Ok(row.map(|r| r.account_id))
 }
 
+/// A character matched by the admin name search, carrying its owning account so
+/// the grant UI can resolve "promote the account that owns *Pilot X*".
+pub struct CharacterSearchResult {
+    pub eve_character_id: i64,
+    pub name: String,
+    pub is_main: bool,
+    pub account_id: Option<Uuid>,
+}
+
+/// Case-insensitive substring search on character name, capped at `limit` rows
+/// (newest-bound first by name for stable ordering). `fragment` binds as a
+/// parameter — no SQL injection surface. LIKE metacharacters (`%`, `_`, `\`) in
+/// the fragment are escaped so they match literally rather than as wildcards,
+/// so a search for "50%" finds a pilot literally named with a percent sign and
+/// never errors or matches everything.
+pub async fn search_by_name(
+    pool: &PgPool,
+    fragment: &str,
+    limit: i64,
+) -> Result<Vec<CharacterSearchResult>> {
+    // Escape LIKE wildcards, then wrap in %...% for a substring match. The
+    // backslash is the default ESCAPE character in Postgres ILIKE.
+    let escaped = fragment
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_");
+    let pattern = format!("%{escaped}%");
+
+    let rows = sqlx::query!(
+        r#"
+        SELECT eve_character_id, name, is_main, account_id
+        FROM eve_character
+        WHERE name ILIKE $1
+        ORDER BY name ASC
+        LIMIT $2
+        "#,
+        pattern,
+        limit,
+    )
+    .fetch_all(pool)
+    .await
+    .context("failed to search characters by name")?;
+
+    Ok(rows
+        .into_iter()
+        .map(|r| CharacterSearchResult {
+            eve_character_id: r.eve_character_id,
+            name: r.name,
+            is_main: r.is_main,
+            account_id: r.account_id,
+        })
+        .collect())
+}
+
+/// The account that owns this `eve_character_id`, or `None` when the character
+/// is an orphan (`account_id IS NULL`) or has never been seen (no row). Used by
+/// the block service to decide whether a block must tear down an owning account.
+/// Distinct from `find_account_id_for_eve_character` (tx-scoped, two-level
+/// Option) — this is the pool-based "give me the owning account or nothing".
+pub async fn find_account_for_eve_character(
+    pool: &PgPool,
+    eve_character_id: i64,
+) -> Result<Option<Uuid>> {
+    let row = sqlx::query!(
+        "SELECT account_id FROM eve_character WHERE eve_character_id = $1",
+        eve_character_id
+    )
+    .fetch_optional(pool)
+    .await
+    .context("failed to find account for eve_character")?;
+
+    Ok(row.and_then(|r| r.account_id))
+}
+
 /// Returns the `(eve_character_id, name)` of the main character for `account_id`,
 /// or `None` if the account has no characters yet. Used by the audit module to
 /// snapshot the actor character at write time.
@@ -789,5 +863,124 @@ mod tests {
         tx.commit().await.unwrap();
 
         assert!(main.is_none());
+    }
+
+    #[sqlx::test]
+    async fn search_by_name_matches_case_insensitively(pool: PgPool) {
+        let account_id = accounts::create_account(&pool).await.unwrap();
+        let mut tx = pool.begin().await.unwrap();
+        upsert_tokens(
+            &mut tx,
+            account_id,
+            7001,
+            "Captain Pilgrim",
+            1,
+            "Corp",
+            None,
+            None,
+            "c",
+            "a",
+            "r",
+            chrono::Utc::now() + chrono::Duration::hours(1),
+            &[],
+            &test_key(),
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+        create_orphan(&pool, 7002, "Other Soul", 1, "Corp", None, None)
+            .await
+            .unwrap();
+
+        // Case-insensitive substring "pil" matches "Captain Pilgrim" only.
+        let results = search_by_name(&pool, "pil", 50).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].eve_character_id, 7001);
+        assert_eq!(results[0].account_id, Some(account_id));
+    }
+
+    #[sqlx::test]
+    async fn search_by_name_caps_at_limit(pool: PgPool) {
+        for i in 0..5 {
+            create_orphan(
+                &pool,
+                8000 + i,
+                &format!("Pilot {i}"),
+                1,
+                "Corp",
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        }
+        let results = search_by_name(&pool, "pilot", 3).await.unwrap();
+        assert_eq!(results.len(), 3, "result set is capped at the limit");
+    }
+
+    #[sqlx::test]
+    async fn search_by_name_treats_wildcards_literally(pool: PgPool) {
+        // A pilot whose name literally contains a percent sign.
+        create_orphan(&pool, 9001, "100% Legit", 1, "Corp", None, None)
+            .await
+            .unwrap();
+        create_orphan(&pool, 9002, "Totally Normal", 1, "Corp", None, None)
+            .await
+            .unwrap();
+
+        // A bare "%" must NOT match everything (escaped to a literal); it should
+        // match only the name actually containing a percent sign, and not error.
+        let results = search_by_name(&pool, "%", 50).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].eve_character_id, 9001);
+
+        // Likewise "_" is a literal underscore, matching nothing here.
+        let results = search_by_name(&pool, "_", 50).await.unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[sqlx::test]
+    async fn find_account_for_eve_character_owned_orphan_unknown(pool: PgPool) {
+        // Owned.
+        let account_id = accounts::create_account(&pool).await.unwrap();
+        let mut tx = pool.begin().await.unwrap();
+        upsert_tokens(
+            &mut tx,
+            account_id,
+            6001,
+            "Owned",
+            1,
+            "Corp",
+            None,
+            None,
+            "c",
+            "a",
+            "r",
+            chrono::Utc::now() + chrono::Duration::hours(1),
+            &[],
+            &test_key(),
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+        assert_eq!(
+            find_account_for_eve_character(&pool, 6001).await.unwrap(),
+            Some(account_id)
+        );
+
+        // Orphan row (account_id NULL) → None.
+        create_orphan(&pool, 6002, "Orphan", 1, "Corp", None, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            find_account_for_eve_character(&pool, 6002).await.unwrap(),
+            None
+        );
+
+        // Never-seen → None.
+        assert_eq!(
+            find_account_for_eve_character(&pool, 6003).await.unwrap(),
+            None
+        );
     }
 }
