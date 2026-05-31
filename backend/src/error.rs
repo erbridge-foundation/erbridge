@@ -36,6 +36,7 @@ pub enum ConflictKind {
     CannotRemoveLastCharacter,
     CannotRemoveMain,
     CannotRemoveLastServerAdmin,
+    CannotBlockSelf,
     ApiKeyNameAlreadyExists,
 }
 
@@ -45,6 +46,7 @@ impl ConflictKind {
             ConflictKind::CannotRemoveLastCharacter => "cannot_remove_last_character",
             ConflictKind::CannotRemoveMain => "cannot_remove_main",
             ConflictKind::CannotRemoveLastServerAdmin => "cannot_remove_last_server_admin",
+            ConflictKind::CannotBlockSelf => "cannot_block_self",
             ConflictKind::ApiKeyNameAlreadyExists => "api_key_name_already_exists",
         }
     }
@@ -58,6 +60,7 @@ impl ConflictKind {
             ConflictKind::CannotRemoveLastServerAdmin => {
                 "Cannot remove the last server administrator; promote another admin first"
             }
+            ConflictKind::CannotBlockSelf => "Cannot block a character on your own account",
             ConflictKind::ApiKeyNameAlreadyExists => "A key with this name already exists",
         }
     }

@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use sqlx::PgPool;
+use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
 pub struct SessionRow {
@@ -74,6 +74,20 @@ pub async fn delete_for_account(pool: &PgPool, account_id: Uuid) -> Result<u64> 
         .execute(pool)
         .await
         .context("failed to delete sessions for account")?;
+    Ok(result.rows_affected())
+}
+
+/// Transactional variant of [`delete_for_account`], so a caller can tear down an
+/// account's sessions atomically alongside other writes (e.g. the block
+/// transaction, which clears tokens and inserts the block row in one unit).
+pub async fn delete_for_account_in_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    account_id: Uuid,
+) -> Result<u64> {
+    let result = sqlx::query!("DELETE FROM session WHERE account_id = $1", account_id)
+        .execute(&mut **tx)
+        .await
+        .context("failed to delete sessions for account (tx)")?;
     Ok(result.rows_affected())
 }
 
@@ -244,6 +258,26 @@ mod tests {
             list_ids_for_account(&pool, b).await.unwrap(),
             vec!["b1".to_string()]
         );
+    }
+
+    #[sqlx::test]
+    async fn delete_for_account_in_tx_removes_rows_and_rolls_back(pool: PgPool) {
+        let a = make_account(&pool).await;
+        insert(&pool, "a1", a, None, false).await.unwrap();
+        insert(&pool, "a2", a, None, false).await.unwrap();
+
+        // Rollback leaves the rows intact (proves it participates in the tx).
+        let mut tx = pool.begin().await.unwrap();
+        let removed = delete_for_account_in_tx(&mut tx, a).await.unwrap();
+        assert_eq!(removed, 2);
+        tx.rollback().await.unwrap();
+        assert_eq!(list_ids_for_account(&pool, a).await.unwrap().len(), 2);
+
+        // Commit removes them.
+        let mut tx = pool.begin().await.unwrap();
+        delete_for_account_in_tx(&mut tx, a).await.unwrap();
+        tx.commit().await.unwrap();
+        assert!(list_ids_for_account(&pool, a).await.unwrap().is_empty());
     }
 
     #[sqlx::test]
