@@ -11,7 +11,7 @@ use crate::{
     app_state::AppState,
     error::AppError,
     handlers::{cookie, crypto},
-    services::auth::{SsoCompletionInput, complete_sso_callback},
+    services::auth::{SsoCompletionInput, SsoOutcome, complete_sso_callback},
     session::{InflightRecord, Session},
 };
 
@@ -195,7 +195,7 @@ pub async fn callback(
     let encryption_key = crypto::token_encryption_key(&state.config.encryption_secret)?;
     let access_token_expires_at = Utc::now() + Duration::seconds(token_resp.expires_in);
 
-    let account_id = complete_sso_callback(
+    let outcome = complete_sso_callback(
         &state.db,
         SsoCompletionInput {
             add_character_account_id: inflight.account_id,
@@ -214,6 +214,13 @@ pub async fn callback(
         },
     )
     .await?;
+
+    // A blocked character gets no session and no cookie — just an informational
+    // redirect. This covers both the login and add-character flows.
+    let account_id = match outcome {
+        SsoOutcome::Authenticated(id) => id,
+        SsoOutcome::Blocked => return Ok(Redirect::to("/blocked").into_response()),
+    };
 
     // Create the persistent session row. The session ID is a fresh UUID; the
     // cookie carries it as a signed JWT.

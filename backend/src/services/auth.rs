@@ -4,9 +4,32 @@ use uuid::Uuid;
 
 use crate::{
     audit::{self, ActingCharacter, AuditEvent, ServerAdminGrantSource},
-    db::{accounts, accounts::ResolutionOutcome, characters},
+    db::{accounts, accounts::ResolutionOutcome, blocks, characters},
     error::AppError,
 };
+
+/// The result of an SSO completion attempt. A blocked character is not an
+/// error (nothing went wrong; the system worked as designed) — it is a distinct
+/// outcome the handler maps to a `/blocked` redirect with no session, rather
+/// than the authenticated happy path.
+#[derive(Debug, PartialEq, Eq)]
+pub enum SsoOutcome {
+    /// SSO completed; the resolved account has a live session to establish.
+    Authenticated(Uuid),
+    /// The resolved character is in the block list. No account/character/token
+    /// was written; a `blocked_login_rejected` audit row was recorded.
+    Blocked,
+}
+
+impl SsoOutcome {
+    /// The authenticated account id, or `None` for a blocked outcome.
+    pub fn account_id(&self) -> Option<Uuid> {
+        match self {
+            SsoOutcome::Authenticated(id) => Some(*id),
+            SsoOutcome::Blocked => None,
+        }
+    }
+}
 
 /// Inputs to the post-ESI SSO completion path. The handler does the OAuth2
 /// code exchange and ESI public-info fetches, then hands these values to this
@@ -29,11 +52,33 @@ pub struct SsoCompletionInput<'a> {
 
 /// Performs the SSO completion transaction: account resolution, character
 /// upsert, main promotion, reactivation, and audit emissions. Returns the
-/// resolved `account_id`.
+/// resolved `account_id` (or [`SsoOutcome::Blocked`] when the character is
+/// blocked).
 pub async fn complete_sso_callback(
     pool: &PgPool,
     input: SsoCompletionInput<'_>,
-) -> Result<Uuid, AppError> {
+) -> Result<SsoOutcome, AppError> {
+    // Block check FIRST — before any account/character/token write, and before
+    // `resolve_or_create` would create an account. Covers both the login flow
+    // and the add-character flow (it precedes the resolve branch), so a blocked
+    // pilot can neither sign in as themselves nor be attached as someone's alt.
+    if blocks::is_eve_character_blocked(pool, input.eve_character_id).await? {
+        // Record the rejected attempt in its own short transaction. actor is
+        // NULL (no session); the subject character lives in `details`.
+        let mut audit_tx = pool.begin().await.map_err(anyhow::Error::from)?;
+        audit::record_in_tx(
+            &mut audit_tx,
+            None,
+            None,
+            AuditEvent::BlockedLoginRejected {
+                eve_character_id: input.eve_character_id,
+            },
+        )
+        .await?;
+        audit_tx.commit().await.map_err(anyhow::Error::from)?;
+        return Ok(SsoOutcome::Blocked);
+    }
+
     let mut tx = pool.begin().await.map_err(anyhow::Error::from)?;
 
     let (account_id, outcome) = accounts::resolve_or_create(
@@ -162,5 +207,5 @@ pub async fn complete_sso_callback(
     }
 
     tx.commit().await.map_err(anyhow::Error::from)?;
-    Ok(account_id)
+    Ok(SsoOutcome::Authenticated(account_id))
 }

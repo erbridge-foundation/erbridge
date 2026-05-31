@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use crate::{
     app_state::AppState,
-    db::accounts,
+    db::{accounts, blocks},
     error::AppError,
     handlers::{cookie, crypto},
     services::api_keys as svc,
@@ -78,7 +78,20 @@ where
                         .map_err(AppError::Internal)?;
                     match account {
                         Some(a) if a.status == "soft_deleted" => Err(AppError::AccountSoftDeleted),
-                        Some(_) => Ok(AuthenticatedAccount(account_id)),
+                        Some(_) => {
+                            // Bearer is the one auth route that survives block
+                            // teardown (API keys are not deleted on block), so
+                            // it carries the explicit block check. The session
+                            // cookie path needs none — block deletes the
+                            // sessions, identical to soft-delete enforcement.
+                            if blocks::account_has_blocked_character(&state.db, account_id)
+                                .await
+                                .map_err(AppError::Internal)?
+                            {
+                                return Err(AppError::AccountBlocked);
+                            }
+                            Ok(AuthenticatedAccount(account_id))
+                        }
                         None => Err(AppError::Unauthorized),
                     }
                 }

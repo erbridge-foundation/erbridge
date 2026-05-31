@@ -236,6 +236,8 @@ async fn test_orphan_claim_does_not_emit_account_reactivated(pool: PgPool) {
         .unwrap();
     let other = complete_sso_callback(&pool, sso_input(None, 99101, "Other"))
         .await
+        .unwrap()
+        .account_id()
         .unwrap();
     let mut tx = pool.begin().await.unwrap();
     accounts::soft_delete(&mut tx, other).await.unwrap();
@@ -277,6 +279,8 @@ async fn test_add_character_writes_character_added_with_main_as_actor(pool: PgPo
     // Register the first account; this character becomes the main.
     let account_id = complete_sso_callback(&pool, sso_input(None, 44440, "Main Pilot"))
         .await
+        .unwrap()
+        .account_id()
         .unwrap();
 
     sqlx::query!("DELETE FROM audit_log")
@@ -305,6 +309,8 @@ async fn test_add_character_writes_character_added_with_main_as_actor(pool: PgPo
 async fn test_add_character_claiming_orphan_writes_orphan_claim_with_main_actor(pool: PgPool) {
     let account_id = complete_sso_callback(&pool, sso_input(None, 55550, "Main Pilot"))
         .await
+        .unwrap()
+        .account_id()
         .unwrap();
     // Insert an orphan that the add-character flow will claim.
     sqlx::query!(
@@ -342,6 +348,8 @@ async fn test_add_character_claiming_orphan_writes_orphan_claim_with_main_actor(
 async fn test_reactivation_writes_account_reactivated(pool: PgPool) {
     let account_id = complete_sso_callback(&pool, sso_input(None, 66660, "Returning Pilot"))
         .await
+        .unwrap()
+        .account_id()
         .unwrap();
 
     // Manually soft-delete to simulate the prior delete.
@@ -379,6 +387,8 @@ async fn test_delete_account_writes_account_deletion_requested(pool: PgPool) {
         .unwrap();
     let user = complete_sso_callback(&pool, sso_input(None, 77771, "User Pilot"))
         .await
+        .unwrap()
+        .account_id()
         .unwrap();
 
     sqlx::query!("DELETE FROM audit_log")
@@ -406,6 +416,8 @@ async fn test_set_main_writes_character_set_main_with_outgoing_main_snapshot(poo
     // Account with main A.
     let account_id = complete_sso_callback(&pool, sso_input(None, 88880, "Pilot A"))
         .await
+        .unwrap()
+        .account_id()
         .unwrap();
     // Add character B via add-character flow.
     complete_sso_callback(&pool, sso_input(Some(account_id), 88881, "Pilot B"))
@@ -470,6 +482,8 @@ async fn test_set_main_writes_character_set_main_with_outgoing_main_snapshot(poo
 async fn test_remove_character_writes_character_removed(pool: PgPool) {
     let account_id = complete_sso_callback(&pool, sso_input(None, 99990, "Main Pilot"))
         .await
+        .unwrap()
+        .account_id()
         .unwrap();
     // Add a removable alt.
     complete_sso_callback(&pool, sso_input(Some(account_id), 99991, "Alt Pilot"))
@@ -507,6 +521,8 @@ async fn test_remove_character_writes_character_removed(pool: PgPool) {
 async fn test_rejected_character_remove_writes_no_audit_row(pool: PgPool) {
     let account_id = complete_sso_callback(&pool, sso_input(None, 12340, "Only Pilot"))
         .await
+        .unwrap()
+        .account_id()
         .unwrap();
     let only_internal = sqlx::query!(
         "SELECT id FROM eve_character WHERE eve_character_id = $1",
@@ -546,6 +562,8 @@ async fn test_rejected_character_remove_writes_no_audit_row(pool: PgPool) {
 async fn test_create_api_key_writes_api_key_created(pool: PgPool) {
     let account_id = complete_sso_callback(&pool, sso_input(None, 13130, "Owner Pilot"))
         .await
+        .unwrap()
+        .account_id()
         .unwrap();
 
     sqlx::query!("DELETE FROM audit_log")
@@ -576,6 +594,8 @@ async fn test_create_api_key_writes_api_key_created(pool: PgPool) {
 async fn test_revoke_api_key_writes_api_key_revoked(pool: PgPool) {
     let account_id = complete_sso_callback(&pool, sso_input(None, 14140, "Owner Pilot"))
         .await
+        .unwrap()
+        .account_id()
         .unwrap();
     let created = backend::services::api_keys::create_key(&pool, account_id, "to-revoke", None)
         .await
@@ -601,6 +621,8 @@ async fn test_revoke_api_key_writes_api_key_revoked(pool: PgPool) {
 async fn test_rejected_create_api_key_writes_no_audit_row(pool: PgPool) {
     let account_id = complete_sso_callback(&pool, sso_input(None, 15150, "Owner Pilot"))
         .await
+        .unwrap()
+        .account_id()
         .unwrap();
     // Insert a key with the same name first so the second create hits the
     // unique violation.
@@ -629,6 +651,8 @@ async fn test_rejected_create_api_key_writes_no_audit_row(pool: PgPool) {
 async fn test_revoke_nonexistent_key_writes_no_audit_row(pool: PgPool) {
     let account_id = complete_sso_callback(&pool, sso_input(None, 16160, "Owner Pilot"))
         .await
+        .unwrap()
+        .account_id()
         .unwrap();
 
     sqlx::query!("DELETE FROM audit_log")
@@ -664,6 +688,8 @@ async fn bootstrap_session(
     let account_id =
         complete_sso_callback(&state.db, sso_input(None, eve_character_id, character_name))
             .await
+            .unwrap()
+            .account_id()
             .unwrap();
     let session_id = Uuid::new_v4().to_string();
     state
