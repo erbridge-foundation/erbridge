@@ -211,7 +211,7 @@ The function SHALL accept these optional filter axes plus a keyset cursor and li
 - `actor_account_id: Option<Uuid>` — if `Some`, restricts to rows where `actor_account_id` matches; if `None`, no restriction.
 - `target_type: Option<&str>` — if `Some`, restricts to rows where `target_type` matches; if `None`, no restriction.
 - `target_id: Option<&str>` — if `Some`, restricts to rows where `target_id` matches; if `None`, no restriction.
-- `target_name: Option<&str>` — if `Some`, restricts to rows where `LOWER(target_name)` matches the lowercased argument (case-insensitive; backed by the `LOWER(target_name)` expression index); if `None`, no restriction.
+- `target_name: Option<&str>` — if `Some`, restricts to rows where `target_name` contains the argument as a case-insensitive substring (`target_name ILIKE '%fragment%'`); LIKE metacharacters (`%`, `_`, `\`) in the argument SHALL be escaped so they match literally. A leading-wildcard substring match cannot use the `LOWER(target_name)` expression index (the index still backs equality / left-anchored prefix probes); the substring scan is accepted at the audit log's scale because human "find this pilot" search needs a fragment, not the full name. If `None`, no restriction.
 - `before: Option<DateTime<Utc>>` — if `Some`, restricts to rows where `occurred_at < before` (keyset cursor for newest-first pagination); if `None`, no restriction.
 - `limit: i64` — maximum rows to return; the caller is responsible for clamping to a sensible upper bound.
 
@@ -227,10 +227,15 @@ Results SHALL be ordered by `occurred_at DESC` (newest first). When multiple fil
 - **WHEN** `list_audit_log` is called with `target_type = Some("character")` and `target_id = Some("555")`
 - **THEN** only rows whose `target_type = "character"` and `target_id = "555"` are returned
 
-#### Scenario: Filter by target_name is case-insensitive
-- **GIVEN** an audit row with `target_name = "Boss Pilot"`
-- **WHEN** `list_audit_log` is called with `target_name = Some("boss pilot")`
-- **THEN** that row is returned (the match lowercases both sides)
+#### Scenario: Filter by target_name is a case-insensitive substring match
+- **GIVEN** an audit row with `target_name = "Wasp 223"`
+- **WHEN** `list_audit_log` is called with `target_name = Some("wasp")`
+- **THEN** that row is returned (a lowercased fragment matches a substring of the name); calling it with `target_name = Some("boss pilot")` against `target_name = "Boss Pilot"` also returns the row (the full name is itself a substring)
+
+#### Scenario: target_name LIKE metacharacters are treated literally
+- **GIVEN** an audit row with `target_name = "Wasp 223"`
+- **WHEN** `list_audit_log` is called with `target_name = Some("%")`
+- **THEN** the row is NOT returned (the `%` is escaped and matched as a literal character, not a wildcard)
 
 #### Scenario: Target filters combine with actor and event_type filters
 - **GIVEN** mixed audit rows

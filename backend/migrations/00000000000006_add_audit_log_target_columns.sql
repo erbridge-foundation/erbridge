@@ -15,8 +15,11 @@ ALTER TABLE audit_log
 CREATE INDEX audit_log_target_id_idx ON audit_log (target_type, target_id)
     WHERE target_id IS NOT NULL;
 
--- Case-insensitive target-name search (the axis a human actually types). Btree
--- on LOWER(...) backs `LOWER(target_name) = LOWER($1)` and prefix LIKE.
+-- Btree on LOWER(target_name) for target-name lookups. NOTE: list_audit_log now
+-- does a case-insensitive *substring* match (`target_name ILIKE '%fragment%'`),
+-- which a leading wildcard prevents this index from accelerating; the index is
+-- retained because it still backs equality and left-anchored prefix probes
+-- (`LOWER(target_name) = LOWER($1)` / `LIKE 'fragment%'`) for any future caller.
 CREATE INDEX audit_log_target_name_idx ON audit_log (LOWER(target_name))
     WHERE target_name IS NOT NULL;
 

@@ -680,8 +680,9 @@ pub async fn record_in_tx(
 ///
 /// Filter axes (all conjunctive when supplied): `event_type`,
 /// `actor_account_id`, `target_type`, `target_id`, `target_name`
-/// (case-insensitive, backed by the `LOWER(target_name)` expression index),
-/// and the `before` keyset cursor.
+/// (case-insensitive *substring* match via `ILIKE '%fragment%'`, LIKE
+/// metacharacters in the fragment escaped to match literally), and the
+/// `before` keyset cursor.
 ///
 /// All filters bind as parameters — no string interpolation, no SQL injection
 /// surface.
@@ -696,6 +697,19 @@ pub async fn list_audit_log(
     before: Option<DateTime<Utc>>,
     limit: i64,
 ) -> Result<Vec<AuditLogEntry>> {
+    // `target_name` is a case-insensitive *substring* search (the admin types a
+    // fragment, e.g. "wasp" to find "Wasp 223"). LIKE metacharacters in the
+    // fragment are escaped so they match literally, then the value is wrapped in
+    // `%…%`. A leading-wildcard ILIKE cannot use the `LOWER(target_name)` index,
+    // so this is a scan — acceptable at the audit log's scale.
+    let target_name_pattern = target_name.map(|fragment| {
+        let escaped = fragment
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_");
+        format!("%{escaped}%")
+    });
+
     let rows = sqlx::query!(
         r#"
         SELECT id, occurred_at, actor_account_id, actor_character_id,
@@ -706,7 +720,7 @@ pub async fn list_audit_log(
           AND ($2::UUID IS NULL        OR actor_account_id = $2)
           AND ($3::TEXT IS NULL        OR target_type      = $3)
           AND ($4::TEXT IS NULL        OR target_id        = $4)
-          AND ($5::TEXT IS NULL        OR LOWER(target_name) = LOWER($5))
+          AND ($5::TEXT IS NULL        OR target_name ILIKE $5 ESCAPE '\')
           AND ($6::TIMESTAMPTZ IS NULL OR occurred_at      < $6)
         ORDER BY occurred_at DESC
         LIMIT $7
@@ -715,7 +729,7 @@ pub async fn list_audit_log(
         actor_account_id,
         target_type,
         target_id,
-        target_name,
+        target_name_pattern,
         before,
         limit,
     )
@@ -1986,13 +2000,13 @@ mod tests {
     }
 
     #[sqlx::test]
-    async fn list_audit_log_filter_by_target_name_is_case_insensitive(pool: PgPool) {
+    async fn list_audit_log_filter_by_target_name_is_case_insensitive_substring(pool: PgPool) {
         insert_targeted_row(
             &pool,
             "server_admin_granted",
             "account",
             &Uuid::new_v4().to_string(),
-            Some("Boss Pilot"),
+            Some("Wasp 223"),
         )
         .await;
         insert_targeted_row(
@@ -2004,11 +2018,38 @@ mod tests {
         )
         .await;
 
-        let rows = list_audit_log(&pool, None, None, None, None, Some("boss pilot"), None, 10)
+        // A lowercase fragment ("wasp") matches "Wasp 223" — case-insensitive
+        // substring, not exact match.
+        let rows = list_audit_log(&pool, None, None, None, None, Some("wasp"), None, 10)
             .await
             .unwrap();
         assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].target_name.as_deref(), Some("Boss Pilot"));
+        assert_eq!(rows[0].target_name.as_deref(), Some("Wasp 223"));
+
+        // A non-matching fragment finds nothing.
+        let none = list_audit_log(&pool, None, None, None, None, Some("frigate"), None, 10)
+            .await
+            .unwrap();
+        assert!(none.is_empty());
+    }
+
+    #[sqlx::test]
+    async fn list_audit_log_target_name_like_metacharacters_are_literal(pool: PgPool) {
+        insert_targeted_row(
+            &pool,
+            "server_admin_granted",
+            "account",
+            &Uuid::new_v4().to_string(),
+            Some("Wasp 223"),
+        )
+        .await;
+
+        // "%" must be treated literally, not as a LIKE wildcard — so it does NOT
+        // match "Wasp 223".
+        let rows = list_audit_log(&pool, None, None, None, None, Some("%"), None, 10)
+            .await
+            .unwrap();
+        assert!(rows.is_empty());
     }
 
     #[sqlx::test]
