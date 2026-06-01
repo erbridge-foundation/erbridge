@@ -1,85 +1,82 @@
 ## Context
 
-EVE's SSO access-token JWT includes an `owner` claim — a base64 hash that CCP rotates whenever a character changes hands between EVE accounts (sale, trade, restore). It is the canonical "is this still the same human's character?" signal.
+EVE's SSO access-token JWT includes an `owner` claim — a base64 hash CCP rotates whenever a character changes hands between EVE accounts (sale, trade, restore). CCP's ESI best-practices documentation names it the canonical ownership signal and instructs applications to use it to "disassociate [a character] with the prior owner's login" when it changes.
 
-Today `handlers/auth.rs::parse_esi_jwt_claims` decodes the JWT into `EsiJwtClaims { sub, name, scp }` and drops everything else, including `owner`. The callback persistence path (`services/auth.rs`) upserts the `eve_character` row keyed by the `UNIQUE eve_character_id`. Its `ON CONFLICT` ownership guard deliberately **refuses to move a character between accounts** — once `account_id` is set, a later login by a different account cannot steal it. That guard is correct for normal operation but means a genuinely transferred character would otherwise stay welded to its previous owner forever.
+**Key fact established during exploration (from CCP docs):** CCP documents *no* automatic revocation of refresh tokens on transfer. A refresh token "has no expiration unless revoked," and the only documented cause of invalidation is the application revoking it manually. Therefore a sold character's refresh token may keep producing valid access tokens under the new owner — refresh *failure* is **not** a reliable transfer signal. The owner-hash change is the only reliable one. (This is why mature tools such as Wanderer store the hash.)
 
-Relevant existing primitives we can reuse rather than reinvent:
+Today `handlers/auth.rs::parse_esi_jwt_claims` decodes the JWT into `EsiJwtClaims { sub, name, scp }` and drops `owner`. The token-refresh path `esi/token.rs::refresh_access_token` returns `RefreshedTokens { access_token, refresh_token, access_token_expires_at }` and likewise drops `owner`, even though the refreshed access token is itself a JWT carrying it.
 
-- `db/characters.rs::clear_tokens_for_account(tx, account_id)` — NULLs the credential columns on every character of an account (built for soft-delete).
-- `db/sessions.rs::delete_for_account(...)` (via `SessionStore::delete_for_account`) — removes all session rows for an account.
-- `db/characters.rs::create_orphan` and the orphan-claim branch of the upsert — the existing mechanism for a character with `account_id = NULL`.
-- The audit module's dormant-variant house style for events not yet emitted.
+The codebase has **no background-task infrastructure** — `main.rs` builds the router and calls `axum::serve`; there is no `tokio::spawn`, interval, or scheduler anywhere. This change introduces the first one.
 
-The flow runs inside the callback's single transaction, with a per-handler `AuthenticatedAccount` model (no router-tree middleware).
+Reusable primitives:
+- `esi/token.rs::refresh_access_token` — OAuth2 refresh-token grant; failure is non-fatal by design.
+- `db/characters.rs::update_tokens_by_eve_id` — writes refreshed tokens (currently bumps the noisy `updated_at`).
+- `db/characters.rs::clear_tokens_for_account` — NULLs credential columns (the existing "must re-auth" convention).
+- The audit module's dormant-variant house style (`MapCreated`, `AclCreated`, … added ahead of their consumers).
 
 ## Goals / Non-Goals
 
 **Goals:**
-
-- Persist the `owner` claim as `eve_character.owner_hash` on every successful callback.
-- Detect an owner-hash change against the stored value and treat it as a character transfer.
-- On transfer, sever the previous owner's access: wipe the credential columns on **all** of their characters and delete **all** of their session rows, forcing a full re-auth.
-- Detach the transferred character (to the existing orphan state) and let the normal claim path re-link it to the authenticating account with fresh tokens.
-- Record the transfer in the audit log.
-- Keep the change backend-only.
+- Capture the `owner` claim as `eve_character.owner_hash` on every successful callback and every successful background refresh.
+- Detect a transfer via a **daily background sweep** that refreshes tokens and compares the hash — not at login time.
+- Represent token health as a three-state `token_status` (`valid` / `token_expired` / `owner_mismatch`) that drives UI guidance.
+- Force re-authentication of stale credentials via a 7-day account-idle waterfall.
+- Let a matching-hash auth self-heal any non-`valid` state.
 
 **Non-Goals:**
-
-- No cleanup of the previous owner's map/ACL entries that referenced the transferred character (separate follow-up). The audit event surfaces the transfer meanwhile.
-- No in-app notice to the previous owner. They performed the transfer deliberately; being signed out is self-explanatory.
-- No JWKS signature validation of the access token (unchanged from today — ESI tokens are trusted post-exchange).
-- No proactive revocation of a lingering refresh token before the next login (see Risks).
+- **No login-time enforcement / account severance.** The original synchronous "sever the previous owner in the callback transaction" design is replaced; detection is moved out of the login path entirely.
+- No automatic detach/delete of an `owner_mismatch` character. It is flagged; removal is user- or admin-initiated.
+- No proactive/while-active refresh and **no SSE dependency** — the daily cadence needs no notion of "active".
+- No JWKS signature validation of access tokens (unchanged — trusted post-exchange).
+- No per-character idle clock. Idle is measured account-wide via `account.last_login` (deliberately blunt).
 
 ## Decisions
 
-### Detect on the existing `account_id`-set branch; act before the upsert
+### Detect via a daily sweep, not at login
+A character transfer takes ~24h to complete but flips the owner hash almost immediately on initiation. A once-daily sweep therefore catches the change within the transfer window, before the buyer ever logs in. Moving detection off the login path eliminates the gap the original login-time design had: in the login flow `db/accounts.rs::resolve_or_create` resolves a welded character straight back into the *previous* owner's account (there is no distinct "account B" to re-link to), so login-time detach-and-reclaim could not produce the right owner without restructuring resolution. The sweep sidesteps this entirely.
 
-The owner-hash comparison happens only when a row already exists with `account_id` set and the stored `owner_hash` is non-null and differs from the presented claim. First-seen rows and orphan rows have nothing to compare against and simply record the claim. When a change is detected, enforcement runs **before** the upsert, and the final step sets `account_id = NULL`, which converts the situation into the already-specified orphan-claim case — so the existing claim path re-links the character with no special-casing.
+*Alternative considered — login-time enforcement (original proposal).* Rejected: it both had the resolve-into-previous-owner gap and required heavy synchronous severance in the auth hot path.
 
-*Alternative considered — reassign `account_id` old→new in place.* Rejected: it would require overriding the upsert's ownership `CASE` guard, and it risks the previous owner's references silently inheriting to the new owner. Detach-to-NULL reuses a path the system already handles.
+### Refresh-success + hash compare is the transfer signal; refresh-failure is only "expired"
+Because CCP does not revoke refresh tokens on transfer, the sweep must actually refresh and read the *new* JWT's `owner` claim. Only a **successful refresh with a differing hash** sets `owner_mismatch` (it is proof). A **failed refresh** sets `token_expired` — we cannot read a hash from a failure, so we must not claim "sold". This keeps the `owner_mismatch` state honest: it is never a guess.
 
-### Sever the whole previous account, not just the transferred character
+### Three states, advisory and self-healing — "a successful auth always wins"
+`token_status` is a UI hint, not a lock. Any successful login or refresh presenting an owner hash that **matches** the current row resets `token_status = valid` and restores tokens. This self-heals false-positive `owner_mismatch` (CCP hiccup) and genuine re-acquisition (chars get sold back / transfers reversed) for free, and means no state is terminal. The source of truth is always "the hash from the latest successful auth," exactly as CCP intends.
 
-A detected transfer wipes credentials on **all** of the previous owner's characters and clears **all** of their sessions, not only the transferred one. Rationale: an owner-hash change is a strong signal that the previous owner's control of this identity is gone; treating the account as compromised and forcing a clean re-auth is the conservative, auditable choice. It also mirrors the existing soft-delete token-wipe behaviour, so it is consistent with the codebase rather than a novel pattern.
+`token_expired` and `owner_mismatch` differ only in the *action they imply*: `token_expired` → the legitimate owner re-logs in and it clears; `owner_mismatch` → the old owner *cannot* re-auth (hash now belongs to the buyer), so the row is removed by the user or an admin. That difference in call-to-action is the entire justification for a third state over a single boolean.
 
-*Alternative considered — wipe only the transferred character.* Rejected for this security-driven change; it leaves the previous owner partially authenticated on an account that just lost a character to transfer.
+### Account-level idle clock (`account.last_login`)
+The 7-day waterfall measures idle at the **account** level, not per character. A per-character "last authed" clock was considered and rejected as over-engineering: if nobody has logged into the account for 7 days, forcing a fresh login on next visit costs the legitimate user nothing, and expiring all their characters' tokens together is acceptable. `eve_character.updated_at` is unusable for this (it bumps on name/corp changes too); `session.last_seen_at` is per-session. A dedicated `account.last_login` is the clean signal.
 
-### Clear only the previous owner's sessions
+### Schema: nullable `owner_hash`, `token_status` with CHECK, `account.last_login`
+`owner_hash` nullable so legacy rows migrate cleanly; null = "not yet observed", never a transfer (the first post-migration refresh/login records it). `token_status TEXT NOT NULL DEFAULT 'valid'` with a CHECK over the three values (string + CHECK matches the existing `account.status` convention rather than a PG enum type). `account.last_login` nullable (null treated as "unknown" — the waterfall can backfill on first observation rather than mass-expiring legacy accounts).
 
-The authenticating account (the new owner) is mid-login and receives a fresh session through the normal flow; only the previous owner's sessions are deleted. There is no reason to bounce the legitimate new owner.
+### New dormant audit variants
+`CharacterOwnerMismatch { eve_character_id, account_id }` (and optionally `CharacterTokenExpired { … }`) added in the established dormant-variant style, as the durable record and the seam a future ACL-cleanup change hangs off.
 
-### New audit variant `CharacterTransferDetected`
-
-A dedicated audit event `{ eve_character_id, old_account_id, new_account_id }` is added in the existing dormant-variant style. It is the durable record of the transfer and the seam a future ACL-cleanup change can hang off.
-
-### Schema: nullable `owner_hash TEXT` on `eve_character`
-
-Nullable so existing rows migrate cleanly. A null stored hash is treated as "unknown" — never a transfer — so previously-linked characters are not falsely flagged on their first post-migration login; that login records the hash for future comparisons.
+### FK-cascade invariant for future character-scoped tables
+Nothing currently FKs to `eve_character.id` (the cascade graph is rooted at `account`). When map-ownership / ACL-membership tables arrive, they MUST FK to `eve_character.id ON DELETE CASCADE` (and to `account.id ON DELETE CASCADE` as today), so that removing an `owner_mismatch` character cleans up its references automatically. The audit log MUST NOT cascade (it records `eve_character_id` as a plain `i64`, already decoupled). Recorded here as a forward constraint, not implemented now.
 
 ## Risks / Trade-offs
 
-- **The check only fires on re-auth.** [Risk] It catches the new owner arriving, not the previous owner's still-valid refresh token continuing to work until it next refreshes or expires. → Mitigation: wiping the previous owner's credential columns on transfer removes the stored refresh token from our side; the residual exposure is any access token already minted, bounded by its short lifetime. Full proactive revocation is out of scope.
-- **Whole-account severance is aggressive.** [Risk] One character's transfer logs the previous owner out of all their characters and forces re-auth of each. → Mitigation: deliberate and documented; matches the soft-delete pattern. The previous owner re-auths normally; first-character-promotes-to-main restores their main.
-- **Null/legacy owner hashes.** [Risk] Rows that predate the column have `owner_hash IS NULL`. → Mitigation: treat null as "no comparison" — record on next login, never treat as a transfer.
-- **Self-retransfer / hash returning.** [Risk] If a character returns to a previous owner, that is simply another owner-hash change and re-runs the same enforcement against whoever currently holds the row. No special handling needed.
-- **sqlx offline cache drift.** [Risk] New/changed `sqlx::query!` invocations break CI if the cache is stale. → Mitigation: regenerate with `cargo sqlx prepare -- --all-targets` and commit the `.sqlx/` diff.
+- **Sweep load / ESI rate limits.** [Risk] Refreshing every character daily is N token-endpoint calls. → Mitigation: spread/throttle within the run; the refresh endpoint is not the rate-limited ESI data plane; daily cadence is low. Tune batch size if needed.
+- **Detection latency up to ~24h.** [Risk] A transfer is caught on the next sweep, not instantly. → Accepted: the transfer itself takes ~24h, and there is no synchronous threat to gate (the buyer can't usefully act on a not-yet-linked character). Proactive/while-active refresh is the deferred follow-up if tighter latency is ever needed.
+- **Null/legacy owner hashes.** [Risk] Rows predating the column have `owner_hash IS NULL`. → Treat null as "no comparison": record on next successful auth, never a transfer.
+- **Single-instance background task.** [Risk] If the backend ever scales horizontally, multiple instances would each run the sweep. → Out of scope; same single-instance assumption as the current in-memory `SessionStore`. Note it when scale-out is designed.
+- **sqlx offline cache drift.** [Risk] New/changed `sqlx::query!` invocations break CI if the cache is stale. → Regenerate with `cargo sqlx prepare -- --all-targets` and commit `.sqlx/`.
 
 ## Migration Plan
 
-1. Add migration: `ALTER TABLE eve_character ADD COLUMN owner_hash TEXT;` (nullable, no default — existing rows stay null until next login).
-2. Deploy backend; the first login of each character backfills its `owner_hash`. No data backfill job required.
-3. Rollback: dropping the column is safe — the enforcement is inert when the column/claim are absent, and no other table references it.
+1. Add migration `00000000000008_*`: `owner_hash TEXT` + `token_status TEXT NOT NULL DEFAULT 'valid' CHECK (...)` on `eve_character`; `last_login TIMESTAMPTZ` on `account`.
+2. Deploy backend; the sweep and normal logins backfill `owner_hash` and `last_login` over time. No data backfill job required. Existing rows are `token_status = 'valid'` by default.
+3. Rollback: dropping the columns is safe — the sweep is inert without them and nothing else references them.
 
 ## Open Questions
 
-- None blocking. The map/ACL cleanup for a transferred character is acknowledged as a deliberate follow-up, not an open question for this change.
+- Whether to also emit a `CharacterTokenExpired` audit event or only `CharacterOwnerMismatch` (transfer is the security-relevant one; plain expiry is noise). Leaning mismatch-only; settle at implementation.
+- Exact sweep throttling/batching parameters — tune against real token counts.
 
 ## Future Work (out of scope here — separate changes)
 
-This change is the **login-time** safety net: it detects a transfer only when someone re-authenticates. Two follow-ups extend coverage, in dependency order:
-
-1. **Proactive token refresh while active.** Refresh a character's access token on logon and on a cadence *while the owner is active*; the refreshed JWT re-exposes the `owner` claim, so the same owner-hash compare runs proactively. On refresh failure (CCP revokes all app authorisations on transfer, so the stored refresh token dies at the source), mark the token expired / NULL the credential columns and require re-auth — do **not** auto-detach (a dead token alone is not proof of transfer; could be a CCP outage or plain expiry). Depends on a notion of "active".
-2. **SSE presence/event channel** — the dependency under #1. "Active" = holding an open authenticated SSE connection. Scope the eventual change to a **presence channel + a `publish(event, audience)` dispatch seam** (an `EventDispatcher` trait with a `Local` in-memory implementation), explicitly **not** a cross-instance event bus. The bus is a *future implementation of that trait*, built only when real horizontal scale-out is decided — designing it now would lock in distributed-systems choices with the least information. Producers must call `publish(...)`, never touch the connection registry directly, so multi-instance later is a trait swap, not a rewrite. Note: multi-instance also breaks the current in-memory `SessionStore` (`tokio::sync::RwLock`) — a separate today-problem to resolve before scale-out.
-
-Maps will be the first heavy consumer of the SSE channel; the channel should land on its own merits, not as a sub-feature of maps or token-refresh.
+1. **Automatic removal + map/ACL cleanup** for an `owner_mismatch` character, once those tables exist, leaning on the FK-cascade invariant above.
+2. **Proactive / while-active refresh** for sub-24h detection latency, built on an **SSE presence channel + a `publish(event, audience)` dispatch seam** (an `EventDispatcher` trait with a `Local` in-memory impl) — explicitly **not** a cross-instance bus. The daily sweep here does NOT depend on any of this; it is the standalone baseline. Multi-instance also breaks the in-memory `SessionStore` and the single-instance sweep assumption — a separate scale-out concern.
