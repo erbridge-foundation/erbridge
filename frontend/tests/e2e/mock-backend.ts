@@ -134,7 +134,12 @@ type AdminAccount = {
 	status: string;
 	is_server_admin: boolean;
 	created_at: string;
-	characters: { eve_character_id: number; name: string; is_main: boolean }[];
+	characters: {
+		eve_character_id: number;
+		name: string;
+		is_main: boolean;
+		token_status: 'active' | 'expired' | 'owner_mismatch';
+	}[];
 };
 const adminAccounts: AdminAccount[] = [
 	{
@@ -142,14 +147,18 @@ const adminAccounts: AdminAccount[] = [
 		status: 'active',
 		is_server_admin: true,
 		created_at: '2025-01-01T00:00:00Z',
-		characters: [{ eve_character_id: 1001, name: 'Main Pilot', is_main: true }]
+		characters: [
+			{ eve_character_id: 1001, name: 'Main Pilot', is_main: true, token_status: 'active' },
+			// A transferred alt, so the Characters-tab filter has something to surface.
+			{ eve_character_id: 1003, name: 'Sold Alt', is_main: false, token_status: 'owner_mismatch' }
+		]
 	},
 	{
 		id: 'acc2',
 		status: 'active',
 		is_server_admin: false,
 		created_at: '2025-02-01T00:00:00Z',
-		characters: [{ eve_character_id: 2001, name: 'Promote Me', is_main: true }]
+		characters: [{ eve_character_id: 2001, name: 'Promote Me', is_main: true, token_status: 'active' }]
 	}
 ];
 let blocks: {

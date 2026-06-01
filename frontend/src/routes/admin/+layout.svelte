@@ -12,6 +12,9 @@
 		<nav class="admin-tabs" aria-label="Admin sections">
 			<a href="/admin" class:active={path === '/admin'}>{m.admin_nav_overview()}</a>
 			<a href="/admin/admins" class:active={path === '/admin/admins'}>{m.admin_nav_admins()}</a>
+			<a href="/admin/characters" class:active={path === '/admin/characters'}
+				>{m.admin_nav_characters()}</a
+			>
 			<a href="/admin/blocks" class:active={path === '/admin/blocks'}>{m.admin_nav_blocks()}</a>
 			<a href="/admin/audit" class:active={path === '/admin/audit'}>{m.admin_nav_audit()}</a>
 		</nav>

@@ -139,7 +139,9 @@
 								<span
 									>{character.token_status === 'active'
 										? m.characters_token_active()
-										: m.characters_token_expired()}</span
+										: character.token_status === 'owner_mismatch'
+											? m.characters_token_transferred()
+											: m.characters_token_expired()}</span
 								>
 							</span>
 
@@ -150,7 +152,10 @@
 											<input type="hidden" name="character_id" value={character.id} />
 											<button type="submit">{m.characters_set_main()}</button>
 										</form>
-									{:else}
+									{:else if character.token_status === 'expired'}
+										<!-- Re-auth fixes an expired token. A transferred (owner_mismatch)
+										     character cannot be re-authed by this owner, so no re-auth link;
+										     the remove button below is the only action. -->
 										<a class="reauth" href="/auth/characters/add?return_to=/characters"
 											>{m.characters_reauth()}</a
 										>
@@ -457,6 +462,12 @@
 	}
 	.token-status[data-state='expired'] {
 		color: var(--red);
+	}
+	.token-status[data-state='owner_mismatch'] .dot {
+		background: var(--amber);
+	}
+	.token-status[data-state='owner_mismatch'] {
+		color: var(--amber);
 	}
 
 	.card-footer {

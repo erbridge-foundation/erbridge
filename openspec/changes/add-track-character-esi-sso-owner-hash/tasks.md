@@ -45,11 +45,11 @@
 
 ## 8. Frontend — token state + admin Characters tab (`frontend/`, per `sveltekit-node` skill)
 
-- [ ] 8.1 Render `token_status` on the user's own character list: `token_expired` → a "reconnect"/re-login affordance; `owner_mismatch` → a "no longer on your account / remove" affordance. (Copy can be iterated.)
-- [ ] 8.2 Add an admin **Characters** tab: search a character by name; selecting a result opens a dialog showing the whole account and all characters with their `token_status`.
-- [ ] 8.3 Support surfacing/sorting/filtering the character listing by token state (at minimum, find `token_expired` and `owner_mismatch` characters together).
-- [ ] 8.4 Add i18n message keys for the new states/affordances across all locale files (en/de/fr), keeping the locale set in sync (run paraglide from `frontend/`).
-- [ ] 8.5 Component/unit tests (Vitest) for the status rendering and the admin search/dialog; e2e (Playwright) for the admin Characters tab search→dialog flow.
+- [x] 8.1 Render `token_status` on the user's own character list: `token_expired` → a "reconnect"/re-login affordance; `owner_mismatch` → a "no longer on your account / remove" affordance. (Copy can be iterated.)
+- [x] 8.2 Add an admin **Characters** tab: search a character by name; selecting a result opens a dialog showing the whole account and all characters with their `token_status`.
+- [x] 8.3 Support surfacing/sorting/filtering the character listing by token state (at minimum, find `token_expired` and `owner_mismatch` characters together).
+- [x] 8.4 Add i18n message keys for the new states/affordances across all locale files (en/de/fr), keeping the locale set in sync (run paraglide from `frontend/`).
+- [x] 8.5 Component/unit tests (Vitest) for the status rendering and the admin search/dialog; e2e (Playwright) for the admin Characters tab search→dialog flow.
 
 ## 9. Tooling & verification
 
@@ -57,9 +57,9 @@
 - [x] 9.2 `cargo fmt` and `cargo clippy --all-targets` clean.
 - [x] 9.3 `cargo test` (backend unit + integration) passes.
 - [x] 9.4 `cargo sqlx prepare --check -- --all-targets` passes (no cache drift).
-- [ ] 9.5 Run the HURL suite against a running backend; the callback and admin character-search files pass. *(Deferred: needs the live dev stack + ESI credentials. The change is additive to the HTTP contract — a new enum value and a new optional field — and `me.hurl` does not assert `token_status`, so no existing HURL contract breaks; the admin Characters tab reuses the existing search endpoint.)*
-- [ ] 9.6 `pnpm --filter frontend test` — Vitest unit/component tests pass.
-- [ ] 9.7 `pnpm --filter frontend run check` — svelte-check (types + paraglide compile) passes.
-- [ ] 9.8 `pnpm --filter frontend run test:e2e` — Playwright e2e tests pass.
+- [x] 9.5 Ran the HURL suite against the live dev stack: `admin.hurl` 29/29, `me.hurl` 2/2, `keys.hurl` 8/8, `characters.hurl` 7/7, `blocks.hurl` 4/4, `health`/`preferences`/`session` green. `token_status` confirmed live on `/api/v1/me`. (`session.hurl` needs `--no-cookie-store` per hurl's shared cookie jar; `account.hurl` skipped — it deletes the account.)
+- [x] 9.6 `pnpm run test -- --run` (from `frontend/`) — Vitest unit/component tests pass (177). *(`--filter frontend` does not work: there is no root pnpm workspace manifest; run from `frontend/`.)*
+- [x] 9.7 `pnpm run check` (from `frontend/`) — svelte-check (types + paraglide compile) passes, 0 errors/0 warnings.
+- [x] 9.8 `pnpm run test:e2e` (from `frontend/`) — Playwright e2e tests pass (17).
 
 > This change touches frontend code (token-state rendering + admin Characters tab), so per `CLAUDE.md` the full frontend verification trio (9.6–9.8) is mandatory in addition to the backend checks.

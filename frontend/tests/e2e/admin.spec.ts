@@ -45,6 +45,12 @@ test.describe('/admin (admin session)', () => {
 		await expect(page).toHaveURL(/\/admin\/admins$/);
 		await expect(page.getByRole('heading', { name: 'SERVER ADMINS' })).toBeVisible();
 
+		// Scope to the admin-tabs nav: a global header link "characters" also exists.
+		const adminNav = page.getByRole('navigation', { name: 'Admin sections' });
+		await adminNav.getByRole('link', { name: 'characters', exact: true }).click();
+		await expect(page).toHaveURL(/\/admin\/characters$/);
+		await expect(page.getByRole('heading', { name: 'CHARACTERS' })).toBeVisible();
+
 		await page.getByRole('link', { name: 'blocks', exact: true }).click();
 		await expect(page).toHaveURL(/\/admin\/blocks$/);
 		await expect(page.getByRole('heading', { name: 'BLOCKED CHARACTERS' })).toBeVisible();
@@ -86,6 +92,40 @@ test.describe('/admin (admin session)', () => {
 		await revokeDialog.getByRole('button', { name: 'revoke admin' }).click();
 
 		await expect(page.locator('tbody').getByText('Promote Me')).toHaveCount(0);
+	});
+
+	test('characters tab: search → inspect account dialog → filter by token state', async ({
+		page
+	}) => {
+		await page.goto('/admin/characters');
+		await expect(page.getByRole('heading', { name: 'CHARACTERS' })).toBeVisible();
+
+		// Search for a character on the seeded admin account.
+		await page.getByPlaceholder('search characters by name…').fill('Main');
+		await page.getByRole('button', { name: 'search' }).click();
+
+		// Inspect its account.
+		const result = page.locator('li', { hasText: 'Main Pilot' });
+		await expect(result).toBeVisible();
+		await result.getByRole('button', { name: 'inspect account' }).click();
+
+		// The dialog shows the whole account, including the transferred alt.
+		// Scope name assertions to the table cells (the title also says "Main Pilot").
+		const dialog = page.getByRole('dialog', { name: /Account for Main Pilot/ });
+		await expect(dialog).toBeVisible();
+		const charCells = dialog.locator('.char-name');
+		await expect(charCells.filter({ hasText: 'Main Pilot' })).toBeVisible();
+		await expect(charCells.filter({ hasText: 'Sold Alt' })).toBeVisible();
+		await expect(dialog.getByText('transferred')).toBeVisible();
+
+		// Filtering to "needs attention" hides the healthy main, keeps the alt.
+		await dialog.getByRole('button', { name: 'needs attention' }).click();
+		await expect(charCells.filter({ hasText: 'Main Pilot' })).toHaveCount(0);
+		await expect(charCells.filter({ hasText: 'Sold Alt' })).toBeVisible();
+
+		// Close the dialog.
+		await dialog.getByRole('button', { name: 'close' }).click();
+		await expect(page.getByRole('dialog')).toHaveCount(0);
 	});
 
 	test('block via local search → unblock flow', async ({ page }) => {

@@ -1,5 +1,7 @@
 // keep in sync with: backend/src/dto/account.rs
-export type TokenStatus = 'active' | 'expired';
+// 'owner_mismatch' = the character was transferred to a different EVE account;
+// the current owner cannot re-authenticate it, so it must be removed.
+export type TokenStatus = 'active' | 'expired' | 'owner_mismatch';
 
 export interface AccountDto {
 	id: string;
@@ -65,6 +67,7 @@ export interface AdminAccountCharacterDto {
 	eve_character_id: number;
 	name: string;
 	is_main: boolean;
+	token_status: TokenStatus;
 }
 
 export interface AdminAccountDto {
