@@ -181,6 +181,13 @@ pub enum AuditEvent {
     BlockedLoginRejected {
         eve_character_id: i64,
     },
+    /// Emitted by the daily token-refresh sweep when a character's owner hash
+    /// changed on a successful refresh — i.e. the character was transferred to a
+    /// different EVE account. The durable record of a detected transfer.
+    CharacterOwnerMismatch {
+        account_id: Uuid,
+        eve_character_id: i64,
+    },
     /// Dormant: emitted by a future map-create handler.
     MapCreated {
         account_id: Uuid,
@@ -287,6 +294,7 @@ impl AuditEvent {
             Self::EveCharacterBlocked { .. } => "eve_character_blocked",
             Self::EveCharacterUnblocked { .. } => "eve_character_unblocked",
             Self::BlockedLoginRejected { .. } => "blocked_login_rejected",
+            Self::CharacterOwnerMismatch { .. } => "character_owner_mismatch",
             Self::MapCreated { .. } => "map_created",
             Self::MapDeleted { .. } => "map_deleted",
             Self::AclCreated { .. } => "acl_created",
@@ -385,6 +393,13 @@ impl AuditEvent {
             // actor is NULL (no session) — the rejected character is the subject,
             // carried here so the row is self-contained.
             Self::BlockedLoginRejected { eve_character_id } => json!({
+                "eve_character_id": eve_character_id,
+            }),
+            Self::CharacterOwnerMismatch {
+                account_id,
+                eve_character_id,
+            } => json!({
+                "account_id": account_id,
                 "eve_character_id": eve_character_id,
             }),
             Self::MapCreated { map_id, name, .. } => json!({
@@ -518,9 +533,10 @@ impl AuditEvent {
                 eve_character_id, ..
             }
             | Self::EveCharacterUnblocked { eve_character_id }
-            | Self::BlockedLoginRejected { eve_character_id } => {
-                AuditTarget::character(*eve_character_id, None)
-            }
+            | Self::BlockedLoginRejected { eve_character_id }
+            | Self::CharacterOwnerMismatch {
+                eve_character_id, ..
+            } => AuditTarget::character(*eve_character_id, None),
 
             // Map targets carrying a name.
             Self::MapCreated { map_id, name, .. }
@@ -837,6 +853,20 @@ mod tests {
         assert_eq!(event.event_type(), "character_removed");
         assert_eq!(event.details()["eve_character_id"], 42i64);
         assert!(event.details().get("account_id").is_none());
+    }
+
+    #[test]
+    fn character_owner_mismatch_serialises_correctly() {
+        let id = test_uuid();
+        let event = AuditEvent::CharacterOwnerMismatch {
+            account_id: id,
+            eve_character_id: 555,
+        };
+        assert_eq!(event.event_type(), "character_owner_mismatch");
+        // The sweep has no session, so the previous-owner account id lives in
+        // details (actor column is NULL), alongside the subject character.
+        assert_eq!(event.details()["account_id"], serde_json::json!(id));
+        assert_eq!(event.details()["eve_character_id"], 555i64);
     }
 
     #[test]
@@ -1338,6 +1368,14 @@ mod tests {
             "character",
             "98765",
         );
+        assert_nameless_target(
+            &AuditEvent::CharacterOwnerMismatch {
+                account_id: test_uuid(),
+                eve_character_id: 24680,
+            },
+            "character",
+            "24680",
+        );
     }
 
     #[test]
@@ -1514,6 +1552,7 @@ mod tests {
             "r",
             Utc::now() + chrono::Duration::hours(1),
             &[],
+            "owner-hash",
             &test_key(),
         )
         .await

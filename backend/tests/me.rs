@@ -132,6 +132,7 @@ async fn get_me_returns_db_fields_and_token_status(pool: PgPool) {
         "refresh_tok",
         Utc::now() + Duration::hours(1),
         &["esi-location.read_location.v1".to_string()],
+        "owner-hash",
         &test_key(),
     )
     .await
@@ -141,14 +142,16 @@ async fn get_me_returns_db_fields_and_token_status(pool: PgPool) {
         .unwrap();
     tx.commit().await.unwrap();
 
-    // Seed char_expired: NULL refresh token → "expired"
-    // Insert via raw SQL so we can set encrypted_refresh_token = NULL explicitly.
+    // Seed char_expired: explicit token_status = 'token_expired' (no tokens).
+    // Insert via raw SQL so we can set the status and NULL credentials directly.
     sqlx::query!(
         r#"
         INSERT INTO eve_character (
             account_id, eve_character_id, name,
-            corporation_id, corporation_name, alliance_id, alliance_name
-        ) VALUES ($1, 10002, 'Expired Pilot', 1000002, 'Ghost Corp', NULL, NULL)
+            corporation_id, corporation_name, alliance_id, alliance_name,
+            token_status
+        ) VALUES ($1, 10002, 'Expired Pilot', 1000002, 'Ghost Corp', NULL, NULL,
+            'token_expired')
         "#,
         account_id,
     )
@@ -172,6 +175,7 @@ async fn get_me_returns_db_fields_and_token_status(pool: PgPool) {
         "refresh_tok3",
         Utc::now() + Duration::hours(1),
         &[],
+        "owner-hash",
         &test_key(),
     )
     .await

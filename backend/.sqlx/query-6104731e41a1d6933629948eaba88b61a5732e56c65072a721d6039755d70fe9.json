@@ -1,0 +1,34 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT token_status, owner_hash, encrypted_refresh_token\n             FROM eve_character WHERE eve_character_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "token_status",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "owner_hash",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "encrypted_refresh_token",
+        "type_info": "Bytea"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "6104731e41a1d6933629948eaba88b61a5732e56c65072a721d6039755d70fe9"
+}

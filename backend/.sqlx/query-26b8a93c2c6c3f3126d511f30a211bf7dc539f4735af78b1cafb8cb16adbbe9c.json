@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO eve_character (\n            account_id, eve_character_id, name,\n            corporation_id, corporation_name, alliance_id, alliance_name,\n            token_status\n        ) VALUES ($1, 10002, 'Expired Pilot', 1000002, 'Ghost Corp', NULL, NULL,\n            'token_expired')\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "26b8a93c2c6c3f3126d511f30a211bf7dc539f4735af78b1cafb8cb16adbbe9c"
+}

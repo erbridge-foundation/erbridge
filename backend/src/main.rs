@@ -53,6 +53,18 @@ async fn main() -> anyhow::Result<()> {
         http_client,
     };
 
+    // Start the daily token-refresh sweep: detects character transfers
+    // (owner-hash change) and expires stale / idle tokens. Cloned handles so the
+    // task outlives `state`, which `build_router` consumes below.
+    backend::services::token_sweep::spawn(
+        state.db.clone(),
+        state.http_client.clone(),
+        state.esi_metadata.token_endpoint.clone(),
+        state.config.esi_client_id.clone(),
+        state.config.esi_client_secret.clone(),
+        state.config.encryption_secret.clone(),
+    );
+
     let app = backend::build_router(state);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000")

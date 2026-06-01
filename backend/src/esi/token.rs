@@ -13,6 +13,9 @@ pub struct RefreshedTokens {
     pub access_token: String,
     pub refresh_token: String,
     pub access_token_expires_at: DateTime<Utc>,
+    /// The owner hash carried by the refreshed access-token JWT. The daily
+    /// sweep compares this against the stored hash to detect a transfer.
+    pub owner_hash: String,
 }
 
 #[derive(Deserialize)]
@@ -49,9 +52,17 @@ pub async fn refresh_access_token(
         .await
         .ok()?;
 
+    // The refreshed access token is itself a JWT carrying the owner hash; parse
+    // it so the sweep can compare ownership. A token we cannot parse is treated
+    // as a refresh failure (`None`).
+    let owner_hash = crate::esi::jwt::parse_claims(&resp.access_token)
+        .ok()?
+        .owner;
+
     Some(RefreshedTokens {
         access_token: resp.access_token,
         refresh_token: resp.refresh_token,
         access_token_expires_at: Utc::now() + Duration::seconds(resp.expires_in),
+        owner_hash,
     })
 }

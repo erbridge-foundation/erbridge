@@ -82,35 +82,6 @@ struct TokenResponse {
     expires_in: i64,
 }
 
-#[derive(Deserialize)]
-struct EsiJwtClaims {
-    sub: String,
-    name: String,
-    #[serde(default)]
-    scp: Scp,
-}
-
-/// EVE's `scp` claim is a single string when one scope is granted, or an array
-/// when multiple scopes are granted.
-#[derive(Deserialize, Default)]
-#[serde(untagged)]
-enum Scp {
-    #[default]
-    None,
-    One(String),
-    Many(Vec<String>),
-}
-
-impl Scp {
-    fn into_vec(self) -> Vec<String> {
-        match self {
-            Scp::None => vec![],
-            Scp::One(s) => vec![s],
-            Scp::Many(v) => v,
-        }
-    }
-}
-
 pub async fn callback(
     State(state): State<AppState>,
     Query(query): Query<CallbackQuery>,
@@ -153,7 +124,7 @@ pub async fn callback(
 
     // Parse the access token JWT (no validation against JWKS — ESI tokens are validated
     // structurally only; full JWKS validation is a future hardening step).
-    let claims = parse_esi_jwt_claims(&token_resp.access_token)
+    let claims = crate::esi::jwt::parse_claims(&token_resp.access_token)
         .map_err(|e| AppError::BadGateway(format!("invalid ESI access token: {e}")))?;
 
     let eve_character_id: i64 = claims
@@ -164,6 +135,7 @@ pub async fn callback(
 
     let character_name = claims.name;
     let scopes = claims.scp.into_vec();
+    let owner_hash = claims.owner;
 
     // Fetch corporation and alliance IDs from ESI public info.
     let (corporation_id, alliance_id) =
@@ -210,6 +182,7 @@ pub async fn callback(
             refresh_token: &token_resp.refresh_token,
             access_token_expires_at,
             scopes: &scopes,
+            owner_hash: &owner_hash,
             encryption_key: &encryption_key,
         },
     )
@@ -239,32 +212,6 @@ pub async fn callback(
     cookie::set_session_cookie(response.headers_mut(), &jwt);
 
     Ok(response)
-}
-
-fn parse_esi_jwt_claims(token: &str) -> anyhow::Result<EsiJwtClaims> {
-    // Decode without verification (ESI tokens are verified by signature against jwks_uri;
-    // full JWKS validation is a future hardening step — we trust ESI's endpoint).
-    let parts: Vec<&str> = token.split('.').collect();
-    if parts.len() != 3 {
-        return Err(anyhow::anyhow!("malformed JWT"));
-    }
-    let payload = parts[1];
-    // base64url decode with padding
-    let padded = match payload.len() % 4 {
-        0 => payload.to_string(),
-        2 => format!("{payload}=="),
-        3 => format!("{payload}="),
-        _ => return Err(anyhow::anyhow!("invalid base64url padding")),
-    };
-    use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-    let decoded = URL_SAFE_NO_PAD
-        .decode(payload)
-        .or_else(|_| {
-            use base64::{Engine, engine::general_purpose::URL_SAFE};
-            URL_SAFE.decode(&padded)
-        })
-        .map_err(|e| anyhow::anyhow!("base64 decode error: {e}"))?;
-    serde_json::from_slice(&decoded).map_err(|e| anyhow::anyhow!("JWT claims parse error: {e}"))
 }
 
 async fn fetch_character_public_info(

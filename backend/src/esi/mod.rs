@@ -1,3 +1,4 @@
+pub mod jwt;
 pub mod public_info;
 pub mod search;
 pub mod token;

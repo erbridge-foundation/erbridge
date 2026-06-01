@@ -71,6 +71,32 @@ pub async fn soft_delete(tx: &mut Transaction<'_, Postgres>, id: Uuid) -> Result
     Ok(())
 }
 
+/// Stamps `last_login = now()` on an account. Called within the SSO callback
+/// transaction; the daily sweep's 7-day idle waterfall reads this clock.
+pub async fn set_last_login(tx: &mut Transaction<'_, Postgres>, id: Uuid) -> Result<()> {
+    sqlx::query!("UPDATE account SET last_login = now() WHERE id = $1", id)
+        .execute(&mut **tx)
+        .await
+        .context("failed to set account last_login")?;
+    Ok(())
+}
+
+/// Account ids whose `last_login` is older than `days` days. A NULL `last_login`
+/// is excluded (treated as "not yet observed") so legacy accounts are not
+/// mass-expired on the first sweep run. Backs the sweep's idle waterfall.
+pub async fn list_idle_accounts(pool: &PgPool, days: i64) -> Result<Vec<Uuid>> {
+    let rows = sqlx::query!(
+        "SELECT id FROM account
+         WHERE last_login IS NOT NULL
+           AND last_login < now() - make_interval(days => $1::int)",
+        days as i32
+    )
+    .fetch_all(pool)
+    .await
+    .context("failed to list idle accounts")?;
+    Ok(rows.into_iter().map(|r| r.id).collect())
+}
+
 /// What happened during `resolve_or_create`. The audit-emit code uses this to
 /// decide which events to record (account_registered, orphan_character_claimed,
 /// server_admin_granted{bootstrap}).
@@ -231,11 +257,12 @@ pub async fn list_accounts_admin(pool: &PgPool) -> Result<Vec<Account>> {
 }
 
 /// An account together with a lightweight view of its characters
-/// (`eve_character_id`, `name`, `is_main`) — what the admin accounts list needs
-/// to identify accounts by pilot, without the credential columns.
+/// (`eve_character_id`, `name`, `is_main`, `token_status`) — what the admin
+/// accounts list needs to identify accounts by pilot and flag transferred /
+/// expired characters, without the credential columns.
 pub struct AccountWithCharacters {
     pub account: Account,
-    pub characters: Vec<(i64, String, bool)>,
+    pub characters: Vec<(i64, String, bool, String)>,
 }
 
 /// Every account (newest first) with its characters, assembled in one query
@@ -248,7 +275,8 @@ pub async fn list_accounts_with_characters(pool: &PgPool) -> Result<Vec<AccountW
                a.created_at, a.updated_at,
                c.eve_character_id AS "eve_character_id?",
                c.name AS "character_name?",
-               c.is_main AS "is_main?"
+               c.is_main AS "is_main?",
+               c.token_status AS "token_status?"
         FROM account a
         LEFT JOIN eve_character c ON c.account_id = a.id
         ORDER BY a.created_at DESC, c.is_main DESC, c.name ASC
@@ -276,14 +304,17 @@ pub async fn list_accounts_with_characters(pool: &PgPool) -> Result<Vec<AccountW
                 characters: Vec::new(),
             });
         }
-        if let (Some(eve_id), Some(name), Some(is_main)) =
-            (r.eve_character_id, r.character_name, r.is_main)
-        {
+        if let (Some(eve_id), Some(name), Some(is_main), Some(token_status)) = (
+            r.eve_character_id,
+            r.character_name,
+            r.is_main,
+            r.token_status,
+        ) {
             #[allow(clippy::unwrap_used)]
             out.last_mut()
                 .unwrap()
                 .characters
-                .push((eve_id, name, is_main));
+                .push((eve_id, name, is_main, token_status));
         }
     }
     Ok(out)
@@ -574,5 +605,47 @@ mod tests {
         assert_eq!(accounts.len(), 2);
         assert_eq!(accounts[0].id, second, "newest (created_at DESC) first");
         assert_eq!(accounts[1].id, first);
+    }
+
+    #[sqlx::test]
+    async fn set_last_login_stamps_now(pool: PgPool) {
+        let id = create_account(&pool).await.unwrap();
+        // New accounts have NULL last_login.
+        assert!(list_idle_accounts(&pool, 0).await.unwrap().is_empty());
+
+        let mut tx = pool.begin().await.unwrap();
+        set_last_login(&mut tx, id).await.unwrap();
+        tx.commit().await.unwrap();
+
+        let r = sqlx::query!("SELECT last_login FROM account WHERE id = $1", id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(r.last_login.is_some());
+    }
+
+    #[sqlx::test]
+    async fn list_idle_accounts_excludes_null_and_recent(pool: PgPool) {
+        // Idle: last_login well in the past.
+        let idle = create_account(&pool).await.unwrap();
+        sqlx::query!(
+            "UPDATE account SET last_login = now() - interval '30 days' WHERE id = $1",
+            idle
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Recent: logged in just now.
+        let recent = create_account(&pool).await.unwrap();
+        let mut tx = pool.begin().await.unwrap();
+        set_last_login(&mut tx, recent).await.unwrap();
+        tx.commit().await.unwrap();
+
+        // Never-logged-in: NULL last_login (excluded).
+        let _never = create_account(&pool).await.unwrap();
+
+        let idle_ids = list_idle_accounts(&pool, 7).await.unwrap();
+        assert_eq!(idle_ids, vec![idle]);
     }
 }

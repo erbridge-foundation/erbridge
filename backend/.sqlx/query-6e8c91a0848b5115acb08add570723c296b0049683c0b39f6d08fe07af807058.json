@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE eve_character\n        SET encrypted_access_token = $2,\n            encrypted_refresh_token = $3,\n            access_token_expires_at = $4,\n            owner_hash = $5,\n            token_status = 'valid',\n            updated_at = now()\n        WHERE eve_character_id = $1\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Bytea",
+        "Bytea",
+        "Timestamptz",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "6e8c91a0848b5115acb08add570723c296b0049683c0b39f6d08fe07af807058"
+}

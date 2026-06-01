@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id FROM account\n         WHERE last_login IS NOT NULL\n           AND last_login < now() - make_interval(days => $1::int)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "a45254d263e6f202d4a31e2b935cdaf4e5b018d384f5104c9b6061d4b0ee2311"
+}

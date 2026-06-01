@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE eve_character\n        SET token_status = $2,\n            owner_hash = COALESCE($3, owner_hash),\n            encrypted_access_token = NULL,\n            encrypted_refresh_token = NULL,\n            access_token_expires_at = NULL,\n            scopes = '{}',\n            updated_at = now()\n        WHERE eve_character_id = $1\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a0bf688ac3f384ce2bbb88b295347139b7186b22662d170218bde4bbd0831575"
+}

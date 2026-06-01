@@ -47,6 +47,7 @@ pub struct SsoCompletionInput<'a> {
     pub refresh_token: &'a str,
     pub access_token_expires_at: DateTime<Utc>,
     pub scopes: &'a [String],
+    pub owner_hash: &'a str,
     pub encryption_key: &'a [u8],
 }
 
@@ -114,11 +115,15 @@ pub async fn complete_sso_callback(
         input.refresh_token,
         input.access_token_expires_at,
         input.scopes,
+        input.owner_hash,
         input.encryption_key,
     )
     .await?;
 
     characters::promote_if_no_main(&mut tx, account_id, character_id).await?;
+
+    // Stamp the account-level login clock the daily sweep's idle waterfall reads.
+    accounts::set_last_login(&mut tx, account_id).await?;
 
     // Audit emissions follow `promote_if_no_main` so any actor-account-id
     // emission resolves the main correctly. Login-time events (no session yet)

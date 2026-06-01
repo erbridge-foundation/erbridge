@@ -21,20 +21,12 @@ pub struct CharacterInfo {
     pub token_status: TokenStatus,
 }
 
-fn derive_token_status(has_refresh_token: bool) -> TokenStatus {
-    if has_refresh_token {
-        TokenStatus::Active
-    } else {
-        TokenStatus::Expired
-    }
-}
-
 fn character_to_info(c: characters::Character) -> CharacterInfo {
     let portrait_url = format!(
         "https://images.evetech.net/characters/{}/portrait?size=128",
         c.eve_character_id
     );
-    let token_status = derive_token_status(c.encrypted_refresh_token.is_some());
+    let token_status = TokenStatus::from_db(&c.token_status);
     CharacterInfo {
         id: c.id,
         eve_character_id: c.eve_character_id,
@@ -238,13 +230,15 @@ mod tests {
     }
 
     #[test]
-    fn token_status_active_when_has_refresh_token() {
-        assert_eq!(derive_token_status(true), TokenStatus::Active);
-    }
-
-    #[test]
-    fn token_status_expired_when_no_refresh_token() {
-        assert_eq!(derive_token_status(false), TokenStatus::Expired);
+    fn token_status_maps_db_values() {
+        assert_eq!(TokenStatus::from_db("valid"), TokenStatus::Active);
+        assert_eq!(TokenStatus::from_db("token_expired"), TokenStatus::Expired);
+        assert_eq!(
+            TokenStatus::from_db("owner_mismatch"),
+            TokenStatus::OwnerMismatch
+        );
+        // Unknown values fail safe to Expired.
+        assert_eq!(TokenStatus::from_db("bogus"), TokenStatus::Expired);
     }
 
     #[sqlx::test]

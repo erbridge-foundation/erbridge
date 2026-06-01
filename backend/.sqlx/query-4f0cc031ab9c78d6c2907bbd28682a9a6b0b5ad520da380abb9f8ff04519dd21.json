@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT id, account_id, eve_character_id, name,\n               corporation_id, corporation_name, alliance_id, alliance_name,\n               is_main, is_online, esi_client_id, encrypted_refresh_token,\n               access_token_expires_at, scopes, created_at, updated_at\n        FROM eve_character\n        WHERE account_id = $1\n        ORDER BY created_at ASC\n        ",
+  "query": "\n        SELECT id, account_id, eve_character_id, name,\n               corporation_id, corporation_name, alliance_id, alliance_name,\n               is_main, is_online, esi_client_id, encrypted_refresh_token,\n               access_token_expires_at, scopes, owner_hash, token_status,\n               created_at, updated_at\n        FROM eve_character\n        WHERE account_id = $1\n        ORDER BY created_at ASC\n        ",
   "describe": {
     "columns": [
       {
@@ -75,11 +75,21 @@
       },
       {
         "ordinal": 14,
+        "name": "owner_hash",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 15,
+        "name": "token_status",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 16,
         "name": "created_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 15,
+        "ordinal": 17,
         "name": "updated_at",
         "type_info": "Timestamptz"
       }
@@ -104,9 +114,11 @@
       true,
       true,
       false,
+      true,
+      false,
       false,
       false
     ]
   },
-  "hash": "1b951319607489e7f28528aabc637dd3e96b72d7e1f927e4c76a6b8fbaa87efa"
+  "hash": "4f0cc031ab9c78d6c2907bbd28682a9a6b0b5ad520da380abb9f8ff04519dd21"
 }

@@ -6,6 +6,7 @@ use uuid::Uuid;
 use crate::{
     audit::AuditLogEntry,
     db::blocks::BlockedEveCharacter,
+    dto::account::TokenStatus,
     services::admin::{AdminAccountInfo, AdminCharacterSearchResult, EsiCharacterSearchResult},
 };
 
@@ -19,6 +20,9 @@ pub struct AdminAccountCharacterDto {
     pub eve_character_id: i64,
     pub name: String,
     pub is_main: bool,
+    /// Token health, so an admin can spot a transferred (`owner_mismatch`) or
+    /// expired character on the account.
+    pub token_status: TokenStatus,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -41,10 +45,11 @@ impl From<AdminAccountInfo> for AdminAccountDto {
                 .characters
                 .into_iter()
                 .map(
-                    |(eve_character_id, name, is_main)| AdminAccountCharacterDto {
+                    |(eve_character_id, name, is_main, token_status)| AdminAccountCharacterDto {
                         eve_character_id,
                         name,
                         is_main,
+                        token_status: TokenStatus::from_db(&token_status),
                     },
                 )
                 .collect(),

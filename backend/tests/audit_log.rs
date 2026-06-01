@@ -72,6 +72,7 @@ fn sso_input<'a>(
         refresh_token: "fake.refresh.token",
         access_token_expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
         scopes: &EMPTY,
+        owner_hash: "owner-hash",
         encryption_key: &ENCRYPTION_KEY,
     }
 }

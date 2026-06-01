@@ -20,6 +20,8 @@ pub struct Character {
     pub encrypted_refresh_token: Option<Vec<u8>>,
     pub access_token_expires_at: Option<DateTime<Utc>>,
     pub scopes: Vec<String>,
+    pub owner_hash: Option<String>,
+    pub token_status: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -39,6 +41,7 @@ pub async fn upsert_tokens(
     refresh_token_plaintext: &str,
     access_token_expires_at: DateTime<Utc>,
     scopes: &[String],
+    owner_hash: &str,
     encryption_key: &[u8],
 ) -> Result<Uuid> {
     let encrypted_access = crypto::encrypt_token(access_token_plaintext, encryption_key)
@@ -51,8 +54,9 @@ pub async fn upsert_tokens(
         INSERT INTO eve_character (
             account_id, eve_character_id, name, corporation_id, corporation_name,
             alliance_id, alliance_name, esi_client_id, encrypted_access_token,
-            encrypted_refresh_token, access_token_expires_at, scopes
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            encrypted_refresh_token, access_token_expires_at, scopes,
+            owner_hash, token_status
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'valid')
         ON CONFLICT (eve_character_id) DO UPDATE SET
             account_id = CASE
                 WHEN eve_character.account_id IS NULL THEN excluded.account_id
@@ -69,6 +73,11 @@ pub async fn upsert_tokens(
             encrypted_refresh_token = excluded.encrypted_refresh_token,
             access_token_expires_at = excluded.access_token_expires_at,
             scopes = excluded.scopes,
+            owner_hash = excluded.owner_hash,
+            -- A successful callback always presents a current owner hash, so it
+            -- restores the character to a healthy state, self-healing a prior
+            -- token_expired / owner_mismatch flag (see character-token-lifecycle).
+            token_status = 'valid',
             updated_at = now()
         RETURNING id
         "#,
@@ -84,6 +93,7 @@ pub async fn upsert_tokens(
         encrypted_refresh.as_slice(),
         access_token_expires_at,
         scopes,
+        owner_hash,
     )
     .fetch_one(&mut **tx)
     .await
@@ -154,7 +164,8 @@ pub async fn list_for_account(pool: &PgPool, account_id: Uuid) -> Result<Vec<Cha
         SELECT id, account_id, eve_character_id, name,
                corporation_id, corporation_name, alliance_id, alliance_name,
                is_main, is_online, esi_client_id, encrypted_refresh_token,
-               access_token_expires_at, scopes, created_at, updated_at
+               access_token_expires_at, scopes, owner_hash, token_status,
+               created_at, updated_at
         FROM eve_character
         WHERE account_id = $1
         ORDER BY created_at ASC
@@ -182,6 +193,8 @@ pub async fn list_for_account(pool: &PgPool, account_id: Uuid) -> Result<Vec<Cha
             encrypted_refresh_token: r.encrypted_refresh_token,
             access_token_expires_at: r.access_token_expires_at,
             scopes: r.scopes,
+            owner_hash: r.owner_hash,
+            token_status: r.token_status,
             created_at: r.created_at,
             updated_at: r.updated_at,
         })
@@ -452,14 +465,17 @@ pub async fn get_main_token_material(
 }
 
 /// Persists refreshed EVE tokens for a character (by `eve_character_id`),
-/// encrypting them with `encryption_key`. Used after a best-effort access-token
-/// refresh. Returns the number of rows updated (0 if the character vanished).
+/// encrypting them with `encryption_key`, recording the observed `owner_hash`,
+/// and resetting `token_status = 'valid'`. Used after a successful access-token
+/// refresh whose owner hash matched. Returns the number of rows updated (0 if
+/// the character vanished).
 pub async fn update_tokens_by_eve_id(
     pool: &PgPool,
     eve_character_id: i64,
     access_token_plaintext: &str,
     refresh_token_plaintext: &str,
     access_token_expires_at: DateTime<Utc>,
+    owner_hash: &str,
     encryption_key: &[u8],
 ) -> Result<u64> {
     let encrypted_access = crypto::encrypt_token(access_token_plaintext, encryption_key)
@@ -473,6 +489,8 @@ pub async fn update_tokens_by_eve_id(
         SET encrypted_access_token = $2,
             encrypted_refresh_token = $3,
             access_token_expires_at = $4,
+            owner_hash = $5,
+            token_status = 'valid',
             updated_at = now()
         WHERE eve_character_id = $1
         "#,
@@ -480,10 +498,106 @@ pub async fn update_tokens_by_eve_id(
         encrypted_access.as_slice(),
         encrypted_refresh.as_slice(),
         access_token_expires_at,
+        owner_hash,
     )
     .execute(pool)
     .await
     .context("failed to update refreshed character tokens")?;
+
+    Ok(result.rows_affected())
+}
+
+/// A character the daily sweep should attempt to refresh: not already
+/// `token_expired` and holding a refresh token. Carries the stored `owner_hash`
+/// so the service can compare it against the refreshed token's claim.
+pub struct RefreshableCharacter {
+    pub eve_character_id: i64,
+    pub account_id: Option<Uuid>,
+    pub encrypted_refresh_token: Vec<u8>,
+    pub owner_hash: Option<String>,
+}
+
+/// Every character eligible for the sweep: `token_status <> 'token_expired'`
+/// and with a non-null refresh token.
+pub async fn list_refreshable(pool: &PgPool) -> Result<Vec<RefreshableCharacter>> {
+    let rows = sqlx::query!(
+        r#"
+        SELECT eve_character_id, account_id, encrypted_refresh_token, owner_hash
+        FROM eve_character
+        WHERE token_status <> 'token_expired'
+          AND encrypted_refresh_token IS NOT NULL
+        "#,
+    )
+    .fetch_all(pool)
+    .await
+    .context("failed to list refreshable characters")?;
+
+    Ok(rows
+        .into_iter()
+        .filter_map(|r| {
+            r.encrypted_refresh_token.map(|token| RefreshableCharacter {
+                eve_character_id: r.eve_character_id,
+                account_id: r.account_id,
+                encrypted_refresh_token: token,
+                owner_hash: r.owner_hash,
+            })
+        })
+        .collect())
+}
+
+/// Sets a character's `token_status` and NULLs its credential columns, recording
+/// the presented `owner_hash` (so an `owner_mismatch` row stores the new owner's
+/// hash). The status string is validated by the column's CHECK constraint.
+/// Returns the number of rows updated.
+pub async fn set_token_status(
+    pool: &PgPool,
+    eve_character_id: i64,
+    token_status: &str,
+    owner_hash: Option<&str>,
+) -> Result<u64> {
+    let result = sqlx::query!(
+        r#"
+        UPDATE eve_character
+        SET token_status = $2,
+            owner_hash = COALESCE($3, owner_hash),
+            encrypted_access_token = NULL,
+            encrypted_refresh_token = NULL,
+            access_token_expires_at = NULL,
+            scopes = '{}',
+            updated_at = now()
+        WHERE eve_character_id = $1
+        "#,
+        eve_character_id,
+        token_status,
+        owner_hash,
+    )
+    .execute(pool)
+    .await
+    .context("failed to set character token status")?;
+
+    Ok(result.rows_affected())
+}
+
+/// Expires every still-`valid` character of an account: sets
+/// `token_status = 'token_expired'` and NULLs credentials. Backs the sweep's
+/// 7-day idle waterfall. Returns the number of rows affected.
+pub async fn expire_valid_tokens_for_account(pool: &PgPool, account_id: Uuid) -> Result<u64> {
+    let result = sqlx::query!(
+        r#"
+        UPDATE eve_character
+        SET token_status = 'token_expired',
+            encrypted_access_token = NULL,
+            encrypted_refresh_token = NULL,
+            access_token_expires_at = NULL,
+            scopes = '{}',
+            updated_at = now()
+        WHERE account_id = $1 AND token_status = 'valid'
+        "#,
+        account_id
+    )
+    .execute(pool)
+    .await
+    .context("failed to expire idle account tokens")?;
 
     Ok(result.rows_affected())
 }
@@ -523,6 +637,7 @@ mod tests {
             "refresh_tok",
             chrono::Utc::now() + chrono::Duration::hours(1),
             &[],
+            "owner-hash",
             &test_key(),
         )
         .await
@@ -549,6 +664,7 @@ mod tests {
             "refresh_tok_v1",
             chrono::Utc::now() + chrono::Duration::hours(1),
             &[],
+            "owner-hash",
             &test_key(),
         )
         .await
@@ -570,6 +686,7 @@ mod tests {
             "refresh_tok_v2",
             chrono::Utc::now() + chrono::Duration::hours(1),
             &[],
+            "owner-hash",
             &test_key(),
         )
         .await
@@ -601,6 +718,7 @@ mod tests {
             "refresh",
             chrono::Utc::now() + chrono::Duration::hours(1),
             &[],
+            "owner-hash",
             &test_key(),
         )
         .await
@@ -633,6 +751,7 @@ mod tests {
             "r",
             chrono::Utc::now() + chrono::Duration::hours(1),
             &[],
+            "owner-hash",
             &test_key(),
         )
         .await
@@ -654,6 +773,7 @@ mod tests {
             "r",
             chrono::Utc::now() + chrono::Duration::hours(1),
             &[],
+            "owner-hash",
             &test_key(),
         )
         .await
@@ -703,6 +823,7 @@ mod tests {
             "r",
             chrono::Utc::now() + chrono::Duration::hours(1),
             &[],
+            "owner-hash",
             &test_key(),
         )
         .await
@@ -738,6 +859,7 @@ mod tests {
             "refresh_tok",
             chrono::Utc::now() + chrono::Duration::hours(1),
             &["esi-skills.read_skills.v1".to_string()],
+            "owner-hash",
             &test_key(),
         )
         .await
@@ -759,6 +881,7 @@ mod tests {
             "r",
             chrono::Utc::now() + chrono::Duration::hours(1),
             &[],
+            "owner-hash",
             &test_key(),
         )
         .await
@@ -832,6 +955,7 @@ mod tests {
             "r",
             chrono::Utc::now() + chrono::Duration::hours(1),
             &["scope.target".to_string()],
+            "owner-hash",
             &test_key(),
         )
         .await
@@ -850,6 +974,7 @@ mod tests {
             "r",
             chrono::Utc::now() + chrono::Duration::hours(1),
             &["scope.other".to_string()],
+            "owner-hash",
             &test_key(),
         )
         .await
@@ -897,6 +1022,7 @@ mod tests {
             "r",
             chrono::Utc::now() + chrono::Duration::hours(1),
             &[],
+            "owner-hash",
             &test_key(),
         )
         .await
@@ -919,6 +1045,7 @@ mod tests {
             "r",
             chrono::Utc::now() + chrono::Duration::hours(1),
             &[],
+            "owner-hash",
             &test_key(),
         )
         .await
@@ -961,6 +1088,7 @@ mod tests {
             "r",
             chrono::Utc::now() + chrono::Duration::hours(1),
             &[],
+            "owner-hash",
             &test_key(),
         )
         .await
@@ -1036,6 +1164,7 @@ mod tests {
             "r",
             chrono::Utc::now() + chrono::Duration::hours(1),
             &[],
+            "owner-hash",
             &test_key(),
         )
         .await
@@ -1060,5 +1189,137 @@ mod tests {
             find_account_for_eve_character(&pool, 6003).await.unwrap(),
             None
         );
+    }
+
+    /// Inserts a token-bearing character for an account and commits.
+    async fn seed_char(pool: &PgPool, account_id: Uuid, eve_id: i64, owner: &str) {
+        let mut tx = pool.begin().await.unwrap();
+        upsert_tokens(
+            &mut tx,
+            account_id,
+            eve_id,
+            "Pilot",
+            1,
+            "Corp",
+            None,
+            None,
+            "c",
+            "a",
+            "r",
+            chrono::Utc::now() + chrono::Duration::hours(1),
+            &["scope.a".to_string()],
+            owner,
+            &test_key(),
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+    }
+
+    /// Reads (token_status, owner_hash, has_refresh_token) for a character.
+    async fn token_state(pool: &PgPool, eve_id: i64) -> (String, Option<String>, bool) {
+        let r = sqlx::query!(
+            "SELECT token_status, owner_hash, encrypted_refresh_token
+             FROM eve_character WHERE eve_character_id = $1",
+            eve_id
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        (
+            r.token_status,
+            r.owner_hash,
+            r.encrypted_refresh_token.is_some(),
+        )
+    }
+
+    #[sqlx::test]
+    async fn upsert_records_owner_hash_and_valid_status(pool: PgPool) {
+        let account_id = accounts::create_account(&pool).await.unwrap();
+        seed_char(&pool, account_id, 7001, "hash-1").await;
+        let (status, owner, has_token) = token_state(&pool, 7001).await;
+        assert_eq!(status, "valid");
+        assert_eq!(owner.as_deref(), Some("hash-1"));
+        assert!(has_token);
+    }
+
+    #[sqlx::test]
+    async fn set_token_status_flags_and_nulls_credentials(pool: PgPool) {
+        let account_id = accounts::create_account(&pool).await.unwrap();
+        seed_char(&pool, account_id, 7002, "hash-old").await;
+
+        let n = set_token_status(&pool, 7002, "owner_mismatch", Some("hash-new"))
+            .await
+            .unwrap();
+        assert_eq!(n, 1);
+
+        let (status, owner, has_token) = token_state(&pool, 7002).await;
+        assert_eq!(status, "owner_mismatch");
+        // The presented new hash overwrites the stored one.
+        assert_eq!(owner.as_deref(), Some("hash-new"));
+        // Credentials are wiped.
+        assert!(!has_token);
+    }
+
+    #[sqlx::test]
+    async fn set_token_status_keeps_owner_hash_when_none_given(pool: PgPool) {
+        let account_id = accounts::create_account(&pool).await.unwrap();
+        seed_char(&pool, account_id, 7003, "hash-keep").await;
+
+        set_token_status(&pool, 7003, "token_expired", None)
+            .await
+            .unwrap();
+        let (status, owner, _) = token_state(&pool, 7003).await;
+        assert_eq!(status, "token_expired");
+        assert_eq!(owner.as_deref(), Some("hash-keep"));
+    }
+
+    #[sqlx::test]
+    async fn list_refreshable_excludes_expired_and_tokenless(pool: PgPool) {
+        let account_id = accounts::create_account(&pool).await.unwrap();
+        // valid + token → included
+        seed_char(&pool, account_id, 7101, "h-a").await;
+        // owner_mismatch is NOT token_expired but set_token_status NULLs the
+        // token, so it is excluded for lacking a refresh token.
+        seed_char(&pool, account_id, 7102, "h-b").await;
+        set_token_status(&pool, 7102, "owner_mismatch", None)
+            .await
+            .unwrap();
+        // token_expired → excluded
+        seed_char(&pool, account_id, 7103, "h-c").await;
+        set_token_status(&pool, 7103, "token_expired", None)
+            .await
+            .unwrap();
+        // orphan (no token, default valid) → excluded for lacking a token
+        create_orphan(&pool, 7104, "Orphan", 1, "Corp", None, None)
+            .await
+            .unwrap();
+
+        let refreshable = list_refreshable(&pool).await.unwrap();
+        let ids: Vec<i64> = refreshable.iter().map(|c| c.eve_character_id).collect();
+        assert_eq!(ids, vec![7101]);
+        assert_eq!(refreshable[0].owner_hash.as_deref(), Some("h-a"));
+    }
+
+    #[sqlx::test]
+    async fn expire_valid_tokens_for_account_only_touches_valid(pool: PgPool) {
+        let account_id = accounts::create_account(&pool).await.unwrap();
+        seed_char(&pool, account_id, 7201, "h-1").await; // valid
+        seed_char(&pool, account_id, 7202, "h-2").await;
+        set_token_status(&pool, 7202, "owner_mismatch", None)
+            .await
+            .unwrap(); // already flagged
+
+        let other = accounts::create_account(&pool).await.unwrap();
+        seed_char(&pool, other, 7203, "h-3").await; // different account
+
+        let n = expire_valid_tokens_for_account(&pool, account_id)
+            .await
+            .unwrap();
+        assert_eq!(n, 1); // only the valid one
+
+        assert_eq!(token_state(&pool, 7201).await.0, "token_expired");
+        assert_eq!(token_state(&pool, 7202).await.0, "owner_mismatch"); // untouched
+        assert_eq!(token_state(&pool, 7203).await.0, "valid"); // other account untouched
     }
 }

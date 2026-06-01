@@ -463,6 +463,7 @@ async fn get_usable_main_access_token(
         &refreshed.access_token,
         &refreshed.refresh_token,
         refreshed.access_token_expires_at,
+        &refreshed.owner_hash,
         ctx.encryption_key,
     )
     .await;
@@ -573,6 +574,7 @@ mod tests {
             "refresh",
             Utc::now() + chrono::Duration::hours(1),
             &[],
+            "owner-hash",
             &key(),
         )
         .await
@@ -792,6 +794,18 @@ mod tests {
         reqwest::Client::new().into()
     }
 
+    /// A JWT-shaped access token carrying the given owner hash, for mocking the
+    /// SSO refresh endpoint (the refresh path parses the `owner` claim).
+    fn refresh_access_jwt(owner: &str) -> String {
+        use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+        let header = URL_SAFE_NO_PAD.encode(br#"{"alg":"none"}"#);
+        let payload = URL_SAFE_NO_PAD.encode(
+            format!(r#"{{"sub":"CHARACTER:EVE:42","name":"Self","owner":"{owner}","scp":"a"}}"#)
+                .as_bytes(),
+        );
+        format!("{header}.{payload}.sig")
+    }
+
     /// An ESI context pointing search/resolve at `esi_base` and token refresh at
     /// `token_endpoint`. Uses the all-zero test key matching `account_with_main`.
     fn ctx<'a>(
@@ -830,6 +844,7 @@ mod tests {
             "refresh",
             Utc::now() - chrono::Duration::hours(1),
             &[],
+            "owner-hash",
             KEY,
         )
         .await
@@ -995,11 +1010,12 @@ mod tests {
         let admin = account_with_expired_main(&pool, 42).await;
 
         let server = MockServer::start().await;
-        // Token endpoint returns a fresh token set.
+        // Token endpoint returns a fresh token set. The access token must be a
+        // JWT carrying the `owner` claim — the refresh path now parses it.
         Mock::given(method("POST"))
             .and(path("/oauth/token"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "access_token": "fresh-access",
+                "access_token": refresh_access_jwt("owner-hash"),
                 "refresh_token": "fresh-refresh",
                 "expires_in": 1200
             })))

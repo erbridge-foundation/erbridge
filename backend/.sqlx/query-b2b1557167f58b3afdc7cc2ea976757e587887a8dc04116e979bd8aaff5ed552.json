@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE eve_character\n        SET token_status = 'token_expired',\n            encrypted_access_token = NULL,\n            encrypted_refresh_token = NULL,\n            access_token_expires_at = NULL,\n            scopes = '{}',\n            updated_at = now()\n        WHERE account_id = $1 AND token_status = 'valid'\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b2b1557167f58b3afdc7cc2ea976757e587887a8dc04116e979bd8aaff5ed552"
+}

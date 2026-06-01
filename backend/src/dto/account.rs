@@ -27,8 +27,25 @@ impl From<Account> for AccountDto {
 #[derive(Serialize, ToSchema, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum TokenStatus {
+    /// Usable tokens (the stored `eve_character.token_status` is `valid`).
     Active,
+    /// Refresh failed or the account went idle — re-login fixes it.
     Expired,
+    /// The character was transferred to a different EVE account (owner-hash
+    /// change). The previous owner cannot re-auth; the row must be removed.
+    OwnerMismatch,
+}
+
+impl TokenStatus {
+    /// Maps the stored `eve_character.token_status` string to the wire enum.
+    /// An unknown value falls back to `Expired` (fail safe — treat as unusable).
+    pub fn from_db(token_status: &str) -> Self {
+        match token_status {
+            "valid" => TokenStatus::Active,
+            "owner_mismatch" => TokenStatus::OwnerMismatch,
+            _ => TokenStatus::Expired,
+        }
+    }
 }
 
 #[derive(Serialize, ToSchema)]
