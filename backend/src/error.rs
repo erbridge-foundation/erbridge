@@ -38,6 +38,7 @@ pub enum ConflictKind {
     CannotRemoveLastServerAdmin,
     CannotBlockSelf,
     ApiKeyNameAlreadyExists,
+    MapSlugAlreadyExists,
 }
 
 impl ConflictKind {
@@ -48,6 +49,7 @@ impl ConflictKind {
             ConflictKind::CannotRemoveLastServerAdmin => "cannot_remove_last_server_admin",
             ConflictKind::CannotBlockSelf => "cannot_block_self",
             ConflictKind::ApiKeyNameAlreadyExists => "api_key_name_already_exists",
+            ConflictKind::MapSlugAlreadyExists => "map_slug_already_exists",
         }
     }
 
@@ -62,6 +64,7 @@ impl ConflictKind {
             }
             ConflictKind::CannotBlockSelf => "Cannot block a character on your own account",
             ConflictKind::ApiKeyNameAlreadyExists => "A key with this name already exists",
+            ConflictKind::MapSlugAlreadyExists => "A map with this slug already exists",
         }
     }
 }
@@ -227,6 +230,16 @@ mod tests {
     fn conflict_maps_to_409() {
         assert_eq!(
             status(AppError::Conflict(ConflictKind::CannotRemoveMain)),
+            StatusCode::CONFLICT
+        );
+    }
+
+    #[test]
+    fn map_slug_conflict_maps_to_409_with_code() {
+        let kind = ConflictKind::MapSlugAlreadyExists;
+        assert_eq!(kind.code(), "map_slug_already_exists");
+        assert_eq!(
+            status(AppError::Conflict(ConflictKind::MapSlugAlreadyExists)),
             StatusCode::CONFLICT
         );
     }

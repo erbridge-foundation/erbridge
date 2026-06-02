@@ -1,9 +1,16 @@
 pub mod accounts;
+pub mod acl;
+pub mod acl_member;
 pub mod api_keys;
 pub mod blocks;
 pub mod characters;
+pub mod map;
+pub mod map_acl;
 pub mod preferences;
 pub mod sessions;
+
+#[cfg(test)]
+pub mod test_helpers;
 
 use anyhow::{Context, Result};
 use sqlx::PgPool;

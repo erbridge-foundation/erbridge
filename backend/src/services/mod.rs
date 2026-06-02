@@ -1,7 +1,9 @@
 pub mod account;
+pub mod acl;
 pub mod admin;
 pub mod api_keys;
 pub mod auth;
 pub mod health;
+pub mod map;
 pub mod preferences;
 pub mod token_sweep;

@@ -19,7 +19,8 @@ pub struct ActingCharacter {
 /// Discriminates the two paths through which an account can become a server
 /// admin: the very-first-account auto-promotion at registration time, or a
 /// future admin-initiated grant.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, strum::Display, strum::IntoStaticStr)]
+#[strum(serialize_all = "snake_case")]
 pub enum ServerAdminGrantSource {
     FirstAccountBootstrap,
     AdminGrant,
@@ -27,10 +28,7 @@ pub enum ServerAdminGrantSource {
 
 impl ServerAdminGrantSource {
     pub fn as_str(self) -> &'static str {
-        match self {
-            Self::FirstAccountBootstrap => "first_account_bootstrap",
-            Self::AdminGrant => "admin_grant",
-        }
+        self.into()
     }
 }
 

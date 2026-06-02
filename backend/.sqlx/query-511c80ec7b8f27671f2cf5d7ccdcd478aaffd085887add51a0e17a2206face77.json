@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE map\n        SET status = 'deleted', delete_requested_at = now(), updated_at = now()\n        WHERE id = $1 AND status = 'active'\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "511c80ec7b8f27671f2cf5d7ccdcd478aaffd085887add51a0e17a2206face77"
+}

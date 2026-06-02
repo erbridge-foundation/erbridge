@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM acl_member WHERE id = $2 AND acl_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "8ca2a862a4d6c5ddc0b7ad9747d90bb6fb4f488ccc94b72c24d40adc836f0c56"
+}
