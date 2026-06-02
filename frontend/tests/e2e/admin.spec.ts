@@ -94,38 +94,37 @@ test.describe('/admin (admin session)', () => {
 		await expect(page.locator('tbody').getByText('Promote Me')).toHaveCount(0);
 	});
 
-	test('characters tab: search → inspect account dialog → filter by token state', async ({
+	test('characters tab: grid lists accounts, expands to token state, filters by status', async ({
 		page
 	}) => {
 		await page.goto('/admin/characters');
 		await expect(page.getByRole('heading', { name: 'CHARACTERS' })).toBeVisible();
 
-		// Search for a character on the seeded admin account.
-		await page.getByPlaceholder('search characters by name…').fill('Main');
-		await page.getByRole('button', { name: 'search' }).click();
+		// The grid lists the seeded admin account, labelled by its main, with the
+		// transferred alt rolled up into the Issues column while collapsed.
+		const row = page.locator('tr', { hasText: 'Main Pilot' });
+		await expect(row.locator('.account-cell')).toHaveText('Main Pilot');
+		await expect(row.getByText('1 transferred')).toBeVisible();
 
-		// Inspect its account.
-		const result = page.locator('li', { hasText: 'Main Pilot' });
-		await expect(result).toBeVisible();
-		await result.getByRole('button', { name: 'inspect account' }).click();
+		// Expanding reveals the per-character token table including the alt's state.
+		await row.getByRole('button', { name: /show characters for Main Pilot/i }).click();
+		const detail = page.locator('.char-table');
+		await expect(detail.locator('.char-name', { hasText: 'Main Pilot' })).toBeVisible();
+		await expect(detail.locator('.char-name', { hasText: 'Sold Alt' })).toBeVisible();
+		await expect(detail.getByText('transferred')).toBeVisible();
 
-		// The dialog shows the whole account, including the transferred alt.
-		// Scope name assertions to the table cells (the title also says "Main Pilot").
-		const dialog = page.getByRole('dialog', { name: /Account for Main Pilot/ });
-		await expect(dialog).toBeVisible();
-		const charCells = dialog.locator('.char-name');
-		await expect(charCells.filter({ hasText: 'Main Pilot' })).toBeVisible();
-		await expect(charCells.filter({ hasText: 'Sold Alt' })).toBeVisible();
-		await expect(dialog.getByText('transferred')).toBeVisible();
+		// Collapsing hides the detail table again.
+		await row.getByRole('button', { name: /hide characters for Main Pilot/i }).click();
+		await expect(page.locator('.char-table')).toHaveCount(0);
 
-		// Filtering to "needs attention" hides the healthy main, keeps the alt.
-		await dialog.getByRole('button', { name: 'needs attention' }).click();
-		await expect(charCells.filter({ hasText: 'Main Pilot' })).toHaveCount(0);
-		await expect(charCells.filter({ hasText: 'Sold Alt' })).toBeVisible();
+		// Filtering by character name surfaces the account via its alt.
+		await page.getByLabel('Filter accounts by character name').fill('Sold');
+		await expect(page.locator('tr', { hasText: 'Main Pilot' })).toBeVisible();
 
-		// Close the dialog.
-		await dialog.getByRole('button', { name: 'close' }).click();
-		await expect(page.getByRole('dialog')).toHaveCount(0);
+		// The "transferred" status chip keeps the flagged account.
+		await page.getByLabel('Filter accounts by character name').fill('');
+		await page.getByRole('button', { name: 'transferred', exact: true }).click();
+		await expect(page.locator('tr.account-row', { hasText: 'Main Pilot' })).toBeVisible();
 	});
 
 	test('block via local search → unblock flow', async ({ page }) => {

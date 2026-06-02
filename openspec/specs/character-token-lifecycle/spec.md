@@ -1,6 +1,6 @@
 ## Purpose
 
-The lifecycle of an EVE character's ESI tokens and ownership: capturing the SSO `owner` hash on every authentication, the `token_status` state machine (`valid` / `token_expired` / `owner_mismatch`), the daily background token-refresh sweep with its owner-mismatch detection and 7-day idle waterfall, the self-healing of flagged characters on successful re-authentication, the admin character-search and token-state visibility surface, and the audit trail emitted when a character is flagged as transferred.
+The lifecycle of an EVE character's ESI tokens and ownership: capturing the SSO `owner` hash on every authentication, the `token_status` state machine (`valid` / `token_expired` / `owner_mismatch`), the daily background token-refresh sweep with its owner-mismatch detection and 7-day idle waterfall, the self-healing of flagged characters on successful re-authentication, the admin account-roster datagrid that surfaces token state for triage, and the audit trail emitted when a character is flagged as transferred.
 
 ## Requirements
 
@@ -76,17 +76,31 @@ Any successful login or refresh that presents an `owner` claim matching the curr
 
 ### Requirement: Admin character search and token-state visibility
 
-The admin UI SHALL provide a Characters tab where a server admin can search for a character by name. Selecting a result SHALL open a dialog showing the character's whole account — every character on that account with its `token_status` — so an admin can see and act on a transferred or expired character.
+The admin UI SHALL provide a Characters tab that renders, as a datagrid, every account known to the server — one row per account — so a server admin can see and triage the roster and its token problems without first issuing a search. The grid SHALL read from the already-loaded admin accounts list (`GET /api/v1/admin/accounts`) and SHALL NOT perform a character-name search or any outbound ESI lookup; arbitrary/orphan character lookup is out of scope for this surface.
 
-The character listing SHALL support surfacing characters by token state — at minimum, filtering/sorting to find characters whose `token_status` is `token_expired` (and `owner_mismatch`).
+Each account row SHALL be labelled by the account's main character's name (the character flagged `is_main`); if no character is flagged main, the row SHALL fall back to the first character by name. Each row SHALL surface a roll-up of the account's worst token state (counts of characters whose `token_status` is `token_expired` and `owner_mismatch`) so that token problems are visible without further interaction. A row SHALL expand to reveal every character on that account with its `token_status`.
 
-#### Scenario: Admin searches and inspects an account
-- **WHEN** a server admin searches the Characters tab for a character name and selects a result
-- **THEN** a dialog shows that character's account and all of its characters, each with its `token_status`
+The grid SHALL support a free-text filter that matches both the account's main name and its alt names (so filtering by an alt name surfaces that alt's account row), account-level status filtering that surfaces accounts having any character whose `token_status` is `token_expired` and/or `owner_mismatch`, and sortable columns.
 
-#### Scenario: Admin filters by expired token state
-- **WHEN** a server admin filters or sorts the character listing by token state
-- **THEN** characters with `token_status = token_expired` (and `owner_mismatch`) can be surfaced together
+#### Scenario: Admin sees the account roster without searching
+
+- **WHEN** a server admin opens the Characters tab
+- **THEN** the grid lists every account as a row labelled by its main character (or first character by name if none is main), with no search step required
+
+#### Scenario: Admin expands an account to inspect its characters
+
+- **WHEN** a server admin expands an account row
+- **THEN** every character on that account is shown with its `token_status`
+
+#### Scenario: Admin surfaces accounts with token problems
+
+- **WHEN** a server admin filters or sorts the grid by token state
+- **THEN** accounts having any character whose `token_status` is `token_expired` (and `owner_mismatch`) are surfaced together, and each such account's row shows its problem roll-up without being expanded
+
+#### Scenario: Admin filters by character name
+
+- **WHEN** a server admin types a name fragment into the grid's text filter
+- **THEN** rows whose main name or any alt name matches the fragment are shown
 
 ### Requirement: A flagged character is recorded in the audit log
 
