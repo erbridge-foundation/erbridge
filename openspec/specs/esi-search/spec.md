@@ -1,22 +1,30 @@
 ## Purpose
 
-Authenticated EVE Swagger Interface (ESI) character-name search performed on behalf of a specific character, using that character's stored EVE access token (best-effort refreshed). Provides the backend function that resolves a name fragment to `(eve_character_id, name)` pairs via ESI's character-search endpoint, distinguishes "no matches" from "search unavailable", and never discloses the access token to any client. This is the first authenticated outbound ESI call in the backend.
+Authenticated EVE Swagger Interface (ESI) entity-name search performed on behalf of a specific character, using that character's stored EVE access token (best-effort refreshed). Provides the backend function that resolves a name fragment to `(eve_id, name)` pairs across the `character`, `corporation`, and `alliance` categories (one or more per call) via ESI's search endpoint, distinguishes "no matches" from "search unavailable", and never discloses the access token to any client. This is the first authenticated outbound ESI call in the backend.
 
 ## Requirements
 
 ### Requirement: Authenticated ESI character-name search on behalf of a character
 
-The system SHALL provide a function that searches EVE characters by name fragment against ESI, authenticated as a specific character. It SHALL call `GET /characters/{character_id}/search/` with query parameters `categories=character`, `search=<fragment>`, and `strict=false` (case-insensitive substring match), sending the required `X-Compatibility-Date` header and an `Authorization: Bearer <access_token>` header carrying that character's access token. The required ESI scope is `esi-search.search_structures.v1` (already requested by the SSO flow).
+The system SHALL provide a function that searches EVE entities by name fragment against ESI, authenticated as a specific character, across one or more of the `character`, `corporation`, and `alliance` categories. It SHALL call `GET /characters/{character_id}/search/` with query parameters `categories=<comma-separated categories>`, `search=<fragment>`, and `strict=false` (case-insensitive substring match), sending the required `X-Compatibility-Date` header and an `Authorization: Bearer <access_token>` header carrying that character's access token. The required ESI scope is `esi-search.search_structures.v1` (already requested by the SSO flow).
 
 ESI requires the `search` fragment to be at least 3 characters; the function SHALL NOT issue a request for a shorter fragment.
 
-The ESI response for the `character` category is an array of character IDs. The function SHALL resolve each returned ID to its name (via public-info), yielding `(eve_character_id, name)` pairs. The number of resolved results SHALL be capped at a sensible maximum.
+The ESI response is an object whose keys are the requested categories, each mapping to an array of EVE ids. The function SHALL resolve each returned id to its name via public-info — characters via the character public-info path, corporations via the corporation public-info path, alliances via the alliance public-info path — yielding `(eve_id, name)` pairs partitioned by category. An id whose name cannot be resolved SHALL be dropped so results are always displayable. The number of resolved results SHALL be capped at a sensible maximum per category.
 
 This is the first authenticated outbound ESI call in the backend. The function SHALL accept the caller's already-decrypted access token; token storage, decryption, and refresh are the caller's responsibility (see the token-availability requirement).
 
-#### Scenario: Search returns matching characters resolved to names
-- **WHEN** the function is called with a valid character access token (with the search scope) and a fragment of at least 3 characters that ESI matches
+#### Scenario: Character search returns matching characters resolved to names
+- **WHEN** the function is called for the `character` category with a valid character access token (with the search scope) and a fragment of at least 3 characters that ESI matches
 - **THEN** it returns the matched characters as `(eve_character_id, name)` pairs (each id resolved to its current name), capped at the maximum
+
+#### Scenario: Corporation and alliance categories resolve to names
+- **WHEN** the function is called for the `corporation` and `alliance` categories with a matching fragment
+- **THEN** it returns the matched corporations and alliances as `(eve_entity_id, name)` pairs partitioned by category, each id resolved to its current name via public-info
+
+#### Scenario: Multiple categories in one call
+- **WHEN** the function is called with `categories` of `character,corporation,alliance` and a matching fragment
+- **THEN** a single ESI search request is issued and the matches are returned grouped by category
 
 #### Scenario: Fragment shorter than 3 characters is not sent to ESI
 - **WHEN** the function is called with a fragment shorter than 3 characters
@@ -25,6 +33,10 @@ This is the first authenticated outbound ESI call in the backend. The function S
 #### Scenario: Substring, not exact, match
 - **WHEN** the function searches with fragment "wasp" and ESI holds a character named "Wasp 223"
 - **THEN** "Wasp 223" is among the resolved results (`strict=false` yields a substring match)
+
+#### Scenario: Unresolvable id is dropped
+- **WHEN** ESI returns an id whose public-info name lookup fails
+- **THEN** that id is omitted from the results rather than appearing without a name
 
 ### Requirement: ESI search degrades gracefully when the token or ESI is unavailable
 
