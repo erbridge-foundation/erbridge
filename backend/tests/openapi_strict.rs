@@ -538,6 +538,85 @@ async fn delete_account_clears_session_cookie_and_does_not_refresh(pool: PgPool)
 }
 
 #[sqlx::test]
+async fn entities_search_401_without_session(pool: PgPool) {
+    let doc = openapi_doc_json();
+
+    let resp = backend::build_router(build_state(pool))
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/api/v1/entities/search?q=wasp")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    assert_schema(
+        &doc,
+        "/api/v1/entities/search",
+        "get",
+        "401",
+        &json_body(resp).await,
+    );
+}
+
+#[sqlx::test]
+async fn entities_search_400_on_short_fragment(pool: PgPool) {
+    let state = build_state(pool);
+    let (_account_id, cookie) = create_session(&state).await;
+    let doc = openapi_doc_json();
+
+    let resp = backend::build_router(state)
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/api/v1/entities/search?q=wa")
+                .header(header::COOKIE, &cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_schema(
+        &doc,
+        "/api/v1/entities/search",
+        "get",
+        "400",
+        &json_body(resp).await,
+    );
+}
+
+#[sqlx::test]
+async fn entities_search_200_unavailable_when_no_token(pool: PgPool) {
+    // A fresh account has no character with a usable token, so the search is
+    // hermetically "unavailable" (no live ESI needed) — a 200 with empty groups.
+    let state = build_state(pool);
+    let (_account_id, cookie) = create_session(&state).await;
+    let doc = openapi_doc_json();
+
+    let resp = backend::build_router(state)
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/api/v1/entities/search?q=wasp")
+                .header(header::COOKIE, &cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = json_body(resp).await;
+    assert_eq!(body["data"]["unavailable"], serde_json::json!(true));
+    assert_schema(&doc, "/api/v1/entities/search", "get", "200", &body);
+}
+
+#[sqlx::test]
 async fn get_health_200_matches_schema(pool: PgPool) {
     let doc = openapi_doc_json();
 

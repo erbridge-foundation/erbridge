@@ -1,6 +1,7 @@
 pub mod account;
 pub mod acl;
 pub mod admin;
+pub mod entity;
 pub mod health;
 pub mod keys;
 pub mod map;

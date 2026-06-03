@@ -2,6 +2,7 @@ pub mod account;
 pub mod acls;
 pub mod admin;
 pub mod characters;
+pub mod entities;
 pub mod keys;
 pub mod maps;
 pub mod me;

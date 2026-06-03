@@ -3,6 +3,7 @@ pub mod acl;
 pub mod admin;
 pub mod api_keys;
 pub mod auth;
+pub mod entity_search;
 pub mod health;
 pub mod map;
 pub mod preferences;

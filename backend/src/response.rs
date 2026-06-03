@@ -8,6 +8,7 @@ use crate::dto::{
         AdminAccountDto, AuditLogPageDto, BlockedCharacterDto, CharacterSearchResultDto,
         EsiCharacterSearchPageDto,
     },
+    entity::EntitySearchPageDto,
     keys::{CreatedKeyDto, KeyMetadataDto},
     map::MapDto,
     preferences::PreferencesDto,
@@ -64,6 +65,11 @@ pub struct CharacterSearchResponse {
 #[derive(Serialize, ToSchema)]
 pub struct EsiCharacterSearchResponse {
     pub data: EsiCharacterSearchPageDto,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct EntitySearchResponse {
+    pub data: EntitySearchPageDto,
 }
 
 #[derive(Serialize, ToSchema)]

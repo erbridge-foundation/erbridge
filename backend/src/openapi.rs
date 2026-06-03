@@ -12,6 +12,7 @@ use crate::{
             BlockCharacterRequest, BlockedCharacterDto, CharacterSearchResultDto,
             EsiCharacterSearchPageDto, EsiCharacterSearchResultDto,
         },
+        entity::{EntityCharacterDto, EntityOrgDto, EntitySearchPageDto},
         health::{ComponentHealth, ComponentStatus, HealthResponse, HealthStatus},
         keys::{CreateKeyRequest, CreatedKeyDto, KeyMetadataDto},
         map::{AclSummaryDto, AttachAclRequest, CreateMapRequest, MapDto, UpdateMapRequest},
@@ -21,8 +22,9 @@ use crate::{
     response::{
         AclListResponse, AclMemberListResponse, AclMemberResponse, AclResponse,
         AdminAccountListResponse, AuditLogPageResponse, BlockListResponse, CharacterResponse,
-        CharacterSearchResponse, CreatedKeyResponse, EsiCharacterSearchResponse, KeyListResponse,
-        MapListResponse, MapResponse, MeResponse, PreferencesResponse,
+        CharacterSearchResponse, CreatedKeyResponse, EntitySearchResponse,
+        EsiCharacterSearchResponse, KeyListResponse, MapListResponse, MapResponse, MeResponse,
+        PreferencesResponse,
     },
 };
 
@@ -66,6 +68,7 @@ use crate::{
         crate::handlers::api::v1::maps::delete_map,
         crate::handlers::api::v1::maps::attach_acl,
         crate::handlers::api::v1::maps::detach_acl,
+        crate::handlers::api::v1::entities::search_entities,
         crate::handlers::health::get_health,
     ),
     components(schemas(
@@ -119,6 +122,10 @@ use crate::{
         CreateMapRequest,
         UpdateMapRequest,
         AttachAclRequest,
+        EntitySearchResponse,
+        EntitySearchPageDto,
+        EntityCharacterDto,
+        EntityOrgDto,
         ErrorEnvelope,
         ErrorDetail,
     )),
@@ -131,6 +138,7 @@ use crate::{
         (name = "admin", description = "Server administration: admin management, block list, audit log"),
         (name = "acls", description = "Access-control lists and their members"),
         (name = "maps", description = "Maps and ACL attachments"),
+        (name = "entities", description = "Name search over EVE characters, corporations, and alliances"),
         (name = "health", description = "Liveness and component health"),
     ),
 )]

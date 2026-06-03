@@ -2,15 +2,18 @@ use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use reqwest_middleware::ClientWithMiddleware;
-
 use crate::{
     audit::{self, AuditEvent, AuditLogEntry, ServerAdminGrantSource},
     db::{accounts, blocks, characters, sessions},
     error::{AppError, ConflictKind},
-    esi::{self, search, token},
-    handlers::crypto,
+    esi::{self, search::SearchCategory},
+    services::entity_search::{self, EntitySearchOutcome},
 };
+
+/// Re-exported so the admin handler keeps importing `EsiSearchContext` from this
+/// module; the type and the token-acquisition path it feeds now live in
+/// `services::entity_search`, shared with the account-authenticated search.
+pub use crate::services::entity_search::EsiSearchContext;
 
 /// A character-search result enriched for the admin UI: the base match plus a
 /// deterministic portrait URL and whether the character is already blocked.
@@ -39,20 +42,6 @@ pub struct EsiCharacterSearchResult {
 pub enum EsiSearchOutcome {
     Available(Vec<EsiCharacterSearchResult>),
     Unavailable,
-}
-
-/// Inputs the ESI search needs from config/state. Bundled so the service stays
-/// free of HTTP framework types while still receiving the client + credentials
-/// for the one authenticated outbound call.
-pub struct EsiSearchContext<'a> {
-    pub http: &'a ClientWithMiddleware,
-    /// ESI base URL for the search + name-resolution calls. Prod passes the real
-    /// ESI base; tests point it at a mock server.
-    pub esi_base_url: &'a str,
-    pub token_endpoint: &'a str,
-    pub client_id: &'a str,
-    pub client_secret: &'a str,
-    pub encryption_key: &'a [u8],
 }
 
 /// Default and maximum page size for the admin audit browser. A caller-supplied
@@ -346,132 +335,38 @@ pub async fn esi_search_characters(
     ctx: EsiSearchContext<'_>,
     admin_account_id: Uuid,
     q: &str,
-    limit: Option<i64>,
+    _limit: Option<i64>,
 ) -> Result<EsiSearchOutcome, AppError> {
-    let limit = clamp_limit(limit) as usize;
-
-    // Resolve a usable access token for the admin's main character. Any reason
-    // we can't get one → graceful Unavailable.
-    let token = match get_usable_main_access_token(pool, &ctx, admin_account_id).await? {
-        Some(t) => t,
-        None => return Ok(EsiSearchOutcome::Unavailable),
-    };
-
-    let ids = match search::character_search(
-        ctx.http,
-        ctx.esi_base_url,
-        token.eve_character_id,
-        &token.access_token,
+    // Delegate to the shared entity search (character category only); the per-
+    // category cap lives in that service. The admin contract differs only in
+    // its enrichment: a deterministic portrait URL + an `already_blocked` flag.
+    let results = match entity_search::search_entities(
+        pool,
+        &ctx,
+        admin_account_id,
         q,
+        &[SearchCategory::Character],
     )
-    .await
+    .await?
     {
-        Ok(ids) => ids,
-        // Both rejected (missing scope / bad token) and unavailable (network)
-        // degrade to the same graceful outcome for the UI.
-        Err(_) => return Ok(EsiSearchOutcome::Unavailable),
+        EntitySearchOutcome::Available(r) => r,
+        EntitySearchOutcome::Unavailable => return Ok(EsiSearchOutcome::Unavailable),
     };
 
-    let resolved = search::resolve_character_names(ctx.http, ctx.esi_base_url, &ids, limit).await;
-
-    let mut out = Vec::with_capacity(resolved.len());
-    for (eve_character_id, name) in resolved {
-        let already_blocked = blocks::is_eve_character_blocked(pool, eve_character_id)
+    let mut out = Vec::with_capacity(results.characters.len());
+    for c in results.characters {
+        let already_blocked = blocks::is_eve_character_blocked(pool, c.eve_character_id)
             .await
             .map_err(AppError::Internal)?;
         out.push(EsiCharacterSearchResult {
-            portrait_url: esi::portrait_url(eve_character_id),
-            eve_character_id,
-            name,
+            portrait_url: esi::portrait_url(c.eve_character_id),
+            eve_character_id: c.eve_character_id,
+            name: c.name,
             already_blocked,
         });
     }
 
     Ok(EsiSearchOutcome::Available(out))
-}
-
-/// A usable, decrypted access token for a character.
-struct UsableToken {
-    eve_character_id: i64,
-    access_token: String,
-}
-
-/// Obtains a usable access token for `account_id`'s main character: decrypts the
-/// stored access token, and if it is expired attempts a best-effort refresh
-/// (persisting the rotated tokens). Returns `None` — never an error — when no
-/// usable token can be obtained (no main, no stored tokens, refresh failed). The
-/// decrypted token is held only transiently and never returned to a client.
-async fn get_usable_main_access_token(
-    pool: &PgPool,
-    ctx: &EsiSearchContext<'_>,
-    account_id: Uuid,
-) -> Result<Option<UsableToken>, AppError> {
-    let material = match characters::get_main_token_material(pool, account_id)
-        .await
-        .map_err(AppError::Internal)?
-    {
-        Some(m) => m,
-        None => return Ok(None),
-    };
-
-    let expired = material
-        .access_token_expires_at
-        .map(|exp| exp <= Utc::now())
-        .unwrap_or(true);
-
-    if !expired {
-        // Decrypt the stored access token for transient use. Falls through to
-        // refresh if decrypt fails or no access token is stored.
-        if let Some(enc) = &material.encrypted_access_token
-            && let Ok(access_token) = crypto::decrypt_token(enc, ctx.encryption_key)
-        {
-            return Ok(Some(UsableToken {
-                eve_character_id: material.eve_character_id,
-                access_token,
-            }));
-        }
-    }
-
-    // Expired (or undecryptable): best-effort refresh using the stored refresh
-    // token. No refresh token, or a rejected refresh → no usable token.
-    let refresh_plaintext = match &material.encrypted_refresh_token {
-        Some(enc) => match crypto::decrypt_token(enc, ctx.encryption_key) {
-            Ok(t) => t,
-            Err(_) => return Ok(None),
-        },
-        None => return Ok(None),
-    };
-
-    let refreshed = match token::refresh_access_token(
-        ctx.http,
-        ctx.token_endpoint,
-        ctx.client_id,
-        ctx.client_secret,
-        &refresh_plaintext,
-    )
-    .await
-    {
-        Some(r) => r,
-        None => return Ok(None),
-    };
-
-    // Persist the rotated tokens (best-effort; a failed write still lets the
-    // current search proceed with the fresh access token).
-    let _ = characters::update_tokens_by_eve_id(
-        pool,
-        material.eve_character_id,
-        &refreshed.access_token,
-        &refreshed.refresh_token,
-        refreshed.access_token_expires_at,
-        &refreshed.owner_hash,
-        ctx.encryption_key,
-    )
-    .await;
-
-    Ok(Some(UsableToken {
-        eve_character_id: material.eve_character_id,
-        access_token: refreshed.access_token,
-    }))
 }
 
 /// Audit-log pass-through forwarding every filter axis — including the
@@ -787,6 +682,7 @@ mod tests {
 
     // ── character search enrichment + ESI search ────────────────────────────────
 
+    use reqwest_middleware::ClientWithMiddleware;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 

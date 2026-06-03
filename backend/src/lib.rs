@@ -90,6 +90,11 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/maps/{map_id}/acls/{acl_id}",
             delete(handlers::api::v1::maps::detach_acl),
+        )
+        // Entity search (account-authenticated; the ACL member picker builds on it)
+        .route(
+            "/entities/search",
+            get(handlers::api::v1::entities::search_entities),
         );
 
     let admin_routes = Router::new()
@@ -218,5 +223,6 @@ pub fn registered_api_v1_routes() -> Vec<(String, String)> {
             "/api/v1/maps/{map_id}/acls/{acl_id}".to_string(),
             "delete".to_string(),
         ),
+        ("/api/v1/entities/search".to_string(), "get".to_string()),
     ]
 }

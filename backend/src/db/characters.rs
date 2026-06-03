@@ -383,6 +383,25 @@ pub async fn search_by_name(
         .collect())
 }
 
+/// The internal `eve_character.id` UUID for an `eve_character_id`, or `None`
+/// when no row exists. Used by entity search to resolve a matched character to
+/// the referenceable UUID an `acl_member` stores — whether the existing row is
+/// account-owned or an orphan is immaterial, both are valid identities.
+pub async fn find_id_by_eve_character_id(
+    pool: &PgPool,
+    eve_character_id: i64,
+) -> Result<Option<Uuid>> {
+    let row = sqlx::query!(
+        "SELECT id FROM eve_character WHERE eve_character_id = $1",
+        eve_character_id
+    )
+    .fetch_optional(pool)
+    .await
+    .context("failed to look up eve_character id")?;
+
+    Ok(row.map(|r| r.id))
+}
+
 /// The account that owns this `eve_character_id`, or `None` when the character
 /// is an orphan (`account_id IS NULL`) or has never been seen (no row). Used by
 /// the block service to decide whether a block must tear down an owning account.
@@ -617,6 +636,103 @@ mod tests {
             .await
             .unwrap();
         assert!(!id.is_nil());
+    }
+
+    #[sqlx::test]
+    async fn create_orphan_leaves_account_and_tokens_null(pool: PgPool) {
+        let id = create_orphan(&pool, 31337, "Ghost", 1000001, "Ghost Corp", None, None)
+            .await
+            .unwrap();
+        let row = sqlx::query!(
+            r#"
+            SELECT account_id, encrypted_access_token, encrypted_refresh_token,
+                   access_token_expires_at, esi_client_id, scopes, is_main
+            FROM eve_character WHERE id = $1
+            "#,
+            id
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(row.account_id.is_none());
+        assert!(row.encrypted_access_token.is_none());
+        assert!(row.encrypted_refresh_token.is_none());
+        assert!(row.access_token_expires_at.is_none());
+        assert!(row.esi_client_id.is_none());
+        assert!(row.scopes.is_empty());
+        assert!(!row.is_main);
+    }
+
+    #[sqlx::test]
+    async fn find_id_by_eve_character_id_returns_none_when_absent(pool: PgPool) {
+        let found = find_id_by_eve_character_id(&pool, 4040).await.unwrap();
+        assert!(found.is_none());
+    }
+
+    #[sqlx::test]
+    async fn find_id_by_eve_character_id_finds_orphan_and_owned(pool: PgPool) {
+        // Orphan row → its id is returned without inserting a second row.
+        let orphan_id = create_orphan(&pool, 5050, "Orphan", 1, "Corp", None, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            find_id_by_eve_character_id(&pool, 5050).await.unwrap(),
+            Some(orphan_id)
+        );
+
+        // Account-owned row → likewise resolves to its id.
+        let account_id = accounts::create_account(&pool).await.unwrap();
+        let mut tx = pool.begin().await.unwrap();
+        let owned_id = upsert_tokens(
+            &mut tx,
+            account_id,
+            6060,
+            "Owned",
+            1,
+            "Corp",
+            None,
+            None,
+            "c",
+            "a",
+            "r",
+            chrono::Utc::now() + chrono::Duration::hours(1),
+            &[],
+            "owner-hash",
+            &test_key(),
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+        assert_eq!(
+            find_id_by_eve_character_id(&pool, 6060).await.unwrap(),
+            Some(owned_id)
+        );
+    }
+
+    #[sqlx::test]
+    async fn minted_orphan_id_is_referenceable_as_acl_member(pool: PgPool) {
+        use crate::db::{acl, acl_member};
+
+        // A minted orphan's UUID must be a valid acl_member.character_id (FK).
+        let orphan_id = create_orphan(&pool, 7070, "Member Pilot", 1, "Corp", None, None)
+            .await
+            .unwrap();
+
+        let owner = accounts::create_account(&pool).await.unwrap();
+        let the_acl = acl::insert_acl_for_test(&pool, owner, "Test ACL").await;
+
+        let member = acl_member::add_member(
+            &pool,
+            the_acl.id,
+            "character",
+            None,
+            Some(orphan_id),
+            "Member Pilot",
+            "read",
+        )
+        .await
+        .unwrap();
+        assert_eq!(member.character_id, Some(orphan_id));
     }
 
     #[sqlx::test]
