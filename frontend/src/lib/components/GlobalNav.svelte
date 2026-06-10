@@ -30,7 +30,8 @@
 	</a>
 
 	<nav class="nav-links">
-		<a href="/maps" class:active={$page.url.pathname === '/maps'}>{m.nav_maps()}</a>
+		<a href="/maps" class:active={$page.url.pathname.startsWith('/maps')}>{m.nav_maps()}</a>
+		<a href="/acls" class:active={$page.url.pathname.startsWith('/acls')}>{m.nav_acls()}</a>
 		<a href="/characters" class:active={$page.url.pathname === '/characters'}>{m.nav_characters()}</a>
 	</nav>
 

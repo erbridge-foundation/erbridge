@@ -170,6 +170,69 @@ let blocks: {
 	blocked_at: string;
 }[] = [];
 
+// ── maps / ACLs mutable state (account session) ──────────────────────────────
+// These back the maps + ACLs e2e flows: create → attach/detach, member CRUD.
+let mapSeq = 1;
+let aclSeq = 1;
+let memberSeq = 1;
+
+type MockAcl = { id: string; name: string; owner_account_id: string; created_at: string; updated_at: string };
+type MockMember = {
+	id: string;
+	acl_id: string;
+	member_type: string;
+	eve_entity_id: number | null;
+	character_id: string | null;
+	name: string;
+	permission: string;
+	created_at: string;
+	updated_at: string;
+};
+type MockMap = {
+	id: string;
+	name: string;
+	slug: string;
+	owner_account_id: string;
+	description: string | null;
+	acl_ids: string[];
+	created_at: string;
+	updated_at: string;
+};
+
+const maps: MockMap[] = [];
+const acls: MockAcl[] = [];
+const members: MockMember[] = [];
+
+const NOW = () => new Date().toISOString();
+
+function aclSummaries(map: MockMap) {
+	return map.acl_ids
+		.map((id) => acls.find((a) => a.id === id))
+		.filter((a): a is MockAcl => Boolean(a))
+		.map((a) => ({ id: a.id, name: a.name }));
+}
+
+function mapDto(map: MockMap) {
+	return {
+		id: map.id,
+		name: map.name,
+		slug: map.slug,
+		owner_account_id: map.owner_account_id,
+		description: map.description,
+		acls: aclSummaries(map),
+		created_at: map.created_at,
+		updated_at: map.updated_at
+	};
+}
+
+// A tiny entity-search corpus so the member picker has something to resolve. The
+// e2e drives this — NOT real ESI.
+const entityCharacters = [
+	{ id: 'ent-char-1', eve_character_id: 4001, name: 'Search Pilot' }
+];
+const entityCorporations = [{ eve_entity_id: 5001, name: 'Search Corp' }];
+const entityAlliances = [{ eve_entity_id: 6001, name: 'Search Alliance' }];
+
 const server = http.createServer(async (req, res) => {
 	const url = req.url ?? '/';
 	const method = req.method ?? 'GET';
@@ -338,6 +401,199 @@ const server = http.createServer(async (req, res) => {
 			return;
 		}
 		json(res, 200, { data: [] });
+		return;
+	}
+
+	// ── maps / ACLs / entity search (account session) ──────────────────────────
+	if (
+		url.startsWith('/api/v1/maps') ||
+		url.startsWith('/api/v1/acls') ||
+		url.startsWith('/api/v1/entities/')
+	) {
+		if (!hasValidSession(req)) {
+			unauthorised(res);
+			return;
+		}
+
+		// GET /api/v1/maps
+		if (method === 'GET' && url === '/api/v1/maps') {
+			json(res, 200, { data: maps.map(mapDto) });
+			return;
+		}
+		// POST /api/v1/maps
+		if (method === 'POST' && url === '/api/v1/maps') {
+			const body = JSON.parse((await readBody(req)) || '{}');
+			if (maps.some((m) => m.slug === body.slug)) {
+				json(res, 409, { error: { code: 'slug_taken', message: 'Slug already in use' } });
+				return;
+			}
+			const map: MockMap = {
+				id: `map-${mapSeq++}`,
+				name: body.name,
+				slug: body.slug,
+				owner_account_id: 'acc1',
+				description: body.description ?? null,
+				acl_ids: body.acl_id ? [body.acl_id] : [],
+				created_at: NOW(),
+				updated_at: NOW()
+			};
+			maps.push(map);
+			json(res, 201, { data: mapDto(map) });
+			return;
+		}
+		// POST /api/v1/maps/{id}/acls — attach
+		const attachMatch = url.match(/^\/api\/v1\/maps\/([^/]+)\/acls$/);
+		if (method === 'POST' && attachMatch) {
+			const map = maps.find((m) => m.id === attachMatch[1]);
+			const body = JSON.parse((await readBody(req)) || '{}');
+			if (!map) {
+				notFound(res);
+				return;
+			}
+			if (!map.acl_ids.includes(body.acl_id)) map.acl_ids.push(body.acl_id);
+			noContent(res);
+			return;
+		}
+		// DELETE /api/v1/maps/{id}/acls/{aclId} — detach
+		const detachMatch = url.match(/^\/api\/v1\/maps\/([^/]+)\/acls\/([^/]+)$/);
+		if (method === 'DELETE' && detachMatch) {
+			const map = maps.find((m) => m.id === detachMatch[1]);
+			if (!map) {
+				notFound(res);
+				return;
+			}
+			map.acl_ids = map.acl_ids.filter((id) => id !== detachMatch[2]);
+			noContent(res);
+			return;
+		}
+		// PATCH / DELETE /api/v1/maps/{id}
+		const mapIdMatch = url.match(/^\/api\/v1\/maps\/([^/]+)$/);
+		if (mapIdMatch) {
+			const map = maps.find((m) => m.id === mapIdMatch[1]);
+			if (!map) {
+				notFound(res);
+				return;
+			}
+			if (method === 'PATCH') {
+				const body = JSON.parse((await readBody(req)) || '{}');
+				map.name = body.name;
+				map.slug = body.slug;
+				map.description = body.description ?? null;
+				map.updated_at = NOW();
+				json(res, 200, { data: mapDto(map) });
+				return;
+			}
+			if (method === 'DELETE') {
+				maps.splice(maps.indexOf(map), 1);
+				noContent(res);
+				return;
+			}
+		}
+
+		// GET /api/v1/acls
+		if (method === 'GET' && url === '/api/v1/acls') {
+			json(res, 200, { data: acls });
+			return;
+		}
+		// POST /api/v1/acls
+		if (method === 'POST' && url === '/api/v1/acls') {
+			const body = JSON.parse((await readBody(req)) || '{}');
+			const acl: MockAcl = {
+				id: `acl-${aclSeq++}`,
+				name: body.name,
+				owner_account_id: 'acc1',
+				created_at: NOW(),
+				updated_at: NOW()
+			};
+			acls.push(acl);
+			json(res, 201, { data: acl });
+			return;
+		}
+		// GET / POST /api/v1/acls/{id}/members
+		const membersMatch = url.match(/^\/api\/v1\/acls\/([^/]+)\/members$/);
+		if (membersMatch) {
+			const aclId = membersMatch[1];
+			if (method === 'GET') {
+				json(res, 200, { data: members.filter((m) => m.acl_id === aclId) });
+				return;
+			}
+			if (method === 'POST') {
+				const body = JSON.parse((await readBody(req)) || '{}');
+				const member: MockMember = {
+					id: `mem-${memberSeq++}`,
+					acl_id: aclId,
+					member_type: body.member_type,
+					eve_entity_id: body.eve_entity_id ?? null,
+					character_id: body.character_id ?? null,
+					name: body.name || 'Member',
+					permission: body.permission,
+					created_at: NOW(),
+					updated_at: NOW()
+				};
+				members.push(member);
+				json(res, 201, { data: member });
+				return;
+			}
+		}
+		// PATCH / DELETE /api/v1/acls/{id}/members/{memberId}
+		const memberIdMatch = url.match(/^\/api\/v1\/acls\/([^/]+)\/members\/([^/]+)$/);
+		if (memberIdMatch) {
+			const member = members.find((m) => m.id === memberIdMatch[2]);
+			if (!member) {
+				notFound(res);
+				return;
+			}
+			if (method === 'PATCH') {
+				const body = JSON.parse((await readBody(req)) || '{}');
+				member.permission = body.permission;
+				member.updated_at = NOW();
+				json(res, 200, { data: member });
+				return;
+			}
+			if (method === 'DELETE') {
+				members.splice(members.indexOf(member), 1);
+				noContent(res);
+				return;
+			}
+		}
+		// PATCH / DELETE /api/v1/acls/{id}
+		const aclIdMatch = url.match(/^\/api\/v1\/acls\/([^/]+)$/);
+		if (aclIdMatch) {
+			const acl = acls.find((a) => a.id === aclIdMatch[1]);
+			if (!acl) {
+				notFound(res);
+				return;
+			}
+			if (method === 'PATCH') {
+				const body = JSON.parse((await readBody(req)) || '{}');
+				acl.name = body.name;
+				acl.updated_at = NOW();
+				json(res, 200, { data: acl });
+				return;
+			}
+			if (method === 'DELETE') {
+				acls.splice(acls.indexOf(acl), 1);
+				for (const m of maps) m.acl_ids = m.acl_ids.filter((id) => id !== acl.id);
+				noContent(res);
+				return;
+			}
+		}
+
+		// GET /api/v1/entities/search?q=…
+		if (method === 'GET' && url.startsWith('/api/v1/entities/search')) {
+			const q = (new URL(url, 'http://x').searchParams.get('q') ?? '').toLowerCase();
+			json(res, 200, {
+				data: {
+					characters: entityCharacters.filter((c) => c.name.toLowerCase().includes(q)),
+					corporations: entityCorporations.filter((c) => c.name.toLowerCase().includes(q)),
+					alliances: entityAlliances.filter((a) => a.name.toLowerCase().includes(q)),
+					unavailable: false
+				}
+			});
+			return;
+		}
+
+		notFound(res);
 		return;
 	}
 

@@ -8,14 +8,31 @@ import {
 	setMainCharacter,
 	listKeys,
 	createKey,
-	deleteKey
+	deleteKey,
+	listMaps,
+	createMap,
+	updateMap,
+	deleteMap,
+	attachAcl,
+	detachAcl,
+	listAcls,
+	createAcl,
+	renameAcl,
+	addAclMember,
+	updateAclMember,
+	removeAclMember,
+	searchEntities
 } from './api';
 import type {
 	MeResponse,
 	CharacterDto,
 	HealthResponse,
 	KeyMetadataDto,
-	CreatedKeyDto
+	CreatedKeyDto,
+	MapDto,
+	AclDto,
+	AclMemberDto,
+	EntitySearchPageDto
 } from './api';
 
 const BACKEND = 'http://backend:3000';
@@ -165,6 +182,195 @@ describe('api keys', () => {
 		await expect(deleteKey(fetch, BACKEND, 'k1', COOKIE)).rejects.toMatchObject({
 			code: 'not_found',
 			status: 404
+		});
+	});
+});
+
+describe('maps client', () => {
+	const aMap: MapDto = {
+		id: 'm1',
+		name: 'Delve',
+		slug: 'delve',
+		owner_account_id: 'acc1',
+		description: null,
+		acls: [],
+		created_at: 'now',
+		updated_at: 'now'
+	};
+
+	it('listMaps unwraps the array and forwards the cookie', async () => {
+		const fetch = mockJsonFetch(200, { data: [aMap] });
+		const result = await listMaps(fetch, BACKEND, COOKIE);
+		expect(result).toEqual([aMap]);
+		expect(fetch).toHaveBeenCalledWith(
+			`${BACKEND}/api/v1/maps`,
+			expect.objectContaining({ headers: { cookie: COOKIE } })
+		);
+	});
+
+	it('createMap POSTs the body', async () => {
+		const fetch = mockJsonFetch(201, { data: aMap });
+		const body = { name: 'Delve', slug: 'delve', description: null };
+		const result = await createMap(fetch, BACKEND, body, COOKIE);
+		expect(result).toEqual(aMap);
+		expect(fetch).toHaveBeenCalledWith(
+			`${BACKEND}/api/v1/maps`,
+			expect.objectContaining({
+				method: 'POST',
+				headers: { cookie: COOKIE, 'content-type': 'application/json' },
+				body: JSON.stringify(body)
+			})
+		);
+	});
+
+	it('updateMap PATCHes by id', async () => {
+		const fetch = mockJsonFetch(200, { data: aMap });
+		await updateMap(fetch, BACKEND, 'm1', { name: 'D', slug: 'd', description: null }, COOKIE);
+		expect(fetch).toHaveBeenCalledWith(
+			`${BACKEND}/api/v1/maps/m1`,
+			expect.objectContaining({ method: 'PATCH' })
+		);
+	});
+
+	it('deleteMap DELETEs by id and returns undefined on 204', async () => {
+		const fetch = mockNoContentFetch();
+		await expect(deleteMap(fetch, BACKEND, 'm1', COOKIE)).resolves.toBeUndefined();
+		expect(fetch).toHaveBeenCalledWith(
+			`${BACKEND}/api/v1/maps/m1`,
+			expect.objectContaining({ method: 'DELETE', headers: { cookie: COOKIE } })
+		);
+	});
+
+	it('attachAcl POSTs acl_id to the map acls endpoint', async () => {
+		const fetch = mockNoContentFetch();
+		await attachAcl(fetch, BACKEND, 'm1', 'acl9', COOKIE);
+		expect(fetch).toHaveBeenCalledWith(
+			`${BACKEND}/api/v1/maps/m1/acls`,
+			expect.objectContaining({ method: 'POST', body: JSON.stringify({ acl_id: 'acl9' }) })
+		);
+	});
+
+	it('detachAcl DELETEs the acl from the map', async () => {
+		const fetch = mockNoContentFetch();
+		await detachAcl(fetch, BACKEND, 'm1', 'acl9', COOKIE);
+		expect(fetch).toHaveBeenCalledWith(
+			`${BACKEND}/api/v1/maps/m1/acls/acl9`,
+			expect.objectContaining({ method: 'DELETE' })
+		);
+	});
+
+	it('surfaces a slug conflict as an ApiError', async () => {
+		const fetch = mockJsonFetch(409, { error: { code: 'slug_taken', message: 'taken' } });
+		await expect(
+			createMap(fetch, BACKEND, { name: 'x', slug: 'x', description: null }, COOKIE)
+		).rejects.toMatchObject({ code: 'slug_taken', status: 409 });
+	});
+});
+
+describe('acls client', () => {
+	const anAcl: AclDto = {
+		id: 'acl1',
+		name: 'Friends',
+		owner_account_id: 'acc1',
+		created_at: 'now',
+		updated_at: 'now'
+	};
+	const aMember: AclMemberDto = {
+		id: 'mem1',
+		acl_id: 'acl1',
+		member_type: 'character',
+		eve_entity_id: null,
+		character_id: 'char-uuid',
+		name: 'Pilot',
+		permission: 'read',
+		created_at: 'now',
+		updated_at: 'now'
+	};
+
+	it('listAcls unwraps the array', async () => {
+		const fetch = mockJsonFetch(200, { data: [anAcl] });
+		expect(await listAcls(fetch, BACKEND, COOKIE)).toEqual([anAcl]);
+	});
+
+	it('createAcl POSTs the name', async () => {
+		const fetch = mockJsonFetch(201, { data: anAcl });
+		await createAcl(fetch, BACKEND, 'Friends', COOKIE);
+		expect(fetch).toHaveBeenCalledWith(
+			`${BACKEND}/api/v1/acls`,
+			expect.objectContaining({ method: 'POST', body: JSON.stringify({ name: 'Friends' }) })
+		);
+	});
+
+	it('renameAcl PATCHes the name by id', async () => {
+		const fetch = mockJsonFetch(200, { data: anAcl });
+		await renameAcl(fetch, BACKEND, 'acl1', 'Foes', COOKIE);
+		expect(fetch).toHaveBeenCalledWith(
+			`${BACKEND}/api/v1/acls/acl1`,
+			expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ name: 'Foes' }) })
+		);
+	});
+
+	it('addAclMember POSTs the member body to the members endpoint', async () => {
+		const fetch = mockJsonFetch(201, { data: aMember });
+		const body = { member_type: 'character', character_id: 'char-uuid', permission: 'read' };
+		await addAclMember(fetch, BACKEND, 'acl1', body, COOKIE);
+		expect(fetch).toHaveBeenCalledWith(
+			`${BACKEND}/api/v1/acls/acl1/members`,
+			expect.objectContaining({ method: 'POST', body: JSON.stringify(body) })
+		);
+	});
+
+	it('updateAclMember PATCHes the member permission', async () => {
+		const fetch = mockJsonFetch(200, { data: aMember });
+		await updateAclMember(fetch, BACKEND, 'acl1', 'mem1', { permission: 'admin' }, COOKIE);
+		expect(fetch).toHaveBeenCalledWith(
+			`${BACKEND}/api/v1/acls/acl1/members/mem1`,
+			expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ permission: 'admin' }) })
+		);
+	});
+
+	it('removeAclMember DELETEs the member', async () => {
+		const fetch = mockNoContentFetch();
+		await removeAclMember(fetch, BACKEND, 'acl1', 'mem1', COOKIE);
+		expect(fetch).toHaveBeenCalledWith(
+			`${BACKEND}/api/v1/acls/acl1/members/mem1`,
+			expect.objectContaining({ method: 'DELETE' })
+		);
+	});
+});
+
+describe('searchEntities client', () => {
+	const page: EntitySearchPageDto = {
+		characters: [{ id: 'c-uuid', eve_character_id: 7, name: 'Pilot' }],
+		corporations: [],
+		alliances: [],
+		unavailable: false
+	};
+
+	it('builds the q query param and unwraps the page', async () => {
+		const fetch = mockJsonFetch(200, { data: page });
+		const result = await searchEntities(fetch, BACKEND, 'pil ot', COOKIE);
+		expect(result).toEqual(page);
+		expect(fetch).toHaveBeenCalledWith(
+			`${BACKEND}/api/v1/entities/search?q=pil+ot`,
+			expect.objectContaining({ headers: { cookie: COOKIE } })
+		);
+	});
+
+	it('appends the categories query param when given', async () => {
+		const fetch = mockJsonFetch(200, { data: page });
+		await searchEntities(fetch, BACKEND, 'abc', COOKIE, 'character,corporation');
+		expect(fetch).toHaveBeenCalledWith(
+			`${BACKEND}/api/v1/entities/search?q=abc&categories=character%2Ccorporation`,
+			expect.objectContaining({ headers: { cookie: COOKIE } })
+		);
+	});
+
+	it('throws ApiError on a non-2xx', async () => {
+		const fetch = mockJsonFetch(403, { error: { code: 'forbidden', message: 'no' } });
+		await expect(searchEntities(fetch, BACKEND, 'abc', COOKIE)).rejects.toMatchObject({
+			code: 'forbidden',
+			status: 403
 		});
 	});
 });

@@ -136,6 +136,88 @@ export interface AuditLogQuery {
 	limit?: number;
 }
 
+// keep in sync with: backend/src/dto/map.rs
+export interface AclSummaryDto {
+	id: string;
+	name: string;
+}
+
+export interface MapDto {
+	id: string;
+	name: string;
+	slug: string;
+	owner_account_id: string | null;
+	description: string | null;
+	acls: AclSummaryDto[];
+	created_at: string;
+	updated_at: string;
+}
+
+export interface CreateMapRequest {
+	name: string;
+	slug: string;
+	description: string | null;
+	acl_id?: string | null;
+}
+
+export interface UpdateMapRequest {
+	name: string;
+	slug: string;
+	description: string | null;
+}
+
+// keep in sync with: backend/src/dto/acl.rs
+export interface AclDto {
+	id: string;
+	name: string;
+	owner_account_id: string | null;
+	created_at: string;
+	updated_at: string;
+}
+
+export interface AclMemberDto {
+	id: string;
+	acl_id: string;
+	member_type: string;
+	eve_entity_id: number | null;
+	character_id: string | null;
+	name: string;
+	permission: string;
+	created_at: string;
+	updated_at: string;
+}
+
+export interface AddMemberRequest {
+	member_type: string;
+	eve_entity_id?: number | null;
+	character_id?: string | null;
+	name?: string;
+	permission: string;
+}
+
+export interface UpdateMemberRequest {
+	permission: string;
+}
+
+// keep in sync with: backend/src/dto/entity.rs
+export interface EntityCharacterDto {
+	id: string;
+	eve_character_id: number;
+	name: string;
+}
+
+export interface EntityOrgDto {
+	eve_entity_id: number;
+	name: string;
+}
+
+export interface EntitySearchPageDto {
+	characters: EntityCharacterDto[];
+	corporations: EntityOrgDto[];
+	alliances: EntityOrgDto[];
+	unavailable: boolean;
+}
+
 // keep in sync with: backend/src/dto/health.rs
 export type HealthStatus = 'ok' | 'degraded';
 
@@ -403,6 +485,208 @@ export function listAuditLog(
 	const qs = params.toString();
 	const url = `${backendUrl}/api/v1/admin/audit${qs ? `?${qs}` : ''}`;
 	return request<AuditLogPageDto>(fetch, url, { headers: { cookie } });
+}
+
+// ── maps (account session) ─────────────────────────────────────────────────────
+
+export function listMaps(
+	fetch: typeof globalThis.fetch,
+	backendUrl: string,
+	cookie: string
+): Promise<MapDto[]> {
+	return request<MapDto[]>(fetch, `${backendUrl}/api/v1/maps`, { headers: { cookie } });
+}
+
+export function createMap(
+	fetch: typeof globalThis.fetch,
+	backendUrl: string,
+	body: CreateMapRequest,
+	cookie: string
+): Promise<MapDto> {
+	return request<MapDto>(fetch, `${backendUrl}/api/v1/maps`, {
+		method: 'POST',
+		headers: { cookie, 'content-type': 'application/json' },
+		body: JSON.stringify(body)
+	});
+}
+
+export function getMap(
+	fetch: typeof globalThis.fetch,
+	backendUrl: string,
+	mapId: string,
+	cookie: string
+): Promise<MapDto> {
+	return request<MapDto>(fetch, `${backendUrl}/api/v1/maps/${mapId}`, { headers: { cookie } });
+}
+
+export function updateMap(
+	fetch: typeof globalThis.fetch,
+	backendUrl: string,
+	mapId: string,
+	body: UpdateMapRequest,
+	cookie: string
+): Promise<MapDto> {
+	return request<MapDto>(fetch, `${backendUrl}/api/v1/maps/${mapId}`, {
+		method: 'PATCH',
+		headers: { cookie, 'content-type': 'application/json' },
+		body: JSON.stringify(body)
+	});
+}
+
+export function deleteMap(
+	fetch: typeof globalThis.fetch,
+	backendUrl: string,
+	mapId: string,
+	cookie: string
+): Promise<void> {
+	return request<void>(fetch, `${backendUrl}/api/v1/maps/${mapId}`, {
+		method: 'DELETE',
+		headers: { cookie }
+	});
+}
+
+export function attachAcl(
+	fetch: typeof globalThis.fetch,
+	backendUrl: string,
+	mapId: string,
+	aclId: string,
+	cookie: string
+): Promise<void> {
+	return request<void>(fetch, `${backendUrl}/api/v1/maps/${mapId}/acls`, {
+		method: 'POST',
+		headers: { cookie, 'content-type': 'application/json' },
+		body: JSON.stringify({ acl_id: aclId })
+	});
+}
+
+export function detachAcl(
+	fetch: typeof globalThis.fetch,
+	backendUrl: string,
+	mapId: string,
+	aclId: string,
+	cookie: string
+): Promise<void> {
+	return request<void>(fetch, `${backendUrl}/api/v1/maps/${mapId}/acls/${aclId}`, {
+		method: 'DELETE',
+		headers: { cookie }
+	});
+}
+
+// ── ACLs (account session) ──────────────────────────────────────────────────────
+
+export function listAcls(
+	fetch: typeof globalThis.fetch,
+	backendUrl: string,
+	cookie: string
+): Promise<AclDto[]> {
+	return request<AclDto[]>(fetch, `${backendUrl}/api/v1/acls`, { headers: { cookie } });
+}
+
+export function createAcl(
+	fetch: typeof globalThis.fetch,
+	backendUrl: string,
+	name: string,
+	cookie: string
+): Promise<AclDto> {
+	return request<AclDto>(fetch, `${backendUrl}/api/v1/acls`, {
+		method: 'POST',
+		headers: { cookie, 'content-type': 'application/json' },
+		body: JSON.stringify({ name })
+	});
+}
+
+export function renameAcl(
+	fetch: typeof globalThis.fetch,
+	backendUrl: string,
+	aclId: string,
+	name: string,
+	cookie: string
+): Promise<AclDto> {
+	return request<AclDto>(fetch, `${backendUrl}/api/v1/acls/${aclId}`, {
+		method: 'PATCH',
+		headers: { cookie, 'content-type': 'application/json' },
+		body: JSON.stringify({ name })
+	});
+}
+
+export function deleteAcl(
+	fetch: typeof globalThis.fetch,
+	backendUrl: string,
+	aclId: string,
+	cookie: string
+): Promise<void> {
+	return request<void>(fetch, `${backendUrl}/api/v1/acls/${aclId}`, {
+		method: 'DELETE',
+		headers: { cookie }
+	});
+}
+
+export function listAclMembers(
+	fetch: typeof globalThis.fetch,
+	backendUrl: string,
+	aclId: string,
+	cookie: string
+): Promise<AclMemberDto[]> {
+	return request<AclMemberDto[]>(fetch, `${backendUrl}/api/v1/acls/${aclId}/members`, {
+		headers: { cookie }
+	});
+}
+
+export function addAclMember(
+	fetch: typeof globalThis.fetch,
+	backendUrl: string,
+	aclId: string,
+	body: AddMemberRequest,
+	cookie: string
+): Promise<AclMemberDto> {
+	return request<AclMemberDto>(fetch, `${backendUrl}/api/v1/acls/${aclId}/members`, {
+		method: 'POST',
+		headers: { cookie, 'content-type': 'application/json' },
+		body: JSON.stringify(body)
+	});
+}
+
+export function updateAclMember(
+	fetch: typeof globalThis.fetch,
+	backendUrl: string,
+	aclId: string,
+	memberId: string,
+	body: UpdateMemberRequest,
+	cookie: string
+): Promise<AclMemberDto> {
+	return request<AclMemberDto>(fetch, `${backendUrl}/api/v1/acls/${aclId}/members/${memberId}`, {
+		method: 'PATCH',
+		headers: { cookie, 'content-type': 'application/json' },
+		body: JSON.stringify(body)
+	});
+}
+
+export function removeAclMember(
+	fetch: typeof globalThis.fetch,
+	backendUrl: string,
+	aclId: string,
+	memberId: string,
+	cookie: string
+): Promise<void> {
+	return request<void>(fetch, `${backendUrl}/api/v1/acls/${aclId}/members/${memberId}`, {
+		method: 'DELETE',
+		headers: { cookie }
+	});
+}
+
+// ── entity search (account session) ─────────────────────────────────────────────
+
+export function searchEntities(
+	fetch: typeof globalThis.fetch,
+	backendUrl: string,
+	q: string,
+	cookie: string,
+	categories?: string
+): Promise<EntitySearchPageDto> {
+	const params = new URLSearchParams({ q });
+	if (categories) params.set('categories', categories);
+	const url = `${backendUrl}/api/v1/entities/search?${params.toString()}`;
+	return request<EntitySearchPageDto>(fetch, url, { headers: { cookie } });
 }
 
 // /api/health is public and returns a flat (unenveloped) document, so it does
