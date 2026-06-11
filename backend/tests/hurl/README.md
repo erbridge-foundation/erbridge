@@ -104,6 +104,16 @@ hurl --test \
      tests/hurl/session.hurl
 ```
 
+### auth.hurl
+
+Tests the SSO auth-flow contract: `GET /auth/login` sets the browser-bound `auth_state` cookie (`HttpOnly; SameSite=Lax; Secure; Path=/auth; Max-Age=900`), `GET /auth/callback` rejects a missing or mismatching `auth_state` cookie with 400 (clearing the stale cookie), `GET /auth/logout` is refused with 405, and `POST /auth/logout` without a session redirects to `/` while clearing the (`Secure`) session cookie. No SSO round-trip is performed, so no auth is needed.
+
+```sh
+hurl --test \
+     --variable base_url=$BASE_URL \
+     tests/hurl/auth.hurl
+```
+
 ### admin.hurl
 
 Tests the `/api/v1/admin/*` surface. Admin endpoints are **session-cookie only** (they reject `Authorization: Bearer`, so a leaked key cannot confer admin), so this file authenticates with cookies, not `ERB_API_KEY`.

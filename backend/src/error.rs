@@ -113,6 +113,9 @@ pub enum AppError {
     #[error("rate limited")]
     RateLimited,
 
+    #[error("service unavailable: {0}")]
+    ServiceUnavailable(String),
+
     #[error("conflict: {0:?}")]
     Conflict(ConflictKind),
 
@@ -168,6 +171,11 @@ impl IntoResponse for AppError {
                 StatusCode::CONFLICT,
                 kind.code(),
                 kind.message().to_string(),
+            ),
+            AppError::ServiceUnavailable(msg) => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "service_unavailable",
+                msg.clone(),
             ),
             AppError::BadRequest(msg) => (StatusCode::BAD_REQUEST, "bad_request", msg.clone()),
             AppError::BadGateway(msg) => (StatusCode::BAD_GATEWAY, "bad_gateway", msg.clone()),
@@ -253,6 +261,20 @@ mod tests {
     #[test]
     fn not_found_maps_to_404() {
         assert_eq!(status(AppError::NotFound), StatusCode::NOT_FOUND);
+    }
+
+    #[test]
+    fn service_unavailable_maps_to_503() {
+        assert_eq!(
+            status(AppError::ServiceUnavailable("busy".to_string())),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+    }
+
+    #[tokio::test]
+    async fn service_unavailable_body_has_expected_code() {
+        let body = body_json(AppError::ServiceUnavailable("busy".to_string())).await;
+        assert_eq!(body["error"]["code"], "service_unavailable");
     }
 
     #[test]

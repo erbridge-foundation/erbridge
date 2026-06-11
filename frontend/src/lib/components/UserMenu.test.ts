@@ -45,4 +45,22 @@ describe('UserMenu', () => {
 		expect(link.tagName).toBe('A');
 		expect(link).toHaveAttribute('href', '/admin');
 	});
+
+	it('renders log out as a POST form submit button (not a GET link)', () => {
+		render(UserMenu, { props: { onclose: () => {} } });
+		const logout = screen.getByRole('menuitem', { name: 'log out' });
+		expect(logout.tagName).toBe('BUTTON');
+		expect(logout).toHaveAttribute('type', 'submit');
+		const form = logout.closest('form');
+		expect(form).not.toBeNull();
+		expect(form).toHaveAttribute('method', 'POST');
+		expect(form).toHaveAttribute('action', '/auth/logout');
+	});
+
+	it('does NOT call onclose when log out is clicked (would unmount the form mid-submit)', async () => {
+		const onclose = vi.fn();
+		render(UserMenu, { props: { onclose } });
+		await fireEvent.click(screen.getByRole('menuitem', { name: 'log out' }));
+		expect(onclose).not.toHaveBeenCalled();
+	});
 });

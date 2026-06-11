@@ -13,7 +13,14 @@
 		<a class="item" href="/admin" role="menuitem" onclick={onclose}>{m.user_menu_admin()}</a>
 	{/if}
 	<hr class="divider" />
-	<a class="item" href="/auth/logout" role="menuitem" onclick={onclose}>{m.user_menu_logout()}</a>
+	<form method="POST" action="/auth/logout" class="logout-form">
+		<!-- No onclick={onclose} here: closing the menu unmounts this form via
+		     {#if open}, which would detach it mid-click and cancel the POST. The
+		     submit navigates to / and tears the menu down anyway. -->
+		<button type="submit" class="item" role="menuitem">
+			{m.user_menu_logout()}
+		</button>
+	</form>
 </div>
 
 <style>
@@ -40,6 +47,20 @@
 	}
 	.item:hover {
 		background: var(--space-700);
+	}
+
+	/* The logout control is a POST form so it cannot be triggered cross-site;
+	   reset the button so it matches the link items above it. */
+	.logout-form {
+		margin: 0;
+	}
+	button.item {
+		width: 100%;
+		border: 0;
+		background: none;
+		font-family: inherit;
+		text-align: left;
+		cursor: pointer;
 	}
 
 	.divider {

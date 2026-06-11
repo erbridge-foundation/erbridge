@@ -100,22 +100,162 @@ pub struct InflightRecord {
     pub account_id: Option<Uuid>,
 }
 
+/// How long an in-flight OAuth record stays valid. Generous for an SSO
+/// round-trip; matches the `auth_state` cookie `Max-Age`.
+const INFLIGHT_TTL: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+
+/// Hard cap on concurrent in-flight records. Beyond this — once expired entries
+/// are swept — new logins are refused rather than evicting live records, so an
+/// attacker at the cap cannot displace a legitimate in-flight login.
+const INFLIGHT_CAP: usize = 10_000;
+
+/// Returned by [`InflightStore::add`] when the store is full of live records.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InflightStoreFull;
+
+struct StoredRecord {
+    record: InflightRecord,
+    created_at: std::time::Instant,
+}
+
 #[derive(Clone, Default)]
-pub struct InflightStore(Arc<RwLock<HashMap<String, InflightRecord>>>);
+pub struct InflightStore(Arc<RwLock<HashMap<String, StoredRecord>>>);
 
 impl InflightStore {
     pub fn new() -> Self {
         Self::default()
     }
 
-    pub async fn add(&self, record: InflightRecord) {
-        self.0
-            .write()
-            .await
-            .insert(record.csrf_state.clone(), record);
+    /// Inserts a new in-flight record, first sweeping expired entries. Refuses
+    /// the insert with [`InflightStoreFull`] if the store is still at capacity
+    /// after the sweep.
+    pub async fn add(&self, record: InflightRecord) -> Result<(), InflightStoreFull> {
+        let now = std::time::Instant::now();
+        let mut map = self.0.write().await;
+        map.retain(|_, stored| now.duration_since(stored.created_at) < INFLIGHT_TTL);
+        if map.len() >= INFLIGHT_CAP {
+            return Err(InflightStoreFull);
+        }
+        map.insert(
+            record.csrf_state.clone(),
+            StoredRecord {
+                record,
+                created_at: now,
+            },
+        );
+        Ok(())
     }
 
+    /// Removes and returns the record for `csrf_state`, treating an expired
+    /// record as absent (and dropping it).
     pub async fn take(&self, csrf_state: &str) -> Option<InflightRecord> {
-        self.0.write().await.remove(csrf_state)
+        let stored = self.0.write().await.remove(csrf_state)?;
+        if std::time::Instant::now().duration_since(stored.created_at) >= INFLIGHT_TTL {
+            return None;
+        }
+        Some(stored.record)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn record(csrf_state: &str) -> InflightRecord {
+        InflightRecord {
+            csrf_state: csrf_state.to_string(),
+            return_to: None,
+            account_id: None,
+        }
+    }
+
+    /// Inserts a record stamped `age` in the past, bypassing the public `add`
+    /// so the test does not have to wait wall-clock time.
+    async fn insert_aged(store: &InflightStore, csrf_state: &str, age: std::time::Duration) {
+        let created_at = std::time::Instant::now()
+            .checked_sub(age)
+            .expect("age within Instant range");
+        store.0.write().await.insert(
+            csrf_state.to_string(),
+            StoredRecord {
+                record: record(csrf_state),
+                created_at,
+            },
+        );
+    }
+
+    #[tokio::test]
+    async fn take_returns_live_record() {
+        let store = InflightStore::new();
+        store.add(record("abc")).await.unwrap();
+        let got = store.take("abc").await.expect("live record returned");
+        assert_eq!(got.csrf_state, "abc");
+    }
+
+    #[tokio::test]
+    async fn expired_record_is_not_returned() {
+        let store = InflightStore::new();
+        insert_aged(
+            &store,
+            "old",
+            INFLIGHT_TTL + std::time::Duration::from_secs(1),
+        )
+        .await;
+        assert!(store.take("old").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn add_sweeps_expired_records() {
+        let store = InflightStore::new();
+        insert_aged(
+            &store,
+            "old",
+            INFLIGHT_TTL + std::time::Duration::from_secs(1),
+        )
+        .await;
+        store.add(record("fresh")).await.unwrap();
+        // The expired entry was swept on insert, leaving only the fresh one.
+        let map = store.0.read().await;
+        assert_eq!(map.len(), 1);
+        assert!(map.contains_key("fresh"));
+    }
+
+    #[tokio::test]
+    async fn add_refuses_when_full_of_live_records() {
+        let store = InflightStore::new();
+        {
+            let mut map = store.0.write().await;
+            let now = std::time::Instant::now();
+            for i in 0..INFLIGHT_CAP {
+                let key = format!("live-{i}");
+                map.insert(
+                    key.clone(),
+                    StoredRecord {
+                        record: record(&key),
+                        created_at: now,
+                    },
+                );
+            }
+        }
+        assert_eq!(store.add(record("overflow")).await, Err(InflightStoreFull));
+    }
+
+    #[tokio::test]
+    async fn add_at_cap_evicts_expired_to_make_room() {
+        let store = InflightStore::new();
+        // Fill to the cap with expired records, then a new insert should sweep
+        // them all and succeed.
+        for i in 0..INFLIGHT_CAP {
+            insert_aged(
+                &store,
+                &format!("old-{i}"),
+                INFLIGHT_TTL + std::time::Duration::from_secs(1),
+            )
+            .await;
+        }
+        store.add(record("fresh")).await.unwrap();
+        let map = store.0.read().await;
+        assert_eq!(map.len(), 1);
+        assert!(map.contains_key("fresh"));
     }
 }

@@ -22,6 +22,7 @@ HTTP 200
 header "Set-Cookie" matches "^session=[A-Za-z0-9_\\-]+\\.[A-Za-z0-9_\\-]+\\.[A-Za-z0-9_\\-]+;"
 header "Set-Cookie" contains "HttpOnly"
 header "Set-Cookie" contains "SameSite=Lax"
+header "Set-Cookie" contains "Secure"
 header "Set-Cookie" contains "Path=/"
 
 # ── 2. Unauthenticated request does NOT reissue a cookie ──────────────────────

@@ -56,7 +56,10 @@ pub async fn login(
             return_to,
             account_id: None,
         })
-        .await;
+        .await
+        .map_err(|_| {
+            AppError::ServiceUnavailable("too many pending logins; please retry".to_string())
+        })?;
 
     let redirect_url = format!(
         "{}?response_type=code&client_id={}&redirect_uri={}/auth/callback&scope={}&state={}",
@@ -67,7 +70,9 @@ pub async fn login(
         csrf_state,
     );
 
-    Ok(Redirect::to(&redirect_url).into_response())
+    let mut response = Redirect::to(&redirect_url).into_response();
+    cookie::set_auth_state_cookie(response.headers_mut(), &csrf_state);
+    Ok(response)
 }
 
 #[derive(Deserialize)]
@@ -85,18 +90,37 @@ struct TokenResponse {
 
 pub async fn callback(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Query(query): Query<CallbackQuery>,
-) -> Result<Response, AppError> {
-    // Find and consume the in-flight OAuth record by csrf_state.
+) -> Response {
+    // Bind the callback to the browser that started the login: the `auth_state`
+    // cookie must be present and equal the `state` query parameter, checked
+    // before consuming the in-flight record. The cookie is cleared on every
+    // outcome below.
+    let cookie_state = cookie::extract_auth_state(&headers);
+    if cookie_state.as_deref() != Some(query.state.as_str()) {
+        let mut response =
+            AppError::BadRequest("invalid or missing state parameter".to_string()).into_response();
+        cookie::clear_auth_state_cookie(response.headers_mut());
+        return response;
+    }
+
+    let mut response = match callback_inner(&state, &query).await {
+        Ok(response) => response,
+        Err(err) => err.into_response(),
+    };
+    cookie::clear_auth_state_cookie(response.headers_mut());
+    response
+}
+
+async fn callback_inner(state: &AppState, query: &CallbackQuery) -> Result<Response, AppError> {
+    // Find and consume the in-flight OAuth record by csrf_state. An expired
+    // record is treated as absent.
     let inflight = state
         .inflight_store
         .take(&query.state)
         .await
         .ok_or_else(|| AppError::BadRequest("invalid or missing state parameter".to_string()))?;
-
-    if inflight.csrf_state != query.state {
-        return Err(AppError::BadRequest("state parameter mismatch".to_string()));
-    }
 
     // Exchange code for tokens.
     let token_resp: TokenResponse = state
@@ -279,7 +303,10 @@ pub async fn add_character(
             return_to,
             account_id: Some(session.account_id),
         })
-        .await;
+        .await
+        .map_err(|_| {
+            AppError::ServiceUnavailable("too many pending logins; please retry".to_string())
+        })?;
 
     let redirect_url = format!(
         "{}?response_type=code&client_id={}&redirect_uri={}/auth/callback&scope={}&state={}",
@@ -290,7 +317,9 @@ pub async fn add_character(
         csrf_state,
     );
 
-    Ok(Redirect::to(&redirect_url).into_response())
+    let mut response = Redirect::to(&redirect_url).into_response();
+    cookie::set_auth_state_cookie(response.headers_mut(), &csrf_state);
+    Ok(response)
 }
 
 pub async fn extract_session(

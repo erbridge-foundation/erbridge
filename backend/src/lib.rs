@@ -204,7 +204,7 @@ pub fn build_router(state: AppState) -> Router {
     let auth_routes = Router::new()
         .route("/auth/login", get(handlers::auth::login))
         .route("/auth/callback", get(handlers::auth::callback))
-        .route("/auth/logout", get(handlers::auth::logout))
+        .route("/auth/logout", post(handlers::auth::logout))
         .route("/auth/characters/add", get(handlers::auth::add_character));
     let auth_routes = match auth_governor {
         Some(cfg) => auth_routes
