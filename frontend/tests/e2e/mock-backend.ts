@@ -135,14 +135,23 @@ interface AuditEntry {
  * click-to-refine can be exercised.
  */
 function seededAuditEntries(): AuditEntry[] {
-	const now = Date.now();
-	const ago = (ms: number) => new Date(now - ms).toISOString();
-	const HOUR = 3_600_000;
+	const now = new Date();
 	const DAY = 86_400_000;
+	const HOUR = 3_600_000;
+	const MIN = 60_000;
+
+	// Anchor to local midnight so "today" entries are always in today's calendar
+	// day regardless of what time the test runs, and "yesterday" is always the
+	// prior day. Using wall-clock ago(N*HOUR) is fragile near midnight.
+	const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+	const atToday = (offsetMs: number) => new Date(todayMidnight + offsetMs).toISOString();
+	const atYesterday = (offsetMs: number) => new Date(todayMidnight - DAY + offsetMs).toISOString();
+	const atDaysAgo = (days: number, offsetMs: number) =>
+		new Date(todayMidnight - days * DAY + offsetMs).toISOString();
 
 	const base = (over: Partial<AuditEntry>): AuditEntry => ({
 		id: 'x',
-		occurred_at: ago(HOUR),
+		occurred_at: atToday(HOUR),
 		actor_account_id: 'acc1',
 		actor_character_id: 1001,
 		actor_character_name: 'Main Pilot',
@@ -158,7 +167,7 @@ function seededAuditEntries(): AuditEntry[] {
 		// Today — Wasp as actor.
 		base({
 			id: 'a1',
-			occurred_at: ago(2 * HOUR),
+			occurred_at: atToday(10 * HOUR + 30 * MIN),
 			actor_character_name: 'Wasp 223',
 			event_type: 'acl_member_added',
 			target_type: 'acl',
@@ -168,7 +177,7 @@ function seededAuditEntries(): AuditEntry[] {
 		// Today — Wasp as target name, different actor.
 		base({
 			id: 'a2',
-			occurred_at: ago(3 * HOUR),
+			occurred_at: atToday(9 * HOUR),
 			actor_character_name: 'Other Pilot',
 			actor_account_id: 'acc2',
 			event_type: 'map_created',
@@ -179,7 +188,7 @@ function seededAuditEntries(): AuditEntry[] {
 		// Today — security-relevant.
 		base({
 			id: 'a3',
-			occurred_at: ago(4 * HOUR),
+			occurred_at: atToday(8 * HOUR),
 			actor_account_id: null,
 			actor_character_id: null,
 			actor_character_name: null,
@@ -191,7 +200,7 @@ function seededAuditEntries(): AuditEntry[] {
 		// Yesterday.
 		base({
 			id: 'b1',
-			occurred_at: ago(DAY + 2 * HOUR),
+			occurred_at: atYesterday(22 * HOUR),
 			event_type: 'character_added',
 			target_type: 'character',
 			target_id: '555',
@@ -200,13 +209,13 @@ function seededAuditEntries(): AuditEntry[] {
 		// Three days ago (still inside 7d).
 		base({
 			id: 'c1',
-			occurred_at: ago(3 * DAY),
+			occurred_at: atDaysAgo(3, 12 * HOUR),
 			event_type: 'api_key_created'
 		}),
 		// 20 days ago — outside 7d, inside 30d (only after widening).
 		base({
 			id: 'd1',
-			occurred_at: ago(20 * DAY),
+			occurred_at: atDaysAgo(20, 12 * HOUR),
 			actor_character_name: 'Wasp 223',
 			event_type: 'acl_renamed',
 			target_type: 'acl',
