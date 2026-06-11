@@ -1,6 +1,11 @@
-FROM rust:latest AS builder
+FROM rust:1.96.0-slim-bookworm AS builder
 
 WORKDIR /app
+
+# utoipa-swagger-ui's build.rs shells out to `curl` to fetch the Swagger UI
+# bundle; the -slim base image does not ship it.
+RUN apt-get update && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY Cargo.toml Cargo.lock build.rs ./
 COPY src ./src
