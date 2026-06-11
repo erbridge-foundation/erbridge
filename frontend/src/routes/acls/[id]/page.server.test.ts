@@ -120,6 +120,57 @@ describe('acls/[id] search action', () => {
 		expect(result).toMatchObject({ status: 400, data: { action: 'search', code: 'too_short' } });
 		expect(searchEntities).not.toHaveBeenCalled();
 	});
+
+	it('forwards a single-category scope to searchEntities', async () => {
+		vi.mocked(searchEntities).mockResolvedValue({
+			characters: [],
+			corporations: [],
+			alliances: [],
+			unavailable: false
+		});
+		await actions.search(makeActionEvent('acl1', { q: 'wasp', scope: 'corporation' }));
+		expect(searchEntities).toHaveBeenCalledWith(
+			expect.anything(),
+			expect.anything(),
+			'wasp',
+			expect.anything(),
+			'corporation'
+		);
+	});
+
+	it('omits categories (undefined) for scope=any so the backend searches all', async () => {
+		vi.mocked(searchEntities).mockResolvedValue({
+			characters: [],
+			corporations: [],
+			alliances: [],
+			unavailable: false
+		});
+		await actions.search(makeActionEvent('acl1', { q: 'wasp', scope: 'any' }));
+		expect(searchEntities).toHaveBeenCalledWith(
+			expect.anything(),
+			expect.anything(),
+			'wasp',
+			expect.anything(),
+			undefined
+		);
+	});
+
+	it('defaults to all categories when no scope is supplied', async () => {
+		vi.mocked(searchEntities).mockResolvedValue({
+			characters: [],
+			corporations: [],
+			alliances: [],
+			unavailable: false
+		});
+		await actions.search(makeActionEvent('acl1', { q: 'wasp' }));
+		expect(searchEntities).toHaveBeenCalledWith(
+			expect.anything(),
+			expect.anything(),
+			'wasp',
+			expect.anything(),
+			undefined
+		);
+	});
 });
 
 describe('acls/[id] addMember action — identifier by type', () => {

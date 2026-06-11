@@ -55,6 +55,24 @@
 	let query = $state('');
 	let tooShort = $derived(query.trim().length > 0 && query.trim().length < MIN_SEARCH_LEN);
 
+	// Scope narrows the ESI search to a single category so the call is quicker.
+	// 'any' searches all three (the action omits `categories`, the backend default).
+	type Scope = 'character' | 'corporation' | 'alliance' | 'any';
+	let scope = $state<Scope>('any');
+	const SCOPES: Scope[] = ['character', 'corporation', 'alliance', 'any'];
+	function scopeLabel(s: Scope): string {
+		switch (s) {
+			case 'character':
+				return m.picker_scope_character();
+			case 'corporation':
+				return m.picker_scope_corporation();
+			case 'alliance':
+				return m.picker_scope_alliance();
+			case 'any':
+				return m.picker_scope_any();
+		}
+	}
+
 	// True while the search request is in flight (set by use:enhance), drives the
 	// active-search visual indicator.
 	let searching = $state(false);
@@ -102,23 +120,38 @@
 		class="search-form"
 		class:searching
 	>
-		<div class="search-field">
-			<input
-				type="search"
-				name="q"
-				placeholder={m.picker_search_placeholder()}
-				aria-label={m.picker_search_aria()}
-				autocomplete="off"
-				minlength={MIN_SEARCH_LEN}
-				bind:value={query}
-			/>
-			{#if searching}
-				<span class="spinner" role="status" aria-label={m.picker_searching()}></span>
-			{/if}
+		<div class="search-row">
+			<div class="search-field">
+				<input
+					type="search"
+					name="q"
+					placeholder={m.picker_search_placeholder()}
+					aria-label={m.picker_search_aria()}
+					autocomplete="off"
+					minlength={MIN_SEARCH_LEN}
+					bind:value={query}
+				/>
+				{#if searching}
+					<span class="spinner" role="status" aria-label={m.picker_searching()}></span>
+				{/if}
+			</div>
+			<button
+				type="submit"
+				class="btn"
+				disabled={query.trim().length < MIN_SEARCH_LEN || searching}
+			>
+				{searching ? m.picker_searching() : m.picker_search_submit()}
+			</button>
 		</div>
-		<button type="submit" class="btn" disabled={query.trim().length < MIN_SEARCH_LEN || searching}>
-			{searching ? m.picker_searching() : m.picker_search_submit()}
-		</button>
+		<fieldset class="scope">
+			<legend>{m.picker_scope_legend()}</legend>
+			{#each SCOPES as s (s)}
+				<label class="scope-option">
+					<input type="radio" name="scope" value={s} bind:group={scope} />
+					<span>{scopeLabel(s)}</span>
+				</label>
+			{/each}
+		</fieldset>
 	</form>
 
 	{#if tooShort}
@@ -246,7 +279,42 @@
 
 	.search-form {
 		display: flex;
+		flex-direction: column;
 		gap: 8px;
+	}
+	.search-row {
+		display: flex;
+		gap: 8px;
+	}
+	.scope {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 12px;
+		margin: 0;
+		padding: 0;
+		border: 0;
+	}
+	.scope legend {
+		float: left;
+		margin: 0 4px 0 0;
+		padding: 0;
+		font-size: 0.6875rem;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		color: var(--slate-500);
+	}
+	.scope-option {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		font-size: 0.75rem;
+		color: var(--slate-300);
+		cursor: pointer;
+	}
+	.scope-option input {
+		accent-color: var(--sky);
+		cursor: pointer;
 	}
 	.search-field {
 		position: relative;

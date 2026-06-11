@@ -118,6 +118,33 @@ describe('MemberPicker 3-char guard', () => {
 	});
 });
 
+describe('MemberPicker search scope', () => {
+	it('offers character, corporation, alliance, and any radios in the search form', () => {
+		render(MemberPicker, { props: {} });
+		for (const label of ['Character', 'Corporation', 'Alliance', 'Any']) {
+			expect(screen.getByRole('radio', { name: label })).toBeInTheDocument();
+		}
+	});
+
+	it('defaults the scope to "any" and submits it as the scope field', async () => {
+		const { container } = render(MemberPicker, { props: {} });
+		const anyRadio = screen.getByRole('radio', { name: 'Any' }) as HTMLInputElement;
+		expect(anyRadio.checked).toBe(true);
+		expect(anyRadio.name).toBe('scope');
+		// All scope radios live in the search form so the chosen scope submits with it.
+		const form = container.querySelector('form.search-form') as HTMLFormElement;
+		expect(form.querySelectorAll('input[name=scope]')).toHaveLength(4);
+	});
+
+	it('lets the user narrow the scope to a single category', async () => {
+		render(MemberPicker, { props: {} });
+		const corpRadio = screen.getByRole('radio', { name: 'Corporation' }) as HTMLInputElement;
+		await fireEvent.click(corpRadio);
+		expect(corpRadio.checked).toBe(true);
+		expect(corpRadio.value).toBe('corporation');
+	});
+});
+
 describe('MemberPicker unavailable vs empty', () => {
 	it('renders a distinct "search unavailable" notice', () => {
 		render(MemberPicker, { props: { unavailable: true, searched: true } });

@@ -321,5 +321,10 @@
 	"maps_settings_heading": "KARTENEINSTELLUNGEN",
 	"maps_settings_details_heading": "Details",
 	"acls_create_open": "ACL erstellen",
-	"picker_searching": "suche…"
+	"picker_searching": "suche…",
+	"picker_scope_legend": "Suchen nach",
+	"picker_scope_character": "Charakter",
+	"picker_scope_corporation": "Corporation",
+	"picker_scope_alliance": "Allianz",
+	"picker_scope_any": "Beliebig"
 }

@@ -45,8 +45,17 @@ export const actions: Actions = {
 			});
 		}
 
+		// Map the picker's scope radio to the backend `categories` param so the ESI
+		// search is narrowed (and quicker). 'any' (or anything unrecognized) searches
+		// all three — leave categories undefined so the backend applies its default.
+		const scope = data.get('scope');
+		const categories =
+			scope === 'character' || scope === 'corporation' || scope === 'alliance'
+				? scope
+				: undefined;
+
 		try {
-			const page = await searchEntities(fetch, backend_internal_url(), q.trim(), cookie);
+			const page = await searchEntities(fetch, backend_internal_url(), q.trim(), cookie, categories);
 			return {
 				action: 'search' as const,
 				query: q.trim(),
