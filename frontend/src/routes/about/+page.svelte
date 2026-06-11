@@ -59,6 +59,50 @@
 		<p class="tagline">{m.about_tagline()}</p>
 	</header>
 
+	<section class="section blurb">
+		<h2 class="section-label">Why "E-R Bridge"?</h2>
+		<p>
+			E-R Bridge is named after the Einstein–Rosen Bridge, a theoretical concept
+			proposed by Albert Einstein and Nathan Rosen in 1935. First described in
+			their paper,
+			<a
+				href="https://journals.aps.org/pr/abstract/10.1103/PhysRev.48.73"
+				target="_blank"
+				rel="noopener noreferrer"
+				><em>The Particle Problem in the General Theory of Relativity</em></a
+			>, an Einstein–Rosen bridge describes a connection between distant regions
+			of spacetime—a shortcut through the universe. Today, it is more commonly
+			known as a wormhole.
+		</p>
+		<p>The physicists' version was an elegant mathematical solution.</p>
+		<p>
+			The capsuleers' version leads to either a C5, a rage rolling fleet, a
+			drifter, or a sweet, sweet gas cloud.
+		</p>
+		<p>
+			In EVE Online, wormholes connect distant systems through unstable,
+			ever-changing pathways. They open routes for exploration, logistics,
+			industry, or PvP, while simultaneously creating opportunities for pilots
+			to become spectacularly lost. Keeping track of those connections is where
+			E-R Bridge comes in.
+		</p>
+		<p>
+			Built for navigating the shifting labyrinth of Anoikis, E-R Bridge helps
+			map chains, track routes, and answer important questions such as:
+		</p>
+		<ul>
+			<li>Where does this wormhole go?</li>
+			<li>How do we get home?</li>
+			<li>Why are there seventeen signatures in this system?</li>
+			<li>Who left this route bookmarked as "safe"?</li>
+		</ul>
+		<p>
+			The name is both a nod to the physicists who first imagined wormholes, and
+			a tribute to the pilots who willingly jump through them despite
+			overwhelming evidence that this is a terrible idea.
+		</p>
+	</section>
+
 	<section class="section">
 		<h2 class="section-label">{m.about_section_versions()}</h2>
 		<div class="version-row">
@@ -91,11 +135,6 @@
 	</section>
 
 	<section class="section">
-		<h2 class="section-label">{m.about_section_legal()}</h2>
-		<p class="legal">{m.about_legal_body()}</p>
-	</section>
-
-	<section class="section">
 		<h2 class="section-label">{m.about_section_acknowledgements()}</h2>
 		<ul class="ack-list">
 			{#each acknowledgements as ack (ack.href)}
@@ -112,6 +151,11 @@
 				</li>
 			{/each}
 		</ul>
+	</section>
+
+	<section class="section">
+		<h2 class="section-label">{m.about_section_legal()}</h2>
+		<p class="legal">{m.about_legal_body()}</p>
 	</section>
 </main>
 
@@ -155,6 +199,30 @@
 
 	.section {
 		margin-bottom: 32px;
+	}
+
+	.blurb p,
+	.blurb li {
+		color: var(--slate-400);
+		font-size: 0.875rem;
+		line-height: 1.7;
+	}
+	.blurb p {
+		margin: 0 0 12px;
+	}
+	.blurb p:last-child {
+		margin-bottom: 0;
+	}
+	.blurb ul {
+		margin: 0 0 12px;
+		padding-left: 1.5em;
+	}
+	.blurb a {
+		color: var(--sky);
+		text-decoration: none;
+	}
+	.blurb a:hover {
+		text-decoration: underline;
 	}
 	.section-label {
 		font-size: 0.6875rem;
