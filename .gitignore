@@ -14,3 +14,7 @@
 
 zz-ref/
 docker-compose.dev.yml
+
+# Claude Code local state (skills/commands under .claude/ stay tracked)
+.claude/projects/
+.claude/worktrees/
