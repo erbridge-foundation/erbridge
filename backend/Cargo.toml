@@ -5,6 +5,7 @@ name = "backend"
 # sentinel is only used by a plain `cargo build` with no APP_VERSION. See RELEASING.md.
 version = "0.0.0"
 edition = "2024"
+rust-version = "1.96"
 
 [dependencies]
 axum = { version = "0.8", features = ["macros"] }
