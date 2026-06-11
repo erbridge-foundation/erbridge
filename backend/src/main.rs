@@ -31,8 +31,15 @@ async fn main() -> anyhow::Result<()> {
         .context("failed to discover ESI metadata")?;
 
     // RUST_LOG=erbridge=debug,reqwest_tracing=info to observe ESI call spans.
+    // The ESI rate-limit middleware sits after tracing so its waits/backoff are
+    // traced; it keeps us within ESI's token-bucket and legacy error budgets.
+    let esi_rate_limit = esi::rate_limit::EsiRateLimitMiddleware::new(
+        config.rate_limit.esi_error_remain_threshold,
+        config.rate_limit.esi_bucket_remain_threshold,
+    );
     let http_client = ClientBuilder::new(base_client)
         .with(TracingMiddleware::default())
+        .with(esi_rate_limit)
         .build();
     let esi_metadata = Arc::new(esi_metadata);
 
@@ -72,7 +79,14 @@ async fn main() -> anyhow::Result<()> {
         .context("failed to bind port 3000")?;
 
     tracing::info!("listening on port 3000");
-    axum::serve(listener, app).await.context("server error")?;
+    // Serve with connection info so the per-IP rate limiters can fall back to
+    // the peer IP when the X-Forwarded-For header is absent.
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .await
+    .context("server error")?;
 
     Ok(())
 }

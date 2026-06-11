@@ -107,6 +107,7 @@ The following `error.code` values are reserved and SHALL be used for the indicat
 | `not_found`         | 404            | Target resource does not exist or is not visible to caller |
 | `conflict`          | 409            | Request conflicts with current state (e.g. duplicate name) |
 | `validation_failed` | 400            | Request body or parameters failed validation               |
+| `rate_limited`      | 429            | Caller exceeded the inbound request-rate limit             |
 | `internal_error`    | 500            | Unhandled server-side failure                              |
 
 Endpoints MAY introduce additional codes for endpoint-specific failures. Endpoint-specific codes SHALL be documented in the relevant capability spec.
@@ -126,6 +127,10 @@ Endpoints MAY introduce additional codes for endpoint-specific failures. Endpoin
 #### Scenario: Conflicting state uses conflict
 - **WHEN** a `/api/*` request would violate a uniqueness or state constraint (e.g. duplicate name)
 - **THEN** the response is HTTP 409 with `error.code = "conflict"`
+
+#### Scenario: Rate-limited request uses rate_limited
+- **WHEN** a `/api/*` request is rejected by the inbound rate limiter
+- **THEN** the response is HTTP 429 with `error.code = "rate_limited"` in the standard error envelope and a `Retry-After` header
 
 ### Requirement: Timestamps are RFC 3339 UTC
 

@@ -40,6 +40,7 @@ fn test_config() -> Arc<Config> {
         esi_client_id: "test_client_id".into(),
         esi_client_secret: "test_client_secret".into(),
         database_url: String::new(),
+        rate_limit: Default::default(),
     })
 }
 

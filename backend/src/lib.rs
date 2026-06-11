@@ -14,10 +14,19 @@ pub mod response;
 pub mod services;
 pub mod session;
 
+use std::sync::Arc;
+
 use axum::{
     Router,
     middleware::from_fn,
+    response::{IntoResponse, Redirect, Response},
     routing::{delete, get, patch, post},
+};
+use tower_governor::{
+    GovernorLayer,
+    errors::GovernorError,
+    governor::GovernorConfigBuilder,
+    key_extractor::{KeyExtractor, SmartIpKeyExtractor},
 };
 use tower_http::trace::TraceLayer;
 use utoipa::OpenApi;
@@ -25,6 +34,34 @@ use utoipa_swagger_ui::SwaggerUi;
 
 use app_state::AppState;
 use handlers::middleware::refresh_session_cookie;
+
+/// Path the auth rate limiter redirects to when an `/auth/*` request is
+/// throttled. The api-contract exempts `/auth/*` from the JSON envelope, so a
+/// browser-facing redirect is used instead of `rate_limited`. The frontend
+/// route that renders this page is a follow-up.
+pub const AUTH_TOO_BUSY_PATH: &str = "/too-busy";
+
+/// Per-client-IP key extractor for the inbound limiters.
+///
+/// Wraps `SmartIpKeyExtractor` (which reads the `X-Forwarded-For` / `Forwarded`
+/// headers Traefik sets, falling back to the peer IP) and substitutes a fixed
+/// sentinel key when no IP can be determined at all. Behind Traefik, a real
+/// client IP is always present so the sentinel is never used in production; it
+/// exists so a request with no IP signal (e.g. an in-process test `oneshot`,
+/// which carries no connection info) is keyed deterministically rather than
+/// rejected outright by the limiter.
+#[derive(Clone)]
+struct ClientIpKeyExtractor;
+
+impl KeyExtractor for ClientIpKeyExtractor {
+    type Key = std::net::IpAddr;
+
+    fn extract<T>(&self, req: &axum::http::Request<T>) -> Result<Self::Key, GovernorError> {
+        SmartIpKeyExtractor
+            .extract(req)
+            .or(Ok(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED)))
+    }
+}
 
 pub fn build_router(state: AppState) -> Router {
     let api_v1_routes = Router::new()
@@ -125,21 +162,87 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route("/audit", get(handlers::api::v1::admin::list_audit));
 
-    Router::new()
+    let rl = state.config.rate_limit.clone();
+
+    // Builds a per-IP governor config. Period and burst are clamped to a
+    // non-zero minimum so `finish()` is always `Some` (it only returns `None`
+    // for a zero period or burst), keeping router construction infallible even
+    // if misconfigured. `ClientIpKeyExtractor` reads the X-Forwarded-For Traefik
+    // sets, falling back to the peer IP.
+    let governor_config = |per_millis: u64, burst: u32| {
+        let mut builder = GovernorConfigBuilder::default().key_extractor(ClientIpKeyExtractor);
+        builder
+            .per_millisecond(per_millis.max(1))
+            .burst_size(burst.max(1))
+            .finish()
+    };
+
+    // Inbound per-IP limiter for /api/* — rejects with the standard 429
+    // `rate_limited` envelope + Retry-After.
+    let api_governor = governor_config(rl.api_per_millis, rl.api_burst);
+
+    // Inbound per-IP limiter for /auth/* — tighter, and on reject it redirects
+    // to the too-busy page rather than emitting the JSON envelope.
+    let auth_governor = governor_config(rl.auth_per_millis, rl.auth_burst);
+
+    // The clamps above guarantee both configs are `Some`. If a config somehow
+    // failed to build we skip its layer rather than panic — the routes stay up,
+    // just un-throttled — which a warning surfaces.
+    let api_routes = Router::new()
+        .nest("/api/v1", api_v1_routes)
+        .nest("/api/v1/admin", admin_routes);
+    let api_routes = match api_governor {
+        Some(cfg) => api_routes.layer(
+            GovernorLayer::new(Arc::new(cfg)).error_handler(|err| api_rate_limit_response(&err)),
+        ),
+        None => {
+            tracing::warn!("/api rate-limit config invalid; /api/* is un-throttled");
+            api_routes
+        }
+    };
+
+    let auth_routes = Router::new()
         .route("/auth/login", get(handlers::auth::login))
         .route("/auth/callback", get(handlers::auth::callback))
         .route("/auth/logout", get(handlers::auth::logout))
-        .route("/auth/characters/add", get(handlers::auth::add_character))
-        .nest("/api/v1", api_v1_routes)
-        .nest("/api/v1/admin", admin_routes)
+        .route("/auth/characters/add", get(handlers::auth::add_character));
+    let auth_routes = match auth_governor {
+        Some(cfg) => auth_routes
+            .layer(GovernorLayer::new(Arc::new(cfg)).error_handler(|_| auth_rate_limit_response())),
+        None => {
+            tracing::warn!("/auth rate-limit config invalid; /auth/* is un-throttled");
+            auth_routes
+        }
+    };
+
+    Router::new()
+        .merge(auth_routes)
+        .merge(api_routes)
         // Public, unenveloped: the documented api-contract carve-out for /api/health.
         // Public by construction — get_health does not take the AuthenticatedAccount extractor.
+        // Intentionally outside the /api/* limiter so liveness probes are never throttled.
         .route("/api/health", get(handlers::health::get_health))
         // SwaggerUi registers GET /api/openapi.json and GET /api/docs (+ /api/docs/*rest)
         .merge(SwaggerUi::new("/api/docs").url("/api/openapi.json", openapi::ApiDoc::openapi()))
         .layer(from_fn(refresh_session_cookie))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
+}
+
+/// Maps a governor rejection on `/api/*` to the canonical `rate_limited` 429
+/// envelope with a `Retry-After` header.
+fn api_rate_limit_response(err: &tower_governor::GovernorError) -> Response {
+    let retry_after = match err {
+        tower_governor::GovernorError::TooManyRequests { wait_time, .. } => *wait_time,
+        _ => 1,
+    };
+    error::rate_limited_response(retry_after)
+}
+
+/// Maps a governor rejection on `/auth/*` to a redirect to the too-busy page.
+/// Never emits the `rate_limited` JSON envelope (api-contract exempts /auth/*).
+fn auth_rate_limit_response() -> Response {
+    Redirect::to(AUTH_TOO_BUSY_PATH).into_response()
 }
 
 /// Returns all `/api/v1/admin/*` routes as `(path, method)` pairs for the

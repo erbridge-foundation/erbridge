@@ -16,6 +16,7 @@ use crate::{
     responses(
         (status = 200, description = "Current account and characters", body = MeResponse),
         (status = 401, description = "Unauthenticated", body = ErrorEnvelope),
+        (status = 429, description = "Rate limited (error.code = \"rate_limited\"); a Retry-After header indicates when to retry. Applies to all /api/* routes via the inbound per-IP limiter.", body = ErrorEnvelope),
     ),
     security(("session_cookie" = []), ("bearer_token" = [])),
     tag = "account",

@@ -1,5 +1,6 @@
 pub mod jwt;
 pub mod public_info;
+pub mod rate_limit;
 pub mod search;
 pub mod token;
 

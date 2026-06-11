@@ -31,6 +31,27 @@ impl ErrorEnvelope {
     }
 }
 
+/// Builds the canonical `rate_limited` 429 response with the standard error
+/// envelope and a `Retry-After` header. Shared by the inbound `/api/*` governor
+/// rejection handler so the throttle path reuses the exact envelope machinery
+/// (`AppError::RateLimited` produces the same body for any handler-level use).
+pub fn rate_limited_response(retry_after_secs: u64) -> Response {
+    let mut response = (
+        StatusCode::TOO_MANY_REQUESTS,
+        Json(ErrorEnvelope::new(
+            "rate_limited",
+            "Too many requests; please retry later",
+        )),
+    )
+        .into_response();
+    if let Ok(value) = retry_after_secs.to_string().parse() {
+        response
+            .headers_mut()
+            .insert(axum::http::header::RETRY_AFTER, value);
+    }
+    response
+}
+
 #[derive(Debug)]
 pub enum ConflictKind {
     CannotRemoveLastCharacter,
@@ -89,6 +110,9 @@ pub enum AppError {
     #[error("not found")]
     NotFound,
 
+    #[error("rate limited")]
+    RateLimited,
+
     #[error("conflict: {0:?}")]
     Conflict(ConflictKind),
 
@@ -134,6 +158,11 @@ impl IntoResponse for AppError {
                 StatusCode::NOT_FOUND,
                 "not_found",
                 "Resource not found".to_string(),
+            ),
+            AppError::RateLimited => (
+                StatusCode::TOO_MANY_REQUESTS,
+                "rate_limited",
+                "Too many requests; please retry later".to_string(),
             ),
             AppError::Conflict(kind) => (
                 StatusCode::CONFLICT,
