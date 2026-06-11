@@ -1806,9 +1806,20 @@ mod tests {
         insert_audit_row(&pool, Some(actor_b), "account_deletion_requested", t).await;
         insert_audit_row(&pool, None, "account_purged", t).await;
 
-        let rows = list_audit_log(&pool, None, Some(actor_a), None, None, None, None, None, None, 10)
-            .await
-            .unwrap();
+        let rows = list_audit_log(
+            &pool,
+            None,
+            Some(actor_a),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            10,
+        )
+        .await
+        .unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].actor_account_id, Some(actor_a));
     }
@@ -1823,9 +1834,20 @@ mod tests {
         insert_audit_row(&pool, None, "account_purged", t2).await;
         insert_audit_row(&pool, None, "account_purged", t3).await;
 
-        let rows = list_audit_log(&pool, None, None, None, None, None, None, None, Some(t3), 10)
-            .await
-            .unwrap();
+        let rows = list_audit_log(
+            &pool,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(t3),
+            10,
+        )
+        .await
+        .unwrap();
         assert_eq!(rows.len(), 2);
         // Newest-first: t2 then t1.
         assert!(rows[0].occurred_at < t3);
@@ -2077,9 +2099,20 @@ mod tests {
 
         // A lowercase fragment ("wasp") matches "Wasp 223" — case-insensitive
         // substring, not exact match.
-        let rows = list_audit_log(&pool, None, None, None, None, Some("wasp"), None, None, None, 10)
-            .await
-            .unwrap();
+        let rows = list_audit_log(
+            &pool,
+            None,
+            None,
+            None,
+            None,
+            Some("wasp"),
+            None,
+            None,
+            None,
+            10,
+        )
+        .await
+        .unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].target_name.as_deref(), Some("Wasp 223"));
 
@@ -2114,9 +2147,20 @@ mod tests {
 
         // "%" must be treated literally, not as a LIKE wildcard — so it does NOT
         // match "Wasp 223".
-        let rows = list_audit_log(&pool, None, None, None, None, Some("%"), None, None, None, 10)
-            .await
-            .unwrap();
+        let rows = list_audit_log(
+            &pool,
+            None,
+            None,
+            None,
+            None,
+            Some("%"),
+            None,
+            None,
+            None,
+            10,
+        )
+        .await
+        .unwrap();
         assert!(rows.is_empty());
     }
 
@@ -2200,10 +2244,25 @@ mod tests {
         // Third row: Wasp nowhere — excluded.
         insert_named_row(&pool, "map_created", Some("Nobody"), Some("Empty")).await;
 
-        let rows = list_audit_log(&pool, None, None, None, None, None, Some("wasp"), None, None, 10)
-            .await
-            .unwrap();
-        assert_eq!(rows.len(), 2, "both actor- and target-side matches returned");
+        let rows = list_audit_log(
+            &pool,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("wasp"),
+            None,
+            None,
+            10,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            rows.len(),
+            2,
+            "both actor- and target-side matches returned"
+        );
     }
 
     #[sqlx::test]
@@ -2211,9 +2270,20 @@ mod tests {
         insert_named_row(&pool, "acl_created", None, Some("The Wasp")).await;
 
         // Mid-name fragment with different case matches.
-        let rows = list_audit_log(&pool, None, None, None, None, None, Some("wasp"), None, None, 10)
-            .await
-            .unwrap();
+        let rows = list_audit_log(
+            &pool,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("wasp"),
+            None,
+            None,
+            10,
+        )
+        .await
+        .unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].target_name.as_deref(), Some("The Wasp"));
     }
@@ -2225,9 +2295,20 @@ mod tests {
 
         // "%" is escaped: it matches a literal "%", so only the "50% Off" actor
         // row is returned, not "Wasp 223".
-        let rows = list_audit_log(&pool, None, None, None, None, None, Some("%"), None, None, 10)
-            .await
-            .unwrap();
+        let rows = list_audit_log(
+            &pool,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("%"),
+            None,
+            None,
+            10,
+        )
+        .await
+        .unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].actor_character_name.as_deref(), Some("50% Off"));
     }
@@ -2235,14 +2316,43 @@ mod tests {
     #[sqlx::test]
     async fn list_audit_log_since_bounds_lower_edge(pool: PgPool) {
         let base = Utc::now();
-        insert_audit_row(&pool, None, "account_purged", base - chrono::Duration::days(40)).await;
-        insert_audit_row(&pool, None, "account_purged", base - chrono::Duration::days(2)).await;
-        insert_audit_row(&pool, None, "account_purged", base - chrono::Duration::days(1)).await;
+        insert_audit_row(
+            &pool,
+            None,
+            "account_purged",
+            base - chrono::Duration::days(40),
+        )
+        .await;
+        insert_audit_row(
+            &pool,
+            None,
+            "account_purged",
+            base - chrono::Duration::days(2),
+        )
+        .await;
+        insert_audit_row(
+            &pool,
+            None,
+            "account_purged",
+            base - chrono::Duration::days(1),
+        )
+        .await;
 
         let since = base - chrono::Duration::days(7);
-        let rows = list_audit_log(&pool, None, None, None, None, None, None, Some(since), None, 10)
-            .await
-            .unwrap();
+        let rows = list_audit_log(
+            &pool,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(since),
+            None,
+            10,
+        )
+        .await
+        .unwrap();
         assert_eq!(rows.len(), 2, "only rows within the last 7 days");
         assert!(rows.iter().all(|r| r.occurred_at >= since));
     }
