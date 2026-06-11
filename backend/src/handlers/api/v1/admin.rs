@@ -267,8 +267,57 @@ pub struct AuditQuery {
     pub target_type: Option<String>,
     pub target_id: Option<String>,
     pub target_name: Option<String>,
+    /// Combined name search: matches the actor character name OR the target
+    /// name as a case-insensitive substring.
+    pub q: Option<String>,
+    /// Tiered relative time window mapped to a day-snapped `since` lower bound:
+    /// `7d` (default), `30d`, `90d`, `365d`, or a per-year bucket `year:YYYY`.
+    pub window: Option<String>,
+    /// Explicit lower time bound (RFC 3339); takes precedence over `window`.
+    pub since: Option<DateTime<Utc>>,
     pub before: Option<DateTime<Utc>>,
     pub limit: Option<i64>,
+}
+
+/// Maps the optional `window` tier (and the default when absent) to a
+/// day-snapped `since` lower bound. Relative tiers subtract a whole number of
+/// days from the start of the current UTC day, so the predicate is stable
+/// within a day and the query is cacheable. A `year:YYYY` bucket snaps to the
+/// start of that calendar year. The deepest selectable *relative* tier is one
+/// year (`365d`); unrecognised values fall back to the 7-day default. An
+/// explicit `since` always wins over `window`.
+fn resolve_since(window: Option<&str>, since: Option<DateTime<Utc>>) -> Option<DateTime<Utc>> {
+    use chrono::{Duration, TimeZone};
+
+    if let Some(s) = since {
+        return Some(s);
+    }
+
+    // Start of the current UTC day — the snap anchor for relative tiers.
+    let day_start = Utc::now()
+        .date_naive()
+        .and_hms_opt(0, 0, 0)
+        .map(|naive| Utc.from_utc_datetime(&naive));
+
+    let days = match window.unwrap_or("7d") {
+        "30d" => 30,
+        "90d" => 90,
+        "365d" => 365,
+        other => {
+            // `year:YYYY` snaps to the start of that calendar year (a single
+            // absolute year, capped one year deep is not applied to explicit
+            // year buckets — they are absolute windows).
+            if let Some(year_str) = other.strip_prefix("year:")
+                && let Ok(year) = year_str.parse::<i32>()
+            {
+                return Utc.with_ymd_and_hms(year, 1, 1, 0, 0, 0).single();
+            }
+            // "7d" and any unrecognised value default to the last 7 days.
+            7
+        }
+    };
+
+    day_start.map(|d| d - Duration::days(days))
 }
 
 #[utoipa::path(
@@ -280,6 +329,9 @@ pub struct AuditQuery {
         ("target_type" = Option<String>, Query, description = "Filter by target type"),
         ("target_id" = Option<String>, Query, description = "Filter by target id"),
         ("target_name" = Option<String>, Query, description = "Filter by target name (case-insensitive)"),
+        ("q" = Option<String>, Query, description = "Combined name search: actor OR target name, case-insensitive substring"),
+        ("window" = Option<String>, Query, description = "Relative time window: 7d (default), 30d, 90d, 365d, or year:YYYY"),
+        ("since" = Option<String>, Query, description = "Explicit lower time bound (RFC 3339); overrides window"),
         ("before" = Option<String>, Query, description = "Keyset cursor (RFC 3339); returns entries older than this"),
         ("limit" = Option<i64>, Query, description = "Max entries (clamped)"),
     ),
@@ -296,6 +348,7 @@ pub async fn list_audit(
     _admin: AdminAccount,
     Query(query): Query<AuditQuery>,
 ) -> Result<Json<ApiResponse<AuditLogPageDto>>, AppError> {
+    let since = resolve_since(query.window.as_deref(), query.since);
     let entries = svc::list_audit_log(
         &state.db,
         query.event_type.as_deref(),
@@ -303,6 +356,8 @@ pub async fn list_audit(
         query.target_type.as_deref(),
         query.target_id.as_deref(),
         query.target_name.as_deref(),
+        query.q.as_deref(),
+        since,
         query.before,
         query.limit,
     )
@@ -317,4 +372,67 @@ pub async fn list_audit(
         entries: dtos,
         next_before,
     })))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{Duration, TimeZone, Timelike};
+
+    fn day_start_utc() -> DateTime<Utc> {
+        let naive = Utc::now().date_naive().and_hms_opt(0, 0, 0).unwrap();
+        Utc.from_utc_datetime(&naive)
+    }
+
+    #[test]
+    fn resolve_since_defaults_to_seven_days_day_snapped() {
+        let since = resolve_since(None, None).expect("default window yields a since");
+        // Day-snapped: midnight UTC.
+        assert_eq!(since.hour(), 0);
+        assert_eq!(since.minute(), 0);
+        assert_eq!(since.second(), 0);
+        assert_eq!(since, day_start_utc() - Duration::days(7));
+    }
+
+    #[test]
+    fn resolve_since_maps_known_relative_tiers() {
+        assert_eq!(
+            resolve_since(Some("30d"), None),
+            Some(day_start_utc() - Duration::days(30))
+        );
+        assert_eq!(
+            resolve_since(Some("90d"), None),
+            Some(day_start_utc() - Duration::days(90))
+        );
+        assert_eq!(
+            resolve_since(Some("365d"), None),
+            Some(day_start_utc() - Duration::days(365))
+        );
+    }
+
+    #[test]
+    fn resolve_since_unrecognised_window_falls_back_to_seven_days() {
+        assert_eq!(
+            resolve_since(Some("garbage"), None),
+            Some(day_start_utc() - Duration::days(7))
+        );
+    }
+
+    #[test]
+    fn resolve_since_year_bucket_snaps_to_year_start() {
+        assert_eq!(
+            resolve_since(Some("year:2024"), None),
+            Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).single()
+        );
+    }
+
+    #[test]
+    fn resolve_since_explicit_since_overrides_window() {
+        let explicit = Utc.with_ymd_and_hms(2023, 6, 1, 12, 0, 0).unwrap();
+        assert_eq!(
+            resolve_since(Some("90d"), Some(explicit)),
+            Some(explicit),
+            "explicit since wins over window"
+        );
+    }
 }

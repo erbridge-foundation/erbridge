@@ -688,6 +688,18 @@ pub async fn record_in_tx(
     Ok(())
 }
 
+/// Escapes LIKE metacharacters (`\`, `%`, `_`) in a search fragment so they
+/// match literally, then wraps it in `%…%` for a case-insensitive substring
+/// (`ILIKE`) match. A leading-wildcard ILIKE cannot use a `LOWER(col)` index,
+/// so callers rely on the time window keeping the surviving row set small.
+fn substring_pattern(fragment: &str) -> String {
+    let escaped = fragment
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_");
+    format!("%{escaped}%")
+}
+
 /// Reads audit-log entries newest-first, with optional filters and a hard
 /// `limit`. Used by the admin audit-browser; `limit` is the caller's
 /// responsibility to clamp.
@@ -695,8 +707,12 @@ pub async fn record_in_tx(
 /// Filter axes (all conjunctive when supplied): `event_type`,
 /// `actor_account_id`, `target_type`, `target_id`, `target_name`
 /// (case-insensitive *substring* match via `ILIKE '%fragment%'`, LIKE
-/// metacharacters in the fragment escaped to match literally), and the
-/// `before` keyset cursor.
+/// metacharacters in the fragment escaped to match literally), `q` (the
+/// combined name search matching `actor_character_name` OR `target_name` as a
+/// case-insensitive substring, same escaping), the `since` lower time bound
+/// (`occurred_at >= since`), and the `before` keyset cursor / exclusive upper
+/// time bound (`occurred_at < before`). `since` and `before` together express
+/// the time window; the `since` range uses `audit_log_occurred_at_idx`.
 ///
 /// All filters bind as parameters — no string interpolation, no SQL injection
 /// surface.
@@ -708,21 +724,16 @@ pub async fn list_audit_log(
     target_type: Option<&str>,
     target_id: Option<&str>,
     target_name: Option<&str>,
+    q: Option<&str>,
+    since: Option<DateTime<Utc>>,
     before: Option<DateTime<Utc>>,
     limit: i64,
 ) -> Result<Vec<AuditLogEntry>> {
     // `target_name` is a case-insensitive *substring* search (the admin types a
-    // fragment, e.g. "wasp" to find "Wasp 223"). LIKE metacharacters in the
-    // fragment are escaped so they match literally, then the value is wrapped in
-    // `%…%`. A leading-wildcard ILIKE cannot use the `LOWER(target_name)` index,
-    // so this is a scan — acceptable at the audit log's scale.
-    let target_name_pattern = target_name.map(|fragment| {
-        let escaped = fragment
-            .replace('\\', "\\\\")
-            .replace('%', "\\%")
-            .replace('_', "\\_");
-        format!("%{escaped}%")
-    });
+    // fragment, e.g. "wasp" to find "Wasp 223"). The same escaping/wrapping
+    // backs the combined `q` search over actor- and target-name columns.
+    let target_name_pattern = target_name.map(substring_pattern);
+    let q_pattern = q.map(substring_pattern);
 
     let rows = sqlx::query!(
         r#"
@@ -735,15 +746,20 @@ pub async fn list_audit_log(
           AND ($3::TEXT IS NULL        OR target_type      = $3)
           AND ($4::TEXT IS NULL        OR target_id        = $4)
           AND ($5::TEXT IS NULL        OR target_name ILIKE $5 ESCAPE '\')
-          AND ($6::TIMESTAMPTZ IS NULL OR occurred_at      < $6)
+          AND ($6::TEXT IS NULL        OR (actor_character_name ILIKE $6 ESCAPE '\'
+                                          OR target_name        ILIKE $6 ESCAPE '\'))
+          AND ($7::TIMESTAMPTZ IS NULL OR occurred_at     >= $7)
+          AND ($8::TIMESTAMPTZ IS NULL OR occurred_at      < $8)
         ORDER BY occurred_at DESC
-        LIMIT $7
+        LIMIT $9
         "#,
         event_type,
         actor_account_id,
         target_type,
         target_id,
         target_name_pattern,
+        q_pattern,
+        since,
         before,
         limit,
     )
@@ -1748,7 +1764,7 @@ mod tests {
         )
         .await;
 
-        let rows = list_audit_log(&pool, None, None, None, None, None, None, 10)
+        let rows = list_audit_log(&pool, None, None, None, None, None, None, None, None, 10)
             .await
             .unwrap();
         assert_eq!(rows.len(), 3);
@@ -1771,6 +1787,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            None,
             10,
         )
         .await
@@ -1788,7 +1806,7 @@ mod tests {
         insert_audit_row(&pool, Some(actor_b), "account_deletion_requested", t).await;
         insert_audit_row(&pool, None, "account_purged", t).await;
 
-        let rows = list_audit_log(&pool, None, Some(actor_a), None, None, None, None, 10)
+        let rows = list_audit_log(&pool, None, Some(actor_a), None, None, None, None, None, None, 10)
             .await
             .unwrap();
         assert_eq!(rows.len(), 1);
@@ -1805,7 +1823,7 @@ mod tests {
         insert_audit_row(&pool, None, "account_purged", t2).await;
         insert_audit_row(&pool, None, "account_purged", t3).await;
 
-        let rows = list_audit_log(&pool, None, None, None, None, None, Some(t3), 10)
+        let rows = list_audit_log(&pool, None, None, None, None, None, None, None, Some(t3), 10)
             .await
             .unwrap();
         assert_eq!(rows.len(), 2);
@@ -2027,6 +2045,8 @@ mod tests {
             Some("555"),
             None,
             None,
+            None,
+            None,
             10,
         )
         .await
@@ -2057,16 +2077,27 @@ mod tests {
 
         // A lowercase fragment ("wasp") matches "Wasp 223" — case-insensitive
         // substring, not exact match.
-        let rows = list_audit_log(&pool, None, None, None, None, Some("wasp"), None, 10)
+        let rows = list_audit_log(&pool, None, None, None, None, Some("wasp"), None, None, None, 10)
             .await
             .unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].target_name.as_deref(), Some("Wasp 223"));
 
         // A non-matching fragment finds nothing.
-        let none = list_audit_log(&pool, None, None, None, None, Some("frigate"), None, 10)
-            .await
-            .unwrap();
+        let none = list_audit_log(
+            &pool,
+            None,
+            None,
+            None,
+            None,
+            Some("frigate"),
+            None,
+            None,
+            None,
+            10,
+        )
+        .await
+        .unwrap();
         assert!(none.is_empty());
     }
 
@@ -2083,7 +2114,7 @@ mod tests {
 
         // "%" must be treated literally, not as a LIKE wildcard — so it does NOT
         // match "Wasp 223".
-        let rows = list_audit_log(&pool, None, None, None, None, Some("%"), None, 10)
+        let rows = list_audit_log(&pool, None, None, None, None, Some("%"), None, None, None, 10)
             .await
             .unwrap();
         assert!(rows.is_empty());
@@ -2118,11 +2149,185 @@ mod tests {
             None,
             Some("boss pilot"),
             None,
+            None,
+            None,
             10,
         )
         .await
         .unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].event_type, "server_admin_granted");
+    }
+
+    // -----------------------------------------------------------------------
+    // list_audit_log `q` combined-name-search and `since` time-window
+    // behaviour against the real DB.
+    // -----------------------------------------------------------------------
+
+    /// Inserts a row carrying actor- and target-name columns directly (the `q`
+    /// search keys off the name columns, not the write path).
+    async fn insert_named_row(
+        pool: &PgPool,
+        event_type: &str,
+        actor_character_name: Option<&str>,
+        target_name: Option<&str>,
+    ) {
+        sqlx::query!(
+            "INSERT INTO audit_log
+               (event_type, details, actor_character_name, target_type, target_id, target_name)
+             VALUES ($1, '{}'::jsonb, $2, 'character', '1', $3)",
+            event_type,
+            actor_character_name,
+            target_name,
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    #[sqlx::test]
+    async fn list_audit_log_q_matches_actor_or_target_name(pool: PgPool) {
+        // First row: Wasp is the ACTOR; target unrelated.
+        insert_named_row(&pool, "character_added", Some("Wasp 223"), Some("Some Alt")).await;
+        // Second row: Wasp is in the TARGET name; actor unrelated.
+        insert_named_row(
+            &pool,
+            "acl_created",
+            Some("Other Pilot"),
+            Some("Red Wasp Industries"),
+        )
+        .await;
+        // Third row: Wasp nowhere — excluded.
+        insert_named_row(&pool, "map_created", Some("Nobody"), Some("Empty")).await;
+
+        let rows = list_audit_log(&pool, None, None, None, None, None, Some("wasp"), None, None, 10)
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), 2, "both actor- and target-side matches returned");
+    }
+
+    #[sqlx::test]
+    async fn list_audit_log_q_is_case_insensitive_unanchored_substring(pool: PgPool) {
+        insert_named_row(&pool, "acl_created", None, Some("The Wasp")).await;
+
+        // Mid-name fragment with different case matches.
+        let rows = list_audit_log(&pool, None, None, None, None, None, Some("wasp"), None, None, 10)
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].target_name.as_deref(), Some("The Wasp"));
+    }
+
+    #[sqlx::test]
+    async fn list_audit_log_q_like_metacharacters_are_literal(pool: PgPool) {
+        insert_named_row(&pool, "character_added", Some("Wasp 223"), None).await;
+        insert_named_row(&pool, "character_added", Some("50% Off"), None).await;
+
+        // "%" is escaped: it matches a literal "%", so only the "50% Off" actor
+        // row is returned, not "Wasp 223".
+        let rows = list_audit_log(&pool, None, None, None, None, None, Some("%"), None, None, 10)
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].actor_character_name.as_deref(), Some("50% Off"));
+    }
+
+    #[sqlx::test]
+    async fn list_audit_log_since_bounds_lower_edge(pool: PgPool) {
+        let base = Utc::now();
+        insert_audit_row(&pool, None, "account_purged", base - chrono::Duration::days(40)).await;
+        insert_audit_row(&pool, None, "account_purged", base - chrono::Duration::days(2)).await;
+        insert_audit_row(&pool, None, "account_purged", base - chrono::Duration::days(1)).await;
+
+        let since = base - chrono::Duration::days(7);
+        let rows = list_audit_log(&pool, None, None, None, None, None, None, Some(since), None, 10)
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), 2, "only rows within the last 7 days");
+        assert!(rows.iter().all(|r| r.occurred_at >= since));
+    }
+
+    #[sqlx::test]
+    async fn list_audit_log_since_and_before_bound_a_window(pool: PgPool) {
+        let base = Utc::now();
+        let t_old = base - chrono::Duration::days(40);
+        let t_mid = base - chrono::Duration::days(5);
+        let t_new = base - chrono::Duration::hours(1);
+        insert_audit_row(&pool, None, "account_purged", t_old).await;
+        insert_audit_row(&pool, None, "account_purged", t_mid).await;
+        insert_audit_row(&pool, None, "account_purged", t_new).await;
+
+        let since = base - chrono::Duration::days(7);
+        let before = base - chrono::Duration::days(1);
+        let rows = list_audit_log(
+            &pool,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(since),
+            Some(before),
+            10,
+        )
+        .await
+        .unwrap();
+        // Only the mid row falls in [since, before).
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].occurred_at >= since && rows[0].occurred_at < before);
+    }
+
+    #[sqlx::test]
+    async fn list_audit_log_q_combines_with_event_type_and_since(pool: PgPool) {
+        let base = Utc::now();
+        // Matches all three axes.
+        sqlx::query!(
+            "INSERT INTO audit_log
+               (event_type, details, actor_character_name, occurred_at)
+             VALUES ('acl_member_added', '{}'::jsonb, 'Wasp 223', $1)",
+            base - chrono::Duration::days(2),
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        // Right name + event but outside the window.
+        sqlx::query!(
+            "INSERT INTO audit_log
+               (event_type, details, actor_character_name, occurred_at)
+             VALUES ('acl_member_added', '{}'::jsonb, 'Wasp 223', $1)",
+            base - chrono::Duration::days(40),
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        // Right name + window but wrong event.
+        sqlx::query!(
+            "INSERT INTO audit_log
+               (event_type, details, actor_character_name, occurred_at)
+             VALUES ('map_created', '{}'::jsonb, 'Wasp 223', $1)",
+            base - chrono::Duration::days(2),
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let since = base - chrono::Duration::days(7);
+        let rows = list_audit_log(
+            &pool,
+            Some("acl_member_added"),
+            None,
+            None,
+            None,
+            None,
+            Some("wasp"),
+            Some(since),
+            None,
+            10,
+        )
+        .await
+        .unwrap();
+        assert_eq!(rows.len(), 1, "only the row matching all three axes");
+        assert_eq!(rows[0].event_type, "acl_member_added");
     }
 }

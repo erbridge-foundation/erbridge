@@ -29,20 +29,20 @@ beforeEach(() => {
 });
 
 describe('admin/audit load', () => {
-	it('passes only the default limit when no filters are set', async () => {
+	it('defaults to the 7-day window and the page limit when no filters are set', async () => {
 		await load(makeEvent());
 		expect(listAuditLog).toHaveBeenCalledWith(
 			expect.anything(),
 			'http://backend:3000',
-			{ limit: 50 },
+			{ limit: 50, window: '7d' },
 			'session=jwt'
 		);
 	});
 
-	it('forwards all supplied filters and the before cursor', async () => {
+	it('forwards all supplied filters, the q search, the window, and the before cursor', async () => {
 		await load(
 			makeEvent(
-				'?event_type=eve_character_blocked&target_name=boss&target_type=eve_character&target_id=42&actor=acc-1&before=2026-01-01T00:00:00Z'
+				'?event_type=eve_character_blocked&target_type=character&target_id=42&actor=acc-1&q=wasp&window=90d&before=2026-01-01T00:00:00Z'
 			)
 		);
 		expect(listAuditLog).toHaveBeenCalledWith(
@@ -50,18 +50,19 @@ describe('admin/audit load', () => {
 			'http://backend:3000',
 			{
 				limit: 50,
+				window: '90d',
 				event_type: 'eve_character_blocked',
-				target_name: 'boss',
-				target_type: 'eve_character',
+				target_type: 'character',
 				target_id: '42',
 				actor: 'acc-1',
+				q: 'wasp',
 				before: '2026-01-01T00:00:00Z'
 			},
 			'session=jwt'
 		);
 	});
 
-	it('returns the page and the echoed filters for the form', async () => {
+	it('returns the page and echoes the active filters (including default window) for the UI', async () => {
 		vi.mocked(listAuditLog).mockResolvedValue({
 			entries: [
 				{
@@ -79,10 +80,11 @@ describe('admin/audit load', () => {
 			],
 			next_before: '2026-01-01T00:00:00Z'
 		});
-		const result = (await load(makeEvent('?target_name=boss')))!;
+		const result = (await load(makeEvent('?q=wasp')))!;
 		expect(result.page.entries).toHaveLength(1);
 		expect(result.page.next_before).toBe('2026-01-01T00:00:00Z');
-		expect(result.filters.target_name).toBe('boss');
+		expect(result.filters.q).toBe('wasp');
+		expect(result.filters.window).toBe('7d');
 		expect(result.filters.event_type).toBe('');
 	});
 });

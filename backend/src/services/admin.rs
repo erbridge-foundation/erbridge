@@ -369,10 +369,10 @@ pub async fn esi_search_characters(
     Ok(EsiSearchOutcome::Available(out))
 }
 
-/// Audit-log pass-through forwarding every filter axis — including the
-/// target-first axes (`target_type` / `target_id` / `target_name`) added by
-/// `add-audit-log-target-columns` — plus the `before` keyset cursor and a
-/// clamped `limit`.
+/// Audit-log pass-through forwarding every filter axis — the target-first axes
+/// (`target_type` / `target_id` / `target_name`), the combined name search
+/// (`q`), the `since` lower time bound and `before` keyset cursor / upper time
+/// bound (together the time window) — plus a clamped `limit`.
 #[allow(clippy::too_many_arguments)]
 pub async fn list_audit_log(
     pool: &PgPool,
@@ -381,6 +381,8 @@ pub async fn list_audit_log(
     target_type: Option<&str>,
     target_id: Option<&str>,
     target_name: Option<&str>,
+    q: Option<&str>,
+    since: Option<DateTime<Utc>>,
     before: Option<DateTime<Utc>>,
     limit: Option<i64>,
 ) -> Result<Vec<AuditLogEntry>, AppError> {
@@ -392,6 +394,8 @@ pub async fn list_audit_log(
         target_type,
         target_id,
         target_name,
+        q,
+        since,
         before,
         limit,
     )

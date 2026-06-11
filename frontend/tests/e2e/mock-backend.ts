@@ -114,6 +114,108 @@ function hasValidSession(req: http.IncomingMessage): boolean {
 	return sessionValue(req) !== null;
 }
 
+interface AuditEntry {
+	id: string;
+	occurred_at: string;
+	actor_account_id: string | null;
+	actor_character_id: number | null;
+	actor_character_name: string | null;
+	event_type: string;
+	details: Record<string, unknown>;
+	target_type: string | null;
+	target_id: string | null;
+	target_name: string | null;
+}
+
+/**
+ * Audit rows for the e2e audit-browser flow, spanning the 7-day default window
+ * (today / yesterday / within-window) plus older rows that only appear once the
+ * window is widened (driving the window-edge "widen" affordance). "Wasp 223"
+ * appears as both an actor and a target name so the combined `q` search and
+ * click-to-refine can be exercised.
+ */
+function seededAuditEntries(): AuditEntry[] {
+	const now = Date.now();
+	const ago = (ms: number) => new Date(now - ms).toISOString();
+	const HOUR = 3_600_000;
+	const DAY = 86_400_000;
+
+	const base = (over: Partial<AuditEntry>): AuditEntry => ({
+		id: 'x',
+		occurred_at: ago(HOUR),
+		actor_account_id: 'acc1',
+		actor_character_id: 1001,
+		actor_character_name: 'Main Pilot',
+		event_type: 'account_registered',
+		details: {},
+		target_type: 'account',
+		target_id: 'acc1',
+		target_name: 'Main Pilot',
+		...over
+	});
+
+	return [
+		// Today — Wasp as actor.
+		base({
+			id: 'a1',
+			occurred_at: ago(2 * HOUR),
+			actor_character_name: 'Wasp 223',
+			event_type: 'acl_member_added',
+			target_type: 'acl',
+			target_id: 'acl-1',
+			target_name: 'Corp ACL'
+		}),
+		// Today — Wasp as target name, different actor.
+		base({
+			id: 'a2',
+			occurred_at: ago(3 * HOUR),
+			actor_character_name: 'Other Pilot',
+			actor_account_id: 'acc2',
+			event_type: 'map_created',
+			target_type: 'map',
+			target_id: 'map-1',
+			target_name: 'Red Wasp Industries Map'
+		}),
+		// Today — security-relevant.
+		base({
+			id: 'a3',
+			occurred_at: ago(4 * HOUR),
+			actor_account_id: null,
+			actor_character_id: null,
+			actor_character_name: null,
+			event_type: 'blocked_login_rejected',
+			target_type: 'character',
+			target_id: '98765',
+			target_name: null
+		}),
+		// Yesterday.
+		base({
+			id: 'b1',
+			occurred_at: ago(DAY + 2 * HOUR),
+			event_type: 'character_added',
+			target_type: 'character',
+			target_id: '555',
+			target_name: 'Alt Pilot'
+		}),
+		// Three days ago (still inside 7d).
+		base({
+			id: 'c1',
+			occurred_at: ago(3 * DAY),
+			event_type: 'api_key_created'
+		}),
+		// 20 days ago — outside 7d, inside 30d (only after widening).
+		base({
+			id: 'd1',
+			occurred_at: ago(20 * DAY),
+			actor_character_name: 'Wasp 223',
+			event_type: 'acl_renamed',
+			target_type: 'acl',
+			target_id: 'acl-9',
+			target_name: 'Old Wasp ACL'
+		})
+	];
+}
+
 function isAdminSession(req: http.IncomingMessage): boolean {
 	return sessionValue(req) === ADMIN_COOKIE_VALUE;
 }
@@ -358,7 +460,51 @@ const server = http.createServer(async (req, res) => {
 		}
 
 		if (method === 'GET' && url.startsWith('/api/v1/admin/audit')) {
-			json(res, 200, { data: { entries: [], next_before: null } });
+			const params = new URL(url, 'http://x').searchParams;
+			let entries = seededAuditEntries();
+
+			// Window → since lower bound (day-snapped is unnecessary for the mock;
+			// a plain relative cutoff is enough to exercise the UI).
+			const window = params.get('window') ?? '7d';
+			const days = { '7d': 7, '30d': 30, '90d': 90, '365d': 365 }[window] ?? 7;
+			const since = Date.now() - days * 86_400_000;
+			entries = entries.filter((e) => new Date(e.occurred_at).getTime() >= since);
+
+			// before keyset cursor (exclusive upper bound).
+			const before = params.get('before');
+			if (before) {
+				const cursor = new Date(before).getTime();
+				entries = entries.filter((e) => new Date(e.occurred_at).getTime() < cursor);
+			}
+
+			// Equality + substring axes.
+			const eventType = params.get('event_type');
+			if (eventType) entries = entries.filter((e) => e.event_type === eventType);
+			const actor = params.get('actor');
+			if (actor) entries = entries.filter((e) => e.actor_account_id === actor);
+			const targetType = params.get('target_type');
+			if (targetType) entries = entries.filter((e) => e.target_type === targetType);
+			const targetId = params.get('target_id');
+			if (targetId) entries = entries.filter((e) => e.target_id === targetId);
+			const q = (params.get('q') ?? '').toLowerCase();
+			if (q) {
+				entries = entries.filter(
+					(e) =>
+						(e.actor_character_name ?? '').toLowerCase().includes(q) ||
+						(e.target_name ?? '').toLowerCase().includes(q)
+				);
+			}
+
+			// Newest-first, then a small page so infinite scroll + the window edge
+			// are reachable in the e2e flow.
+			entries.sort((a, b) => new Date(b.occurred_at).getTime() - new Date(a.occurred_at).getTime());
+			const limit = Number(params.get('limit') ?? '50');
+			const page = entries.slice(0, limit);
+			const next_before =
+				entries.length > page.length && page.length > 0
+					? page[page.length - 1].occurred_at
+					: null;
+			json(res, 200, { data: { entries: page, next_before } });
 			return;
 		}
 

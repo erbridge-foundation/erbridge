@@ -191,6 +191,68 @@ test.describe('/admin (admin session)', () => {
 	});
 });
 
+test.describe('/admin/audit browser', () => {
+	test.beforeEach(async ({ context }) => {
+		await signIn(context, 'admin-session');
+	});
+
+	test('browse default view groups rows under day headers within the 7-day window', async ({
+		page
+	}) => {
+		await page.goto('/admin/audit');
+		await expect(page.getByRole('heading', { name: 'AUDIT LOG' })).toBeVisible();
+
+		// Day-group headers orient the stream.
+		await expect(page.getByRole('columnheader', { name: 'Today' })).toBeVisible();
+		await expect(page.getByRole('columnheader', { name: 'Yesterday' })).toBeVisible();
+
+		// A within-window row is present; the 20-days-ago row is not (outside 7d).
+		await expect(page.getByText('Corp ACL')).toBeVisible();
+		await expect(page.getByText('Old Wasp ACL')).toHaveCount(0);
+	});
+
+	test('directed search → result → click-to-refine → clear', async ({ page }) => {
+		await page.goto('/admin/audit');
+
+		// Directed: search "wasp" finds both the actor-side and target-side rows.
+		await page.getByLabel('Search').fill('wasp');
+		await page.getByLabel('Search').press('Enter');
+		await expect(page).toHaveURL(/q=wasp/);
+		await expect(page.getByText('Corp ACL')).toBeVisible();
+		await expect(page.getByText('Red Wasp Industries Map')).toBeVisible();
+
+		// A search chip appears.
+		await expect(page.getByText('Search: wasp')).toBeVisible();
+
+		// Refine: click the ACL target cell → target filter pins that entity.
+		await page.getByRole('button', { name: 'Corp ACL' }).click();
+		await expect(page).toHaveURL(/target_type=acl/);
+		await expect(page).toHaveURL(/target_id=acl-1/);
+		await expect(page.getByText('Target: acl acl-1')).toBeVisible();
+		// The unrelated map row is gone now.
+		await expect(page.getByText('Red Wasp Industries Map')).toHaveCount(0);
+
+		// Clear all → back to the default browse view.
+		await page.getByRole('link', { name: 'clear all' }).click();
+		await expect(page).toHaveURL(/\/admin\/audit$/);
+		await expect(page.getByText('Red Wasp Industries Map')).toBeVisible();
+	});
+
+	test('window edge offers widening rather than silent expansion', async ({ page }) => {
+		await page.goto('/admin/audit');
+
+		// At the bottom of the 7-day window, the edge affordance is shown.
+		const widen = page.getByRole('button', { name: 'Widen to Last 30 days' });
+		await expect(widen).toBeVisible();
+
+		// The older (20-day) row only appears after widening.
+		await expect(page.getByText('Old Wasp ACL')).toHaveCount(0);
+		await widen.click();
+		await expect(page).toHaveURL(/window=30d/);
+		await expect(page.getByText('Old Wasp ACL')).toBeVisible();
+	});
+});
+
 test.describe('/admin (non-admin session)', () => {
 	test('a non-admin gets a 404 and no Admin link', async ({ page, context }) => {
 		await signIn(context, 'plain-session');

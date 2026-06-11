@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT id, occurred_at, actor_account_id, actor_character_id,\n               actor_character_name, event_type, details,\n               target_type, target_id, target_name\n        FROM audit_log\n        WHERE ($1::TEXT IS NULL        OR event_type       = $1)\n          AND ($2::UUID IS NULL        OR actor_account_id = $2)\n          AND ($3::TEXT IS NULL        OR target_type      = $3)\n          AND ($4::TEXT IS NULL        OR target_id        = $4)\n          AND ($5::TEXT IS NULL        OR target_name ILIKE $5 ESCAPE '\\')\n          AND ($6::TIMESTAMPTZ IS NULL OR occurred_at      < $6)\n        ORDER BY occurred_at DESC\n        LIMIT $7\n        ",
+  "query": "\n        SELECT id, occurred_at, actor_account_id, actor_character_id,\n               actor_character_name, event_type, details,\n               target_type, target_id, target_name\n        FROM audit_log\n        WHERE ($1::TEXT IS NULL        OR event_type       = $1)\n          AND ($2::UUID IS NULL        OR actor_account_id = $2)\n          AND ($3::TEXT IS NULL        OR target_type      = $3)\n          AND ($4::TEXT IS NULL        OR target_id        = $4)\n          AND ($5::TEXT IS NULL        OR target_name ILIKE $5 ESCAPE '\\')\n          AND ($6::TEXT IS NULL        OR (actor_character_name ILIKE $6 ESCAPE '\\'\n                                          OR target_name        ILIKE $6 ESCAPE '\\'))\n          AND ($7::TIMESTAMPTZ IS NULL OR occurred_at     >= $7)\n          AND ($8::TIMESTAMPTZ IS NULL OR occurred_at      < $8)\n        ORDER BY occurred_at DESC\n        LIMIT $9\n        ",
   "describe": {
     "columns": [
       {
@@ -61,6 +61,8 @@
         "Text",
         "Text",
         "Text",
+        "Text",
+        "Timestamptz",
         "Timestamptz",
         "Int8"
       ]
@@ -78,5 +80,5 @@
       true
     ]
   },
-  "hash": "8042715f21e1194e26db1f6337218c30e24bca4e0dda673ba0e5c02429adc015"
+  "hash": "a8a9155de558463a5b5d9701cdde414f603e44d0087cb5a9f8f79c9aef4dd719"
 }

@@ -132,6 +132,12 @@ export interface AuditLogQuery {
 	target_type?: string;
 	target_id?: string;
 	target_name?: string;
+	/** Combined name search: actor OR target name, case-insensitive substring. */
+	q?: string;
+	/** Relative time window: 7d (default), 30d, 90d, 365d, or year:YYYY. */
+	window?: string;
+	/** Explicit RFC 3339 lower time bound; overrides window. */
+	since?: string;
 	before?: string;
 	limit?: number;
 }
@@ -480,6 +486,9 @@ export function listAuditLog(
 	if (query.target_type) params.set('target_type', query.target_type);
 	if (query.target_id) params.set('target_id', query.target_id);
 	if (query.target_name) params.set('target_name', query.target_name);
+	if (query.q) params.set('q', query.q);
+	if (query.window) params.set('window', query.window);
+	if (query.since) params.set('since', query.since);
 	if (query.before) params.set('before', query.before);
 	if (query.limit !== undefined) params.set('limit', String(query.limit));
 	const qs = params.toString();

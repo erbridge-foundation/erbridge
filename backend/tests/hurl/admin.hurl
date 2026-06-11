@@ -73,6 +73,12 @@ HTTP 401
 [Asserts]
 jsonpath "$.error.code" == "unauthenticated"
 
+# The new search/window query params must not bypass the auth gate either.
+GET {{base_url}}/api/v1/admin/audit?q=wasp&window=90d&event_type=eve_character_blocked
+HTTP 401
+[Asserts]
+jsonpath "$.error.code" == "unauthenticated"
+
 # ── 2. Admin endpoint rejects a bearer API key → 401 (cookie-only) ───────────
 #
 # Even a valid account-scoped key for an admin account must not authenticate
@@ -236,9 +242,41 @@ HTTP 200
 [Asserts]
 jsonpath "$.data.entries" isCollection
 
-# ── 16. Audit target_name filter (case-insensitive) → 200 ────────────────────
+# ── 16. Audit target_type + target_id exact-entity filter → 200 ──────────────
 
 GET {{base_url}}/api/v1/admin/audit?event_type=eve_character_blocked&target_id=90909090
+Cookie: session={{admin_session}}
+HTTP 200
+[Asserts]
+jsonpath "$.data.entries" isCollection
+
+# ── 17. Audit default window → 200 (recent entries within last 7 days) ───────
+
+GET {{base_url}}/api/v1/admin/audit
+Cookie: session={{admin_session}}
+HTTP 200
+[Asserts]
+jsonpath "$.data.entries" isCollection
+
+# ── 18. Audit widened window (90d) → 200 ─────────────────────────────────────
+
+GET {{base_url}}/api/v1/admin/audit?window=90d
+Cookie: session={{admin_session}}
+HTTP 200
+[Asserts]
+jsonpath "$.data.entries" isCollection
+
+# ── 19. Audit combined name search `q` (actor- and target-side) → 200 ────────
+
+GET {{base_url}}/api/v1/admin/audit?q=pilot&window=90d
+Cookie: session={{admin_session}}
+HTTP 200
+[Asserts]
+jsonpath "$.data.entries" isCollection
+
+# ── 20. Audit conjunction: q + event_type + window → 200 ─────────────────────
+
+GET {{base_url}}/api/v1/admin/audit?q=pilot&event_type=eve_character_blocked&window=90d
 Cookie: session={{admin_session}}
 HTTP 200
 [Asserts]
