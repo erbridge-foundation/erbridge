@@ -25,14 +25,22 @@ Code is organised by **layer**, not by domain. Every handler lives in `src/handl
 backend/src/
 ├── main.rs              # server entry point, router wiring
 ├── app_state.rs         # AppState struct
+├── api_key.rs           # SHARED — API-key generate/hash primitives (layer-agnostic)
 ├── config.rs            # env-var loading, fail-fast
+├── crypto.rs            # SHARED — AES-GCM token encryption + session-JWT sign/verify
 ├── error.rs             # AppError enum + IntoResponse
 ├── response.rs          # ApiResponse<T> envelope type
 ├── session.rs           # Session + SessionStore
 │
+├── audit/               # CROSS-CUTTING capability — event catalogue + its own SQL
+│   └── mod.rs
+├── permissions.rs       # CROSS-CUTTING capability — map-permission resolver + its own SQL
+│
 ├── handlers/            # HANDLER LAYER — one file per route group
 │   ├── mod.rs
 │   ├── auth.rs          # /auth/* routes: login, callback, logout, add_character
+│   ├── cookie.rs        # session-cookie helpers (HTTP concern → handler layer)
+│   ├── middleware.rs    # auth extractors + cookie-refresh middleware
 │   └── api/
 │       └── v1/
 │           ├── mod.rs
@@ -47,7 +55,7 @@ backend/src/
 │   └── account.rs       # account + character business logic
 │
 ├── db/                  # DATABASE LAYER — one file per resource
-│   ├── mod.rs           # connect() + migration runner
+│   ├── mod.rs           # connect() + migration runner + DbError
 │   ├── accounts.rs
 │   ├── characters.rs
 │   └── api_keys.rs
@@ -63,8 +71,11 @@ backend/src/
 **Rules enforced by this layout:**
 - Never add a handler function outside `src/handlers/`.
 - Never add a service function outside `src/services/`.
-- Never add a DB function outside `src/db/`.
-- Auth-related crypto/cookie helpers (`crypto.rs`, `cookie.rs`, `middleware.rs`) live in `src/handlers/auth_support/` or alongside `src/handlers/auth.rs` as sibling files in `src/handlers/` — they are handler-layer concerns, not services.
+- Never add a DB function outside `src/db/` — except inside a blessed cross-cutting capability module (below).
+- **Layer-agnostic primitives live at the crate root**, not inside a layer: `crypto.rs` and `api_key.rs` are consumed by handlers, services, *and* db code, so placing them in any layer would force upward imports. If a helper is needed by more than one layer, it belongs at the root alongside `session.rs`/`response.rs`.
+- Genuinely HTTP-shaped helpers (`cookie.rs`, `middleware.rs`) stay in `src/handlers/` — they are handler-layer concerns.
+
+**Cross-cutting capability modules.** `audit/` and `permissions.rs` own their SQL even though they are not in `src/db/`. This is deliberate: the audit catalogue's invariants (event-type stability, write-time actor/target snapshots) are inseparable from its insert, and the permission resolver's rules (owner bypass, deny veto, most-permissive-wins) are inseparable from its query. Splitting either across `db/` would hurt cohesion without improving safety. A new module qualifies for this exception only when its queries and its domain rules are this entangled — a plain CRUD resource never does.
 
 ---
 
@@ -89,17 +100,11 @@ Database
 **This flow is strictly one-directional and may not be broken:**
 
 - Handlers **must not** call `db` functions directly.
-- Services **must not** return HTTP types (`StatusCode`, `Response`, etc.).
+- Services **must not** import `axum` or any HTTP framework types.
 - DB functions **must not** contain business logic.
 - No layer may import from a layer above it.
 
-**Enforce this at the module boundary, not by review discipline.** Pick one of these mechanisms and stick to it:
-
-1. **Visibility-driven** (preferred). The `db` module's items are `pub(super)` (visible to `services` only), and `services` items are `pub(super)` (visible to `handlers` only). Anything more permissive on a `db::*` symbol is a review-blocker.
-2. **Workspace crates**. Split into `backend-db`, `backend-services`, `backend-handlers` crates with explicit `Cargo.toml` dependencies. The compiler refuses upward calls. Heaviest but bulletproof.
-3. **Clippy / `cargo-deny` lint config**. Add a `disallowed-methods` / `disallowed-types` entry that rejects `crate::db::*` from `handlers::*`. CI fails on violation.
-
-If none of these are in place, the architecture rule is aspirational only — call that out explicitly in the PR.
+**Enforcement is mechanical, not review discipline.** `backend/tests/layering.rs` scans the source tree and fails on: handlers referencing `crate::db`, db files importing `crate::handlers`/`crate::services`, and services importing `crate::handlers` or `axum`. Exceptions are an explicit, commented allowlist in that file. The one standing exception: `src/handlers/middleware.rs` — the auth extractors resolve accounts/keys/blocks directly against the db as a pre-handler concern, and the fail-closed auth-coverage tests pin that behaviour. Add a new exception only with a justification comment; never weaken the test to get a build green.
 
 ---
 
@@ -110,7 +115,6 @@ If none of these are in place, the architecture rule is aspirational only — ca
 - Handlers **must** call exactly one service function per logical operation.
 - Handlers **must** return a DTO (not a DB model) wrapped in the standard envelope.
 - Validation of incoming request bodies happens in the handler before calling the service.
-- Error mapping from service errors to HTTP responses happens in the handler.
 
 ```rust
 // CORRECT
@@ -125,7 +129,7 @@ async fn create_user(
 
 // WRONG — handler calling db directly
 async fn create_user(State(state): State<AppState>, ...) {
-    let user = db::users::insert(&state.db, ...).await?; // ❌
+    let user = db::users::insert(&state.db, ...).await?; // ❌ layering.rs fails
 }
 ```
 
@@ -134,24 +138,22 @@ async fn create_user(State(state): State<AppState>, ...) {
 ## Service Rules
 
 - Services live in `src/services/`.
-- Services **must not** import `axum`, or any HTTP framework types.
+- Services **must not** import `axum`, or any HTTP framework types (enforced by `tests/layering.rs`).
 - Services own all business logic: validation that depends on persisted state, orchestration of multiple DB calls, etc.
 - If a DB method can be slightly extended (e.g., return one extra column, add a `RETURNING` clause) to avoid a second round-trip, **extend the DB method** — do not write a second DB function. **Exception:** if extending would force unrelated callers to fetch significantly more data (large `TEXT` / `BYTEA` columns, a wide join), add a dedicated function instead. The rule is "one round-trip per operation", not "every caller pays for every reader's needs".
 - Services return domain types or DTOs; never raw DB row types.
 
 ```rust
 // CORRECT — extend the query, don't add a second db call
-impl UserService {
-    pub async fn activate_user(&self, id: Uuid) -> Result<UserDto, ServiceError> {
-        // The db fn returns the updated row — no second fetch needed
-        let user = self.db.users.activate(id).await?;
-        Ok(UserDto::from(user))
-    }
+pub async fn activate_user(pool: &PgPool, id: Uuid) -> Result<UserDto, AppError> {
+    // The db fn returns the updated row — no second fetch needed
+    let user = db::users::activate(pool, id).await?;
+    Ok(UserDto::from(user))
 }
 
 // WRONG — two db calls when one would do
-let _ = self.db.users.activate(id).await?;      // ❌
-let user = self.db.users.find_by_id(id).await?; // ❌ unnecessary second call
+let _ = db::users::activate(pool, id).await?;      // ❌
+let user = db::users::find_by_id(pool, id).await?; // ❌ unnecessary second call
 ```
 
 ---
@@ -163,6 +165,7 @@ let user = self.db.users.find_by_id(id).await?; // ❌ unnecessary second call
 - **Before adding a new function**, check whether an existing one can be extended (e.g., add a `RETURNING` clause, join an extra table) to satisfy the new requirement.
 - DB functions return domain model structs (`User`, `Order`, …) — never raw query row types exposed outside `src/db/`.
 - No business logic inside DB functions. A DB function that takes a `status: &str` and validates it is wrong — validation belongs in the service.
+- Avoid byte-identical pool/tx twin functions; prefer one function generic over `impl PgExecutor<'_>`, or keep only the tx variant when every caller is transactional.
 
 ---
 
@@ -196,7 +199,7 @@ impl From<User> for UserDto {
 
 ## API Response Envelope
 
-All endpoints **except** `/api/healthz` must return:
+All endpoints **except** `/api/health` must return:
 
 ```json
 { "data": <payload> }
@@ -227,24 +230,24 @@ impl<T: Serialize> ApiResponse<T> {
 }
 ```
 
-### `/api/healthz` exception
+### `/api/health` exception
 
-The healthz endpoint returns its own structure — **no envelope**:
+The health endpoint (route: `/api/health`) returns its own flat structure — **no envelope**:
 
 ```json
-{ "status": "ok", "version": "1.2.3" }
+{ "status": "ok", "version": "1.2.3", "commit": "…", "components": [ … ] }
 ```
 
-Do not wrap it. Do not apply `ApiResponse` to it.
+Do not wrap it. Do not apply `ApiResponse` to it. (This is the `api-contract` spec's documented carve-out; the route is `/api/health`, not `/api/healthz`.)
 
 ---
 
 ## Error Handling
 
-- Define a single `AppError` enum in `src/error.rs`.
-- Implement `IntoResponse` for `AppError` so errors are converted at the handler boundary.
-- Services return `ServiceError`; handlers map it to `AppError`.
-- Never use `.unwrap()` or `.expect()` in handler, service, or DB code. In tests, `.unwrap()` is acceptable where the intent is to panic on unexpected failure.
+- Define a single `AppError` enum in `src/error.rs`, with `IntoResponse` converting it at the handler boundary.
+- **Services return `AppError` directly.** There is no separate `ServiceError` type — at this codebase's size a parallel enum is pure ceremony. The layering rule that matters is behavioural: services never *construct* HTTP responses or status codes; they return `AppError` variants and the `IntoResponse` impl owns the mapping.
+- The db layer returns `anyhow::Result` or `DbError` (`src/db/mod.rs`), which distinguishes constraint violations (`UniqueViolation`, by SQLSTATE/constraint inspection — never by matching error-message text). Services translate `DbError` into typed `AppError::Conflict(...)` / `BadRequest` exactly at the call sites that know which constraint means what; everything else defaults to `AppError::Internal`.
+- Never use `.unwrap()` or `.expect()` in handler, service, or DB code. **Enforced**: `[lints.clippy] unwrap_used / expect_used = "warn"` in `backend/Cargo.toml` (CI's `-D warnings` makes them denies), with `clippy.toml` `allow-unwrap-in-tests / allow-expect-in-tests = true` and crate-level allows in `tests/*.rs`. A provably-infallible case in non-test code may carry a narrowly-scoped `#[allow(clippy::expect_used)]` **with a comment proving why it cannot panic** — an allow without a proof comment is a review-blocker.
 
 ---
 
@@ -262,59 +265,33 @@ Unit-test coverage is **not** limited to the service layer. Every function with 
 
 Tests live in `#[cfg(test)]` modules within the file they cover (preferred — keeps the test next to the code), or in a sibling `tests.rs` for that module.
 
+**This codebase tests against real per-test databases, not mocks.** `#[sqlx::test]` hands every test its own freshly-migrated database; handler, service, and db tests all use it. There is no `mockall` / trait-double infrastructure — do not introduce one. Real-DB tests catch SQL drift, constraint behaviour, and transaction semantics that doubles structurally cannot. External HTTP (ESI, SSO) is the one boundary that is mocked — with `wiremock` at the network level, never with traits.
+
 **Coverage targets per layer:**
 
-| Layer | What to test | How to isolate |
+| Layer | What to test | How |
 |---|---|---|
-| Handler | request parsing, validation dispatch, envelope shape, error → status mapping | mock the service (trait + test double) |
-| Service | business logic, orchestration, error translation from DB to service errors | mock the DB layer (trait + `mockall` or hand-rolled) |
-| DB | SQL correctness, row-to-domain mapping, constraint behaviour, transaction semantics | real test DB via `#[sqlx::test]` — unit-level scope, one function per test |
-| Helper / pure functions | every branch and edge case | none needed — pure functions test directly |
-| DTO `From` impls | only if the mapping is non-trivial (computed fields, conditional inclusion, redaction) | none needed |
-| Error → response mapping | every `AppError` variant maps to the documented status & body | none needed; construct the variant and call `into_response` |
+| Handler | request parsing, validation dispatch, envelope shape, error → status mapping | `#[sqlx::test]` + build the router/extractor against the test pool; drive with real requests (`tower::ServiceExt::oneshot`) |
+| Service | business logic, orchestration, transactional behaviour, error translation | `#[sqlx::test]` — call the service against the test pool; `wiremock` for any ESI interaction |
+| DB | SQL correctness, row-to-domain mapping, constraint behaviour, transaction semantics | `#[sqlx::test]` — unit-level scope, one function per test |
+| Helper / pure functions | every branch and edge case | direct calls — no DB, no mocks |
+| DTO `From` impls | only if the mapping is non-trivial (computed fields, conditional inclusion, redaction) | direct |
+| Error → response mapping | every `AppError` variant maps to the documented status & body | construct the variant, call `into_response` |
 
-**Service example — mock the DB:**
-
-```rust
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::db::MockUserDb;
-
-    #[tokio::test]
-    async fn create_user_hashes_password() {
-        let mut mock_db = MockUserDb::new();
-        mock_db.expect_insert().returning(|u| Ok(fake_user(u)));
-        let svc = UserService::new(Arc::new(mock_db));
-        let result = svc.create_user(valid_request()).await.unwrap();
-        assert_ne!(result.password_hash, "plaintext");
-    }
-}
-```
-
-**Handler example — mock the service:**
+**Service example — real DB, mocked ESI boundary:**
 
 ```rust
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[tokio::test]
-    async fn create_user_returns_201_with_envelope() {
-        let mut mock_svc = MockUserService::new();
-        mock_svc.expect_create_user().returning(|_| Ok(fake_user_dto()));
-        let state = AppState::with_user_service(Arc::new(mock_svc));
-        let resp = create_user(State(state), Json(valid_request())).await.unwrap();
-        assert_eq!(resp.0.data.email, "a@b.com");
-    }
-
-    #[tokio::test]
-    async fn create_user_maps_conflict_to_409() {
-        let mut mock_svc = MockUserService::new();
-        mock_svc.expect_create_user().returning(|_| Err(ServiceError::Conflict));
-        let state = AppState::with_user_service(Arc::new(mock_svc));
-        let err = create_user(State(state), Json(valid_request())).await.unwrap_err();
-        assert_eq!(err.into_response().status(), StatusCode::CONFLICT);
+    #[sqlx::test]
+    async fn block_tears_down_owning_account(pool: PgPool) {
+        let (account, character) = seed_account_with_character(&pool).await;
+        block_character(&pool, admin_id, character.eve_character_id, None, None, None)
+            .await
+            .unwrap();
+        assert!(sessions_for(&pool, account).await.is_empty());
     }
 }
 ```
@@ -327,13 +304,6 @@ mod tests {
     use super::*;
 
     #[sqlx::test]
-    async fn insert_then_find_returns_same_row(pool: PgPool) {
-        let inserted = insert(&pool, NewUser { email: "a@b.com".into() }).await.unwrap();
-        let found = find_by_id(&pool, inserted.id).await.unwrap();
-        assert_eq!(found.email, "a@b.com");
-    }
-
-    #[sqlx::test]
     async fn insert_duplicate_email_returns_unique_violation(pool: PgPool) {
         insert(&pool, NewUser { email: "a@b.com".into() }).await.unwrap();
         let err = insert(&pool, NewUser { email: "a@b.com".into() }).await.unwrap_err();
@@ -342,7 +312,7 @@ mod tests {
 }
 ```
 
-**Helper example — pure function, no mocks:**
+**Helper example — pure function, no setup:**
 
 ```rust
 #[cfg(test)]
@@ -353,20 +323,22 @@ mod tests {
     fn normalize_email_lowercases_and_trims() {
         assert_eq!(normalize_email("  A@B.COM  "), "a@b.com");
     }
-
-    #[test]
-    fn normalize_email_rejects_missing_at() {
-        assert!(normalize_email_checked("bogus").is_err());
-    }
 }
 ```
 
 Note the boundary with integration tests: a *unit* DB test exercises one function in isolation; an *integration* test exercises a full handler→service→db request. Both use `#[sqlx::test]`; the distinguishing factor is scope, not tooling.
 
+### Guard tests — fail-closed architecture checks
+
+Two standing test suites enforce structure; keep them passing and extend them when the structures they guard grow:
+
+- `tests/layering.rs` — the layer-boundary scan described under Architecture.
+- The auth-coverage tests — every `/api/v1/*` route must reject unauthenticated callers (and `/api/v1/admin/*` must 401/403 correctly); route lists in `lib.rs` are kept in lockstep with the router.
+
 ### Integration Tests — 100% coverage of handler→service→db paths
 
 - Live in `tests/` at the project root.
-- Use a real (test) database — spin up via `sqlx::test` or a Docker fixture.
+- Use a real (test) database via `#[sqlx::test]`.
 - Every handler must be exercised end-to-end at least once.
 - Test both happy paths and key error paths (not found, validation failure, conflict).
 
@@ -388,7 +360,7 @@ async fn test_create_user_returns_dto_envelope(pool: PgPool) {
 
 - Every endpoint must have at least one HURL test in `tests/hurl/`.
 - HURL tests are the source of truth for the HTTP contract (status codes, headers, response shape).
-- Name files after the resource: `users.hurl`, `orders.hurl`, `healthz.hurl`.
+- Name files after the resource: `users.hurl`, `orders.hurl`, `health.hurl`.
 - Test the envelope shape explicitly.
 
 `tests/hurl/users.hurl` — envelope-shape assertion on a wrapped endpoint:
@@ -408,10 +380,10 @@ jsonpath "$.data.email" == "test@example.com"
 jsonpath "$.data" not exists "password_hash"
 ```
 
-`tests/hurl/healthz.hurl` — explicit assertion that healthz has **no** envelope:
+`tests/hurl/health.hurl` — explicit assertion that `/api/health` has **no** envelope:
 
 ```hurl
-GET http://localhost:8080/api/healthz
+GET http://localhost:8080/api/health
 
 HTTP 200
 [Asserts]
@@ -425,14 +397,16 @@ Two HURL requests in the same file are separated by a blank line — the file re
 
 ## Checklist Before Committing
 
-- [ ] Handler does not call db directly
-- [ ] Service does not import HTTP types
-- [ ] DB function was extended rather than duplicated where possible
+- [ ] Handler does not call db directly (`tests/layering.rs` passes)
+- [ ] Service does not import HTTP types (`tests/layering.rs` passes)
+- [ ] Shared primitives placed at crate root, not inside a layer
+- [ ] DB function was extended rather than duplicated where possible; no pool/tx twins
 - [ ] Response uses a DTO, not a DB model
-- [ ] Response is wrapped in `ApiResponse` envelope (except `/api/healthz`)
+- [ ] Response is wrapped in `ApiResponse` envelope (except `/api/health`)
 - [ ] `cargo fmt` must be executed
-- [ ] Unit test for every non-trivial function — handlers, services, DB functions, helpers, and any non-trivial DTO mappings or error→response conversions
+- [ ] Unit test for every non-trivial function — real `#[sqlx::test]` DBs, `wiremock` for ESI, no trait mocks
 - [ ] Integration test for every handler (happy + key error paths)
 - [ ] HURL test for every endpoint
-- [ ] No `.unwrap()` / `.expect()` in non-test code
+- [ ] No `.unwrap()` / `.expect()` in non-test code (clippy-enforced); any `#[allow]` carries a cannot-panic proof comment
 - [ ] `AppError` handles all error cases; no ad-hoc `StatusCode` returns in handlers
+- [ ] `cargo clippy --all-targets -- -D warnings` passes

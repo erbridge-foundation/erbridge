@@ -1,3 +1,6 @@
+// Test crate: unwrap/expect are fine here (policy exempts test code).
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 // Integration tests for the /api/v1/keys endpoints.
 //
 // These tests exercise the full handler → service → db path using a real
@@ -24,8 +27,8 @@ use uuid::Uuid;
 use backend::{
     app_state::AppState,
     config::Config,
+    crypto,
     esi::EsiMetadata,
-    handlers::crypto,
     session::{InflightStore, SessionStore},
 };
 

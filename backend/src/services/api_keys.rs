@@ -3,10 +3,10 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
+    api_key,
     audit::{self, AuditEvent},
     db::{DbError, api_keys as db},
     error::{AppError, ConflictKind},
-    handlers::api_key,
 };
 
 #[derive(Debug)]

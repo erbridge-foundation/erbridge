@@ -11,9 +11,10 @@ use uuid::Uuid;
 
 use crate::{
     app_state::AppState,
+    crypto,
     db::{accounts, blocks},
     error::AppError,
-    handlers::{cookie, crypto},
+    handlers::cookie,
     services::api_keys as svc,
 };
 
@@ -65,7 +66,7 @@ where
 
         // 1. Try Bearer token.
         if let Some(bearer_value) = extract_bearer(&parts.headers)
-            && bearer_value.starts_with(crate::handlers::api_key::PREFIX)
+            && bearer_value.starts_with(crate::api_key::PREFIX)
         {
             let row = svc::lookup_by_plaintext(&state.db, &bearer_value).await?;
 
@@ -295,9 +296,9 @@ mod tests {
     use crate::{
         app_state::AppState,
         config::Config,
+        crypto,
         db::accounts,
         esi::EsiMetadata,
-        handlers::crypto,
         session::{InflightStore, SessionStore},
     };
     use axum::http::{Request, header};

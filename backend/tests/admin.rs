@@ -1,3 +1,6 @@
+// Test crate: unwrap/expect are fine here (policy exempts test code).
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 // Integration tests for the /api/v1/admin/* handlers (section 7). Drives the
 // real router with an admin session cookie and asserts the HTTP contract for
 // every endpoint, plus the key error paths (last-admin 409, self-block 409,
@@ -25,9 +28,9 @@ use uuid::Uuid;
 use backend::{
     app_state::AppState,
     config::Config,
+    crypto,
     db::{accounts, blocks},
     esi::EsiMetadata,
-    handlers::crypto,
     session::{InflightStore, SessionStore},
 };
 

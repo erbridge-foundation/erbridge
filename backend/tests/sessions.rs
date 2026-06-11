@@ -1,3 +1,6 @@
+// Test crate: unwrap/expect are fine here (policy exempts test code).
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 // Integration tests for Postgres-backed sessions.
 //
 // Covers the spec scenarios end-to-end against a real DB:
@@ -24,8 +27,8 @@ use uuid::Uuid;
 use backend::{
     app_state::AppState,
     config::Config,
+    crypto,
     esi::EsiMetadata,
-    handlers::crypto,
     session::{InflightStore, SessionStore},
 };
 

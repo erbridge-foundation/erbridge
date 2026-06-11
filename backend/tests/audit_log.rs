@@ -1,3 +1,6 @@
+// Test crate: unwrap/expect are fine here (policy exempts test code).
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 // Integration tests for audit-log emission. Drives the post-ESI SSO completion
 // service (`backend::services::auth::complete_sso_callback`) and the
 // account-management / api-key services directly, then asserts on rows in the
@@ -17,9 +20,9 @@ use uuid::Uuid;
 use backend::{
     app_state::AppState,
     config::Config,
+    crypto,
     db::{accounts, characters},
     esi::EsiMetadata,
-    handlers::crypto,
     services::auth::{SsoCompletionInput, complete_sso_callback},
     session::{InflightStore, SessionStore},
 };

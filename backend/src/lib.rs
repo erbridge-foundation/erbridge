@@ -1,6 +1,8 @@
+pub mod api_key;
 pub mod app_state;
 pub mod audit;
 pub mod config;
+pub mod crypto;
 pub mod db;
 pub mod dto;
 pub mod error;

@@ -39,3 +39,10 @@ tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
 jsonschema = "0.17"
 wiremock = "0.6"
+
+[lints.clippy]
+# The skill bans unwrap/expect in non-test code; clippy.toml's
+# allow-unwrap-in-tests / allow-expect-in-tests exempt test code.
+# CI runs `cargo clippy --all-targets -- -D warnings`, making these denies.
+unwrap_used = "warn"
+expect_used = "warn"

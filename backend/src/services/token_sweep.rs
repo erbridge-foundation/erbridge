@@ -15,9 +15,9 @@ use tokio::time::interval;
 use tracing::{error, info, warn};
 
 use crate::audit::{self, AuditEvent};
+use crate::crypto;
 use crate::db::{accounts, characters};
 use crate::esi::token;
-use crate::handlers::crypto;
 
 /// How long an account may go without logging in before the waterfall expires
 /// its still-valid character tokens.

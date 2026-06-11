@@ -240,6 +240,7 @@ Wrap responses in the same `{ data: … }` envelope used by the backend where it
 
 - **One stylesheet hierarchy**: `src/app.css` for custom properties, resets, and base styles. Component styles in `<style>` blocks (scoped by default).
 - **Custom properties for all design tokens** — colours, spacing, radii, type scale. No magic numbers inline.
+  - **Blessed exception — translucent overlays.** Backdrop scrims, box-shadows, and tinted notice backgrounds may use literal alpha colours (e.g. `rgba(0, 0, 0, 0.6)`, `rgba(245, 158, 11, 0.08)`) when the design-token palette has no alpha variant of the needed colour. The *hue* should still trace to a token where one exists (an amber tint belongs with `--amber`); only the alpha composite may be literal. Opaque colours never qualify.
 - **No Tailwind, no CSS modules, no styled-components**.
 - Layouts use CSS Grid and Flexbox — no third-party layout libraries.
 - Media queries via custom property breakpoints or `@container` queries.

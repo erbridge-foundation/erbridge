@@ -1,3 +1,6 @@
+// Test crate: unwrap/expect are fine here (policy exempts test code).
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 // OpenAPI strict-drift and doc-coverage tests.
 //
 // 2d.6 — strict-drift: every documented route's actual response validates against
@@ -20,8 +23,8 @@ use uuid::Uuid;
 use backend::{
     app_state::AppState,
     config::Config,
+    crypto,
     esi::EsiMetadata,
-    handlers::crypto,
     openapi::ApiDoc,
     session::{InflightStore, SessionStore},
 };

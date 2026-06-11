@@ -1,3 +1,6 @@
+// Test crate: unwrap/expect are fine here (policy exempts test code).
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 // Integration tests for block enforcement (section 5 of
 // add-server-admin-and-block-list). Exercises the two surviving auth routes —
 // the SSO callback (via the completion service) and the bearer branch of
@@ -18,9 +21,9 @@ use uuid::Uuid;
 use backend::{
     app_state::AppState,
     config::Config,
+    crypto,
     db::{accounts, blocks, characters},
     esi::EsiMetadata,
-    handlers::crypto,
     services::auth::{SsoCompletionInput, SsoOutcome, complete_sso_callback},
     session::{InflightStore, SessionStore},
 };

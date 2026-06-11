@@ -3,7 +3,7 @@ use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
-use crate::handlers::crypto;
+use crate::crypto;
 
 pub struct Character {
     pub id: Uuid,

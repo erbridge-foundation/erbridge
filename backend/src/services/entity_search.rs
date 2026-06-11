@@ -18,13 +18,13 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
+    crypto,
     db::characters,
     error::AppError,
     esi::{
         search::{self, SearchCategory},
         token,
     },
-    handlers::crypto,
 };
 
 /// Per-category result cap. Mirrors the existing character-search cap; tune if

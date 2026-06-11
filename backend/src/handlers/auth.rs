@@ -9,8 +9,9 @@ use uuid::Uuid;
 
 use crate::{
     app_state::AppState,
+    crypto,
     error::AppError,
-    handlers::{cookie, crypto},
+    handlers::cookie,
     services::auth::{SsoCompletionInput, SsoOutcome, complete_sso_callback},
     session::{InflightRecord, Session},
 };

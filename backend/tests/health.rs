@@ -1,3 +1,6 @@
+// Test crate: unwrap/expect are fine here (policy exempts test code).
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 // Integration test for the GET /api/health endpoint.
 //
 // Exercises the full handler → service → db path against a real test database.
