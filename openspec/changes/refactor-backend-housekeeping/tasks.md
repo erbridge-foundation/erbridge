@@ -28,7 +28,7 @@
 - [ ] 5.3 Bundle `token_sweep::spawn`'s six parameters into a `SweepContext` struct
 - [ ] 5.4 `set_main` second UPDATE gains `RETURNING`; `set_main_character` drops the post-commit re-list
 - [ ] 5.5 Single-query bearer auth: extend `db/api_keys::find_by_hash` with account-status + blocked-character join; extractor maps the combined row; existing extractor/middleware tests cover behaviour
-- [ ] 5.6 Comment hygiene: remove `decrypt_token`'s stale `#[allow(dead_code)]` + comment; update the audit catalogue's "Dormant" annotations for events now emitted (maps/ACLs); fix the `token_encryption_key` "padded with zeros" doc if not already fixed by harden-token-crypto
+- [ ] 5.6 Comment hygiene: remove `decrypt_token`'s stale `#[allow(dead_code)]` + comment; fix the `token_encryption_key` "padded with zeros" doc if not already fixed by harden-token-crypto. Audit catalogue "Dormant" annotations: verify each against its actual emit site rather than trusting the label — `make-audit-log-self-contained` cleared them from the live maps/ACL variants, and the stale `ServerAdminRevoked` label (it *is* emitted by `services::admin::revoke_admin`) was corrected during the audit-change review. The labels that remain (`AccountPurged`, the four `Admin*`-override map/ACL variants) are genuinely dormant — confirmed no emit site — leave them.
 
 ## 6. Verification
 

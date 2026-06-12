@@ -165,7 +165,7 @@ pub enum AuditEvent {
         account_id: Uuid,
         source: ServerAdminGrantSource,
     },
-    /// Dormant: emitted by a future admin-initiated demote endpoint.
+    /// Emitted by `services::admin::revoke_admin` when an admin grant is removed.
     ServerAdminRevoked {
         account_id: Uuid,
     },

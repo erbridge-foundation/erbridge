@@ -22,7 +22,14 @@
 
 **Search returns `id: Option<Uuid>` for characters.** `services/entity_search.rs` batch-looks-up existing rows (`WHERE eve_character_id = ANY($1)` — replacing N `find_id_by_eve_character_id` calls) and attaches the UUID where found. No write happens in the search path at all, which also makes search safely retryable/spammable.
 
-**Mint inside the member-add transaction.** `AddMemberInput` for character members carries `character_id: Option<Uuid>` OR `eve_character_id: Option<i64>` (exactly one; shape-validated like the existing type/id coherence rules). When `eve_character_id` is given: inside the add transaction, find-or-mint the orphan (public-info affiliation fetch happens *before* the tx opens — no ESI call mid-transaction, keeping lock hold time bounded), then insert the member with the resolved UUID. The mint keeps the placeholder-on-public-info-failure behaviour: the selected entity must be addable even when ESI affiliation lookup fails; name comes from the search result the user clicked.
+**Mint inside the member-add transaction — reusing the existing fields.** `AddMemberInput`/`AddMemberRequest` already carry `eve_entity_id: Option<i64>` (mandatory for every member type since `make-audit-log-self-contained`, snapshotted into the `acl_member_added` audit event) and `character_id: Option<Uuid>`. **No new field is added.** What changes is `validate_member_shape`: a character member no longer *requires* `character_id`. The two character cases:
+
+- `character_id` present → existing row, inserted as today (the shipped path).
+- `character_id` absent → unknown character: inside the add transaction, find-or-mint the orphan keyed by `eve_entity_id` (public-info affiliation fetch happens *before* the tx opens — no ESI call mid-transaction, keeping lock hold time bounded), then insert the member with the resolved UUID.
+
+A corporation/alliance member carrying `character_id` is still rejected; a member with no `eve_entity_id` is still rejected. The mint keeps the placeholder-on-public-info-failure behaviour: the selected entity must be addable even when ESI affiliation lookup fails; `name` comes from the search result the user clicked (already supplied in the request).
+
+Note the field naming: `eve_entity_id` is the durable EVE id uniformly across all member types — for a character member it holds the EVE *character* id. We deliberately do **not** introduce a separate `eve_character_id` request field; the self-contained-audit change already established `eve_entity_id` as the picker-supplied mint/snapshot key.
 
 **Blocked-status batch.** `db/blocks.rs` gains `blocked_set(pool, &[i64]) -> HashSet<i64>` (`SELECT eve_character_id FROM blocked_eve_character WHERE eve_character_id = ANY($1)`); `services/admin.rs` annotates from the set. The single-id `is_eve_character_blocked` stays for the SSO callback's one-character check.
 
@@ -30,7 +37,7 @@
 
 ## Risks / Trade-offs
 
-- [Frontend/backend lockstep] `characters[].id` becomes nullable and add-member gains a field — old frontend against new backend would still work (it only ever sends `character_id`s it got from search, which new backend still accepts); new frontend against old backend would fail for unknown characters. → Ship as one change; the compose stack deploys both together.
+- [Frontend/backend lockstep] `characters[].id` becomes nullable and add-member relaxes `character_id` to optional for characters (no new field) — old frontend against new backend still works (it only ever sends `character_id`s it got from search, which new backend still accepts); new frontend against old backend would fail for unknown characters (old backend rejects a character member without `character_id`). → Ship as one change; the compose stack deploys both together.
 - [Bulk endpoint quirk] `POST /universe/names/` 404s if *every* id is unknown. → Treat 404 with a non-empty request as "all dropped", not `Unavailable`.
 - [Slightly stale names] Bulk resolution returns current names identically to per-id; no behaviour change.
 - [Spec movement] The `data-persistence` mint requirement is MODIFIED to relocate the mint point; the orphan row *shape* requirements are unchanged, so the orphan-claim flow and ACL referenceability guarantees carry over verbatim.
