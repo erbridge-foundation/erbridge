@@ -257,7 +257,7 @@ The `/admin/audit` frontend route SHALL present the audit log as a single surfac
 **Entry controls (usable from a cold start, before any row is rendered):**
 
 - A **time-window** control defaulting to the last 7 days, offering the tiers `7d`/`30d`/`90d`/`365d` and per-year buckets, mapped to the endpoint's `window` parameter. It is the primary dial and bounds every query.
-- A single **search box** that submits on Enter (not live autocomplete) and maps to the endpoint's `q` parameter — matching a case-insensitive substring of either the actor name or the target name. No user-visible wildcard syntax is presented; metacharacters are handled server-side.
+- A single **search box** that submits on Enter (not live autocomplete) and maps to the endpoint's `q` parameter — matching a case-insensitive substring of the actor name, the target name, **or the event's `details` payload** (so a name snapshotted only in `details`, such as an ACL member, is findable). No user-visible wildcard syntax is presented; metacharacters are handled server-side.
 - An **event-type `<select>`** populated from the static `AuditEvent` catalogue (the 31 variants), mapping to `event_type`.
 - A **target-type `<select>`** offering `account`/`character`/`map`/`acl`, mapping to `target_type`.
 - A **`target_id` text box** as the literal-id escape hatch ("I have the id, take me there"), mapping to `target_id`.
@@ -279,10 +279,17 @@ The `/admin/audit` frontend route SHALL present the audit log as a single surfac
 
 This route remains within the gated `/admin` group (server-admin-only, 404 to others) per the admin-gating requirement. It is read-only per the `audit-log` INSERT-only invariant — no edit or delete affordance.
 
+A per-row **Details** affordance SHALL be provided as specified in the "Audit browser exposes a per-row Details view" requirement.
+
 #### Scenario: Cold-start directed search
 - **GIVEN** an admin who has just opened `/admin/audit` (default 7-day browse view)
 - **WHEN** the admin types `wasp` into the search box and presses Enter
-- **THEN** results within the window whose actor or target name contains "wasp" are shown, newest-first, without the admin having clicked any row
+- **THEN** results within the window whose actor name, target name, or `details` text contains "wasp" are shown, newest-first, without the admin having clicked any row
+
+#### Scenario: Search finds a member named only in details
+- **GIVEN** an `acl_member_added` row whose member name "Wasp 222" is carried in `details`
+- **WHEN** the admin searches for "Wasp 222"
+- **THEN** the row is returned, answering "who added Wasp 222 to which ACL" via the row's actor and target columns
 
 #### Scenario: Refine by clicking a cell
 - **GIVEN** a result set is displayed
@@ -308,6 +315,24 @@ This route remains within the gated `/admin` group (server-admin-only, 404 to ot
 - **GIVEN** the admin has scrolled to the oldest row within the active window
 - **WHEN** no more rows exist inside that window
 - **THEN** scrolling stops and an affordance to widen the window is shown; the view does not silently fetch rows older than the window
+
+### Requirement: Audit browser exposes a per-row Details view
+
+Each audit result row SHALL offer a non-destructive **Details** affordance that opens a dialog rendering that row's `details` payload as a generic key/value list (one row per top-level field). The dialog SHALL render the snapshotted values verbatim and SHALL NOT resolve any id to a name at view time (it relies on names being snapshotted at write time). The dialog SHALL be dismissable and SHALL not mutate any state. Its chrome (title, close control, empty state) SHALL be internationalised across the project's supported locales (en/de/fr).
+
+#### Scenario: Opening Details shows the snapshotted fields
+- **GIVEN** an `acl_member_added` row whose `details` contains `member_name = "Wasp 222"`, `member_type = "character"`, and `permission = "admin"`
+- **WHEN** the admin activates that row's Details affordance
+- **THEN** a dialog opens listing each `details` field as a key/value pair, including `member_name: Wasp 222`, so the admin can read who was added without leaving the page
+
+#### Scenario: Details dialog performs no resolution and no mutation
+- **WHEN** the Details dialog is open for any row
+- **THEN** it displays only the values already present in `details` (no live lookups), and dismissing it leaves the audit log and the result set unchanged
+
+#### Scenario: Empty details renders gracefully
+- **GIVEN** an event whose `details` payload is empty (`{}`)
+- **WHEN** the admin opens its Details dialog
+- **THEN** the dialog shows an empty-state message rather than an empty or broken list
 
 ### Requirement: Admin frontend is gated and surfaced only to admins
 
