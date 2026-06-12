@@ -201,22 +201,46 @@ pub async fn list_for_account(pool: &PgPool, account_id: Uuid) -> Result<Vec<Cha
         .collect())
 }
 
-pub async fn delete_character(pool: &PgPool, id: Uuid) -> Result<bool> {
-    let result = sqlx::query!("DELETE FROM eve_character WHERE id = $1", id)
-        .execute(pool)
-        .await
-        .context("failed to delete character")?;
-    Ok(result.rows_affected() > 0)
+/// Deletes a character within the caller's transaction, scoping the delete to
+/// `account_id` (so a non-owner's request deletes nothing) and returning the
+/// deleted row's `(eve_character_id, name, is_main)` via `RETURNING`. `None`
+/// means no row matched both `id` and `account_id` — the character is unknown
+/// or owned by another account. Returning `is_main` lets the service evaluate
+/// the is-main / last-character guards against the post-delete state inside the
+/// same transaction, so concurrent deletes cannot jointly empty an account.
+pub async fn delete_character_owned_in_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    account_id: Uuid,
+    id: Uuid,
+) -> Result<Option<(i64, String, bool)>> {
+    let row = sqlx::query!(
+        "DELETE FROM eve_character
+         WHERE id = $1 AND account_id = $2
+         RETURNING eve_character_id, name, is_main",
+        id,
+        account_id,
+    )
+    .fetch_optional(&mut **tx)
+    .await
+    .context("failed to delete character")?;
+    Ok(row.map(|r| (r.eve_character_id, r.name, r.is_main)))
 }
 
-/// Transactional variant of [`delete_character`] for callers that need to
-/// commit the delete alongside an audit emission in one transaction.
-pub async fn delete_character_in_tx(tx: &mut Transaction<'_, Postgres>, id: Uuid) -> Result<bool> {
-    let result = sqlx::query!("DELETE FROM eve_character WHERE id = $1", id)
-        .execute(&mut **tx)
-        .await
-        .context("failed to delete character")?;
-    Ok(result.rows_affected() > 0)
+/// Counts an account's characters within the caller's transaction (so the count
+/// reflects the transaction's own pending deletes). Backs the last-character
+/// guard in `delete_character`.
+pub async fn count_for_account_in_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    account_id: Uuid,
+) -> Result<i64> {
+    let row = sqlx::query!(
+        "SELECT COUNT(*) as count FROM eve_character WHERE account_id = $1",
+        account_id
+    )
+    .fetch_one(&mut **tx)
+    .await
+    .context("failed to count characters for account (tx)")?;
+    Ok(row.count.unwrap_or(0))
 }
 
 pub async fn set_main(
@@ -242,17 +266,6 @@ pub async fn set_main(
     .context("failed to set new main")?;
 
     Ok(())
-}
-
-pub async fn count_for_account(pool: &PgPool, account_id: Uuid) -> Result<i64> {
-    let row = sqlx::query!(
-        "SELECT COUNT(*) as count FROM eve_character WHERE account_id = $1",
-        account_id
-    )
-    .fetch_one(pool)
-    .await
-    .context("failed to count characters for account")?;
-    Ok(row.count.unwrap_or(0))
 }
 
 pub async fn clear_tokens_for_account(
@@ -913,22 +926,81 @@ mod tests {
     }
 
     #[sqlx::test]
-    async fn delete_character_returns_true_when_deleted(pool: PgPool) {
-        let id = create_orphan(&pool, 99006, "To Delete", 1000001, "Corp", None, None)
+    async fn delete_character_owned_in_tx_returns_row_for_owner(pool: PgPool) {
+        let account_id = accounts::create_account(&pool).await.unwrap();
+        let mut tx = pool.begin().await.unwrap();
+        let id = upsert_tokens(
+            &mut tx,
+            account_id,
+            99006,
+            "To Delete",
+            1000001,
+            "Corp",
+            None,
+            None,
+            "c",
+            "a",
+            "r",
+            chrono::Utc::now() + chrono::Duration::hours(1),
+            &[],
+            "owner-hash",
+            &test_key(),
+        )
+        .await
+        .unwrap();
+        promote_if_no_main(&mut tx, account_id, id).await.unwrap();
+
+        let deleted = delete_character_owned_in_tx(&mut tx, account_id, id)
             .await
             .unwrap();
-        let deleted = delete_character(&pool, id).await.unwrap();
-        assert!(deleted);
+        tx.commit().await.unwrap();
+        assert_eq!(deleted, Some((99006, "To Delete".to_string(), true)));
     }
 
     #[sqlx::test]
-    async fn delete_character_returns_false_when_not_found(pool: PgPool) {
-        let deleted = delete_character(&pool, Uuid::new_v4()).await.unwrap();
-        assert!(!deleted);
+    async fn delete_character_owned_in_tx_returns_none_for_foreign_or_unknown(pool: PgPool) {
+        let owner = accounts::create_account(&pool).await.unwrap();
+        let other = accounts::create_account(&pool).await.unwrap();
+        let mut tx = pool.begin().await.unwrap();
+        let id = upsert_tokens(
+            &mut tx,
+            owner,
+            99007,
+            "Owned",
+            1000001,
+            "Corp",
+            None,
+            None,
+            "c",
+            "a",
+            "r",
+            chrono::Utc::now() + chrono::Duration::hours(1),
+            &[],
+            "owner-hash",
+            &test_key(),
+        )
+        .await
+        .unwrap();
+
+        // Another account's request matches nothing (ownership in the WHERE).
+        assert!(
+            delete_character_owned_in_tx(&mut tx, other, id)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        // Unknown id likewise.
+        assert!(
+            delete_character_owned_in_tx(&mut tx, owner, Uuid::new_v4())
+                .await
+                .unwrap()
+                .is_none()
+        );
+        tx.commit().await.unwrap();
     }
 
     #[sqlx::test]
-    async fn count_for_account_counts_correctly(pool: PgPool) {
+    async fn count_for_account_in_tx_counts_correctly(pool: PgPool) {
         let account_id = accounts::create_account(&pool).await.unwrap();
         let mut tx = pool.begin().await.unwrap();
         upsert_tokens(
@@ -950,9 +1022,9 @@ mod tests {
         )
         .await
         .unwrap();
-        tx.commit().await.unwrap();
 
-        let count = count_for_account(&pool, account_id).await.unwrap();
+        let count = count_for_account_in_tx(&mut tx, account_id).await.unwrap();
+        tx.commit().await.unwrap();
         assert_eq!(count, 1);
     }
 

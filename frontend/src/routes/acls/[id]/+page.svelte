@@ -27,7 +27,15 @@
 	let searchError = $derived(f?.action === 'search' && f.code ? (f.message ?? null) : null);
 
 	// Add errors surface above the picker (the add forms live inside it now).
-	let addError = $derived(f?.action === 'addMember' && f.code ? f.message : null);
+	// A duplicate-member 409 gets a localized message; other codes fall back to
+	// the backend-supplied message.
+	let addError = $derived(
+		f?.action === 'addMember' && f.code
+			? f.code === 'duplicate_acl_member'
+				? m.acl_member_duplicate()
+				: f.message
+			: null
+	);
 
 	// Per-member update permission (inline select). updateError is keyed by member.
 	let updateError = $derived(

@@ -60,6 +60,7 @@ pub enum ConflictKind {
     CannotBlockSelf,
     ApiKeyNameAlreadyExists,
     MapSlugAlreadyExists,
+    DuplicateAclMember,
 }
 
 impl ConflictKind {
@@ -71,6 +72,7 @@ impl ConflictKind {
             ConflictKind::CannotBlockSelf => "cannot_block_self",
             ConflictKind::ApiKeyNameAlreadyExists => "api_key_name_already_exists",
             ConflictKind::MapSlugAlreadyExists => "map_slug_already_exists",
+            ConflictKind::DuplicateAclMember => "duplicate_acl_member",
         }
     }
 
@@ -86,6 +88,7 @@ impl ConflictKind {
             ConflictKind::CannotBlockSelf => "Cannot block a character on your own account",
             ConflictKind::ApiKeyNameAlreadyExists => "A key with this name already exists",
             ConflictKind::MapSlugAlreadyExists => "A map with this slug already exists",
+            ConflictKind::DuplicateAclMember => "This entity is already a member of the ACL",
         }
     }
 }

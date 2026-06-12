@@ -1,4 +1,4 @@
-use sqlx::PgPool;
+use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
 use crate::{
@@ -8,7 +8,7 @@ use crate::{
         acl::{self as db, Acl},
         acl_member::{self as member_db, AclMember, AclPermission, MemberType},
     },
-    error::AppError,
+    error::{AppError, ConflictKind},
 };
 
 /// Input for adding a member to an ACL. The service validates that the
@@ -74,13 +74,14 @@ pub async fn rename_acl(
     acl_id: Uuid,
     new_name: &str,
 ) -> Result<Acl, AppError> {
-    let acl = load_owned_acl(pool, account_id, acl_id).await?;
-    let old_name = acl.name;
-
     let mut tx = pool
         .begin()
         .await
         .map_err(|e| AppError::Internal(e.into()))?;
+
+    // Ownership check, write, and audit all in one transaction.
+    let acl = load_owned_acl_in_tx(&mut tx, account_id, acl_id).await?;
+    let old_name = acl.name;
 
     let updated = db::update_acl_name(&mut tx, acl_id, new_name)
         .await
@@ -110,12 +111,12 @@ pub async fn rename_acl(
 
 /// Deletes an ACL the account owns (cascading members and attachments).
 pub async fn delete_acl(pool: &PgPool, account_id: Uuid, acl_id: Uuid) -> Result<(), AppError> {
-    let acl = load_owned_acl(pool, account_id, acl_id).await?;
-
     let mut tx = pool
         .begin()
         .await
         .map_err(|e| AppError::Internal(e.into()))?;
+
+    let acl = load_owned_acl_in_tx(&mut tx, account_id, acl_id).await?;
 
     // Audit before the delete so the name snapshot is still resolvable.
     audit::record_in_tx(
@@ -165,11 +166,17 @@ pub async fn add_member(
     acl_id: Uuid,
     input: AddMemberInput,
 ) -> Result<AclMember, AppError> {
-    load_owned_acl(pool, account_id, acl_id).await?;
     validate_member_shape(&input)?;
 
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?;
+
+    load_owned_acl_in_tx(&mut tx, account_id, acl_id).await?;
+
     let member = member_db::add_member(
-        pool,
+        &mut *tx,
         acl_id,
         input.member_type.as_str(),
         input.eve_entity_id,
@@ -180,10 +187,6 @@ pub async fn add_member(
     .await
     .map_err(map_member_db_err)?;
 
-    let mut tx = pool
-        .begin()
-        .await
-        .map_err(|e| AppError::Internal(e.into()))?;
     audit::record_in_tx(
         &mut tx,
         Some(account_id),
@@ -214,17 +217,19 @@ pub async fn update_member_permission(
     member_id: Uuid,
     permission: AclPermission,
 ) -> Result<AclMember, AppError> {
-    load_owned_acl(pool, account_id, acl_id).await?;
-
-    let updated = member_db::update_member_permission(pool, acl_id, member_id, permission.as_str())
-        .await
-        .map_err(map_member_db_err)?
-        .ok_or(AppError::NotFound)?;
-
     let mut tx = pool
         .begin()
         .await
         .map_err(|e| AppError::Internal(e.into()))?;
+
+    load_owned_acl_in_tx(&mut tx, account_id, acl_id).await?;
+
+    let updated =
+        member_db::update_member_permission(&mut *tx, acl_id, member_id, permission.as_str())
+            .await
+            .map_err(map_member_db_err)?
+            .ok_or(AppError::NotFound)?;
+
     audit::record_in_tx(
         &mut tx,
         Some(account_id),
@@ -253,17 +258,18 @@ pub async fn remove_member(
     acl_id: Uuid,
     member_id: Uuid,
 ) -> Result<(), AppError> {
-    load_owned_acl(pool, account_id, acl_id).await?;
-
-    let removed = member_db::remove_member(pool, acl_id, member_id)
-        .await
-        .map_err(AppError::Internal)?
-        .ok_or(AppError::NotFound)?;
-
     let mut tx = pool
         .begin()
         .await
         .map_err(|e| AppError::Internal(e.into()))?;
+
+    load_owned_acl_in_tx(&mut tx, account_id, acl_id).await?;
+
+    let removed = member_db::remove_member(&mut *tx, acl_id, member_id)
+        .await
+        .map_err(AppError::Internal)?
+        .ok_or(AppError::NotFound)?;
+
     audit::record_in_tx(
         &mut tx,
         Some(account_id),
@@ -289,9 +295,28 @@ pub async fn remove_member(
 // ---------------------------------------------------------------------------
 
 /// Loads an ACL and asserts the account owns it. `NotFound` if absent,
-/// `Forbidden` if owned by someone else.
+/// `Forbidden` if owned by someone else. Pool-based; for read-only ownership
+/// checks (e.g. `list_members`).
 async fn load_owned_acl(pool: &PgPool, account_id: Uuid, acl_id: Uuid) -> Result<Acl, AppError> {
     let acl = db::find_acl_by_id(pool, acl_id)
+        .await
+        .map_err(AppError::Internal)?
+        .ok_or(AppError::NotFound)?;
+    if acl.owner_account_id != Some(account_id) {
+        return Err(AppError::Forbidden);
+    }
+    Ok(acl)
+}
+
+/// Transactional ownership check: the same as [`load_owned_acl`] but reading
+/// inside the caller's transaction, so the authorisation and the mutation it
+/// guards (and the audit row) all commit atomically — no TOCTOU window.
+async fn load_owned_acl_in_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    account_id: Uuid,
+    acl_id: Uuid,
+) -> Result<Acl, AppError> {
+    let acl = db::find_acl_by_id(&mut **tx, acl_id)
         .await
         .map_err(AppError::Internal)?
         .ok_or(AppError::NotFound)?;
@@ -354,21 +379,20 @@ pub fn parse_permission(s: &str) -> Result<AclPermission, AppError> {
         .map_err(|_| AppError::BadRequest(format!("invalid permission: {s}")))
 }
 
-/// Maps a member-insert `DbError` to an `AppError`. A CHECK violation (e.g.
-/// raising a corporation member to `admin`) is a client error, not a 500.
+/// Maps a member-insert/update `DbError` to an `AppError`.
+///
+/// - A unique violation means the entity is already a member of the ACL → 409
+///   `duplicate_acl_member` (the partial unique indexes back this).
+/// - A CHECK violation (e.g. raising a corporation member to `admin`, an invalid
+///   member_type/permission value) is a malformed request → 400. Detection is by
+///   SQLSTATE `23514` (`DbError::CheckViolation`), not message-substring.
 fn map_member_db_err(e: DbError) -> AppError {
     match e {
-        DbError::UniqueViolation { .. } => AppError::BadRequest("duplicate acl member".to_string()),
-        DbError::Other(err) => {
-            // A CHECK-constraint violation surfaces here as Other; treat the
-            // common "role for type" / invalid-value cases as bad requests.
-            let msg = err.to_string();
-            if msg.contains("acl_member_") && msg.contains("check") {
-                AppError::BadRequest("invalid acl member type/permission combination".to_string())
-            } else {
-                AppError::Internal(err)
-            }
+        DbError::UniqueViolation { .. } => AppError::Conflict(ConflictKind::DuplicateAclMember),
+        DbError::CheckViolation { .. } => {
+            AppError::BadRequest("invalid acl member type/permission combination".to_string())
         }
+        DbError::Other(err) => AppError::Internal(err),
     }
 }
 
@@ -583,5 +607,162 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, AppError::NotFound));
+    }
+
+    #[sqlx::test]
+    async fn duplicate_corporation_member_is_conflict(pool: PgPool) {
+        let owner = accounts::create_account(&pool).await.unwrap();
+        let acl = db::insert_acl_for_test(&pool, owner, "Corp ACL").await;
+
+        let add = |perm: AclPermission| {
+            add_member(
+                &pool,
+                owner,
+                acl.id,
+                AddMemberInput {
+                    member_type: MemberType::Corporation,
+                    eve_entity_id: Some(98000050),
+                    character_id: None,
+                    name: "Wasp Industries".to_string(),
+                    permission: perm,
+                },
+            )
+        };
+
+        add(AclPermission::Read).await.unwrap();
+        // Re-adding the same corporation (even with a different permission) is a
+        // duplicate → 409, and no second row is inserted.
+        let err = add(AclPermission::ReadWrite).await.unwrap_err();
+        assert!(matches!(
+            err,
+            AppError::Conflict(ConflictKind::DuplicateAclMember)
+        ));
+        assert_eq!(
+            member_db::list_members(&pool, acl.id).await.unwrap().len(),
+            1
+        );
+    }
+
+    #[sqlx::test]
+    async fn duplicate_character_member_is_conflict(pool: PgPool) {
+        use crate::db::test_helpers::insert_character;
+        let owner = accounts::create_account(&pool).await.unwrap();
+        let acl = db::insert_acl_for_test(&pool, owner, "Corp ACL").await;
+        let char_id = insert_character(&pool, owner, 95465500, "Tocoquadi").await;
+
+        let add = || {
+            add_member(
+                &pool,
+                owner,
+                acl.id,
+                AddMemberInput {
+                    member_type: MemberType::Character,
+                    eve_entity_id: Some(95465500),
+                    character_id: Some(char_id),
+                    name: "Tocoquadi".to_string(),
+                    permission: AclPermission::Read,
+                },
+            )
+        };
+        add().await.unwrap();
+        let err = add().await.unwrap_err();
+        assert!(matches!(
+            err,
+            AppError::Conflict(ConflictKind::DuplicateAclMember)
+        ));
+        assert_eq!(
+            member_db::list_members(&pool, acl.id).await.unwrap().len(),
+            1
+        );
+    }
+
+    #[sqlx::test]
+    async fn same_entity_id_different_member_type_allowed(pool: PgPool) {
+        let owner = accounts::create_account(&pool).await.unwrap();
+        let acl = db::insert_acl_for_test(&pool, owner, "Corp ACL").await;
+
+        // Same eve_entity_id N as both an alliance and a corporation member: the
+        // identities differ by member type, so both are permitted.
+        for mt in [MemberType::Alliance, MemberType::Corporation] {
+            add_member(
+                &pool,
+                owner,
+                acl.id,
+                AddMemberInput {
+                    member_type: mt,
+                    eve_entity_id: Some(99000001),
+                    character_id: None,
+                    name: "Shared Id".to_string(),
+                    permission: AclPermission::Read,
+                },
+            )
+            .await
+            .unwrap();
+        }
+        assert_eq!(
+            member_db::list_members(&pool, acl.id).await.unwrap().len(),
+            2
+        );
+    }
+
+    #[sqlx::test]
+    async fn check_violation_still_maps_to_400(pool: PgPool) {
+        let owner = accounts::create_account(&pool).await.unwrap();
+        let acl = db::insert_acl_for_test(&pool, owner, "Corp ACL").await;
+
+        // A corporation cannot hold `manage` (acl_member_role_for_type CHECK).
+        // It must surface as a 400 BadRequest, not a 409 or 500.
+        let err = add_member(
+            &pool,
+            owner,
+            acl.id,
+            AddMemberInput {
+                member_type: MemberType::Corporation,
+                eve_entity_id: Some(98000060),
+                character_id: None,
+                name: "Overreach Corp".to_string(),
+                permission: AclPermission::Manage,
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, AppError::BadRequest(_)));
+        assert!(
+            member_db::list_members(&pool, acl.id)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[sqlx::test]
+    async fn member_add_and_audit_are_atomic(pool: PgPool) {
+        // The member insert participates in the same transaction as the audit
+        // write: rolling back the transaction (standing in for a failed audit
+        // write) leaves the ACL's member list unchanged. Driving the db insert
+        // through `&mut *tx` mirrors exactly what the service does.
+        let owner = accounts::create_account(&pool).await.unwrap();
+        let acl = db::insert_acl_for_test(&pool, owner, "Corp ACL").await;
+
+        let mut tx = pool.begin().await.unwrap();
+        member_db::add_member(
+            &mut *tx,
+            acl.id,
+            "corporation",
+            Some(98000070),
+            None,
+            "Rolled Back",
+            "read",
+        )
+        .await
+        .unwrap();
+        tx.rollback().await.unwrap();
+
+        assert!(
+            member_db::list_members(&pool, acl.id)
+                .await
+                .unwrap()
+                .is_empty()
+        );
     }
 }

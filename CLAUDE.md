@@ -1,5 +1,13 @@
 # E-R Bridge — Project Rules for Claude
 
+## Scale and proportionality
+
+This is an EVE Online wormhole-mapping tool for a small known userbase (corp/alliance scale — think tens of concurrent users, a handful of server admins), **not** a 100M-user SaaS platform. Engineer accordingly:
+
+- **Don't build for rare edge cases at the cost of simplicity.** Prefer the straightforward solution. Reach for heavyweight machinery (extra locking, queues, sharding, elaborate retry/backoff, defensive layers for theoretical concurrency) only when a real, reachable problem at *this* scale justifies it.
+- When weighing a fix, judge it against the actual blast radius and likelihood at this scale, and the cost of getting it wrong (often recoverable by hand), not against worst-case adversarial load.
+- This is about **proportionality, not sloppiness** — correctness, security, and data integrity still matter. The rule trims gold-plating, not rigor. When in doubt about whether something crosses from "rigor" into "gold-plating", ask.
+
 ## Skill authority
 
 Skills are the authoritative source for architecture, structure, and convention in this project. When a skill is in conflict with any other source (tasks, specs, prior code, or your own judgment), **the skill wins**.

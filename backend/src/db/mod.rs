@@ -21,17 +21,26 @@ pub enum DbError {
     #[error("unique constraint violated: {constraint}")]
     UniqueViolation { constraint: String },
 
+    #[error("check constraint violated: {constraint}")]
+    CheckViolation { constraint: String },
+
     #[error(transparent)]
     Other(#[from] anyhow::Error),
 }
 
 impl From<sqlx::Error> for DbError {
     fn from(err: sqlx::Error) -> Self {
-        if let sqlx::Error::Database(ref db_err) = err
-            && db_err.is_unique_violation()
-        {
-            let constraint = db_err.constraint().unwrap_or("<unknown>").to_string();
-            return DbError::UniqueViolation { constraint };
+        if let sqlx::Error::Database(ref db_err) = err {
+            if db_err.is_unique_violation() {
+                let constraint = db_err.constraint().unwrap_or("<unknown>").to_string();
+                return DbError::UniqueViolation { constraint };
+            }
+            // SQLSTATE 23514 = check_violation. Match on the code rather than the
+            // message text so the mapping is locale- and wording-independent.
+            if db_err.is_check_violation() {
+                let constraint = db_err.constraint().unwrap_or("<unknown>").to_string();
+                return DbError::CheckViolation { constraint };
+            }
         }
         DbError::Other(anyhow::Error::from(err))
     }

@@ -329,6 +329,7 @@
 	"acl_member_remove_title": "Retirer {name} ?",
 	"acl_member_remove_body": "Ceci retire le membre de cette ACL.",
 	"acl_member_remove_confirm": "retirer le membre",
+	"acl_member_duplicate": "Cette entité est déjà membre de cette ACL.",
 	"acl_update_permission_aria": "Modifier la permission de {name}",
 	"acl_add_permission_aria": "Permission du nouveau membre",
 	"acl_add_submit": "ajouter le membre",

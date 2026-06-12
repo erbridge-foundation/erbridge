@@ -3,7 +3,7 @@ use uuid::Uuid;
 
 use crate::{
     audit::{self, AuditEvent},
-    db::{accounts, characters},
+    db::{accounts, characters, sessions},
     dto::account::TokenStatus,
     error::{AppError, ConflictKind},
 };
@@ -121,8 +121,18 @@ pub async fn delete_account(pool: &PgPool, account_id: Uuid) -> Result<(), AppEr
         .map_err(AppError::Internal)?
         .ok_or(AppError::NotFound)?;
 
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?;
+    // Evaluate the last-admin guard inside the transaction, *before* the status
+    // flip. `count_server_admins_tx` takes a `FOR UPDATE` lock on every active
+    // admin row, so two concurrent deletes from the final two admins serialise
+    // here (each must lock the same row set): the second blocks until the first
+    // commits, then re-reads a count of 1 (only itself) and is refused. Locking
+    // before flipping (rather than after) avoids a lock-ordering deadlock.
     if account.is_server_admin {
-        let admin_count = accounts::count_server_admins(pool)
+        let admin_count = accounts::count_server_admins_tx(&mut tx)
             .await
             .map_err(AppError::Internal)?;
         if admin_count <= 1 {
@@ -132,13 +142,6 @@ pub async fn delete_account(pool: &PgPool, account_id: Uuid) -> Result<(), AppEr
         }
     }
 
-    let mut tx = pool
-        .begin()
-        .await
-        .map_err(|e| AppError::Internal(e.into()))?;
-    // Emit the audit row before the state change so the main lookup still
-    // resolves the outgoing main's snapshot — the soft-delete itself does not
-    // touch characters, but the discipline matches set-main below.
     audit::record_in_tx(
         &mut tx,
         Some(account_id),
@@ -150,7 +153,14 @@ pub async fn delete_account(pool: &PgPool, account_id: Uuid) -> Result<(), AppEr
     accounts::soft_delete(&mut tx, account_id)
         .await
         .map_err(AppError::Internal)?;
+
     characters::clear_tokens_for_account(&mut tx, account_id)
+        .await
+        .map_err(AppError::Internal)?;
+    // Delete sessions in the same transaction: cookie-path auth enforces
+    // soft-delete solely through session absence, so a soft-deleted account
+    // must never retain a usable session under any partial-failure ordering.
+    sessions::delete_for_account_in_tx(&mut tx, account_id)
         .await
         .map_err(AppError::Internal)?;
     tx.commit()
@@ -165,8 +175,19 @@ pub async fn delete_character(
     account_id: Uuid,
     character_id: Uuid,
 ) -> Result<(), AppError> {
-    let (owner_id, eve_character_id, character_name, is_main) =
-        match characters::lookup_for_account(pool, character_id)
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?;
+
+    // Delete the row first, scoped to the owner (the WHERE subsumes the
+    // ownership check) and returning is_main + the audit snapshot fields. A
+    // missing/foreign row matches nothing → 404. Both invariant guards are then
+    // evaluated against the post-delete state inside this same transaction, so
+    // two concurrent deletes on a two-character account serialise on the row
+    // locks their DELETEs take and cannot jointly empty the account.
+    let (eve_character_id, character_name, was_main) =
+        match characters::delete_character_owned_in_tx(&mut tx, account_id, character_id)
             .await
             .map_err(AppError::Internal)?
         {
@@ -174,26 +195,20 @@ pub async fn delete_character(
             None => return Err(AppError::NotFound),
         };
 
-    if owner_id != account_id {
-        return Err(AppError::NotFound);
-    }
-
-    let count = characters::count_for_account(pool, account_id)
+    let remaining = characters::count_for_account_in_tx(&mut tx, account_id)
         .await
         .map_err(AppError::Internal)?;
 
-    if count <= 1 {
+    // Last character: removing it would leave the account without an identity.
+    if remaining == 0 {
         return Err(AppError::Conflict(ConflictKind::CannotRemoveLastCharacter));
     }
 
-    if is_main {
+    // Main character while siblings remain: caller must promote another first.
+    if was_main {
         return Err(AppError::Conflict(ConflictKind::CannotRemoveMain));
     }
 
-    let mut tx = pool
-        .begin()
-        .await
-        .map_err(|e| AppError::Internal(e.into()))?;
     audit::record_in_tx(
         &mut tx,
         Some(account_id),
@@ -206,9 +221,6 @@ pub async fn delete_character(
     )
     .await
     .map_err(AppError::Internal)?;
-    characters::delete_character_in_tx(&mut tx, character_id)
-        .await
-        .map_err(AppError::Internal)?;
     tx.commit()
         .await
         .map_err(|e| AppError::Internal(e.into()))?;
@@ -334,6 +346,219 @@ mod tests {
         assert!(account.delete_requested_at.is_some());
         assert_character_tokens_cleared(&pool, char_one).await;
         assert_character_tokens_cleared(&pool, char_two).await;
+    }
+
+    #[sqlx::test]
+    async fn delete_account_deletes_sessions_in_same_tx(pool: PgPool) {
+        let mut tx = pool.begin().await.unwrap();
+        let (_admin, _) = accounts::resolve_or_create(&mut tx, None, 1001)
+            .await
+            .unwrap();
+        let (user, _) = accounts::resolve_or_create(&mut tx, None, 1002)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+
+        sessions::insert(&pool, "sess-1", user, None, false)
+            .await
+            .unwrap();
+        sessions::insert(&pool, "sess-2", user, None, false)
+            .await
+            .unwrap();
+
+        delete_account(&pool, user).await.unwrap();
+
+        // The soft-delete commit also removed every session for the account, so
+        // the cookie-auth path (which checks only session presence) can never
+        // authenticate a soft-deleted account.
+        assert!(
+            sessions::list_ids_for_account(&pool, user)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[sqlx::test]
+    async fn delete_account_last_admin_guard_rolls_back_sessions(pool: PgPool) {
+        // A lone server admin's delete is refused; assert the whole transaction
+        // — status flip *and* session deletion — rolls back together.
+        let mut tx = pool.begin().await.unwrap();
+        let (admin, _) = accounts::resolve_or_create(&mut tx, None, 1001)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        sessions::insert(&pool, "admin-sess", admin, None, false)
+            .await
+            .unwrap();
+
+        let err = delete_account(&pool, admin).await.unwrap_err();
+        assert!(matches!(
+            err,
+            AppError::Conflict(ConflictKind::CannotRemoveLastServerAdmin)
+        ));
+
+        // Status untouched and the session survived the rollback.
+        let account = accounts::get_account(&pool, admin).await.unwrap().unwrap();
+        assert_eq!(account.status, "active");
+        assert_eq!(
+            sessions::list_ids_for_account(&pool, admin).await.unwrap(),
+            vec!["admin-sess".to_string()]
+        );
+    }
+
+    #[sqlx::test]
+    async fn delete_account_concurrent_last_two_admins_keeps_one(pool: PgPool) {
+        // Two active admins each delete concurrently. At most one may succeed;
+        // the guard (count after the flip, inside the tx) must leave ≥1 active
+        // admin. The row locks the soft-delete UPDATE takes serialise the two
+        // transactions, so the second sees the first's pending/committed flip.
+        let mut tx = pool.begin().await.unwrap();
+        let (first, _) = accounts::resolve_or_create(&mut tx, None, 1001)
+            .await
+            .unwrap();
+        let (second, _) = accounts::resolve_or_create(&mut tx, None, 1002)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        sqlx::query!(
+            "UPDATE account SET is_server_admin = TRUE WHERE id = $1",
+            second
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let p1 = pool.clone();
+        let p2 = pool.clone();
+        let h1 = tokio::spawn(async move { delete_account(&p1, first).await });
+        let h2 = tokio::spawn(async move { delete_account(&p2, second).await });
+        let r1 = h1.await.unwrap();
+        let r2 = h2.await.unwrap();
+
+        // Exactly one succeeded and one was refused with the conflict.
+        let successes = [&r1, &r2].iter().filter(|r| r.is_ok()).count();
+        assert_eq!(successes, 1, "exactly one delete succeeds");
+        let conflicts = [&r1, &r2]
+            .iter()
+            .filter(|r| {
+                matches!(
+                    r,
+                    Err(AppError::Conflict(
+                        ConflictKind::CannotRemoveLastServerAdmin
+                    ))
+                )
+            })
+            .count();
+        assert_eq!(conflicts, 1, "the loser gets a 409");
+
+        // At least one active server admin remains.
+        assert!(accounts::count_server_admins(&pool).await.unwrap() >= 1);
+    }
+
+    #[sqlx::test]
+    async fn delete_character_concurrent_deletes_keep_one_with_main(pool: PgPool) {
+        // Account with exactly two characters: A (main) and B (not main). Two
+        // deletes race for B; the last-character guard (count inside the tx,
+        // after the delete) must leave the account non-empty with a main.
+        let mut tx = pool.begin().await.unwrap();
+        let (_admin, _) = accounts::resolve_or_create(&mut tx, None, 1001)
+            .await
+            .unwrap();
+        let (user, _) = accounts::resolve_or_create(&mut tx, None, 1002)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+
+        let main_id = insert_main_character(&pool, user, 5001).await;
+        let alt_id = insert_test_character_with_tokens(&pool, user, 5002).await;
+
+        // Two parallel deletes of the same non-main character B. One deletes the
+        // row; the other finds nothing (404). The account keeps A.
+        let p1 = pool.clone();
+        let p2 = pool.clone();
+        let h1 = tokio::spawn(async move { delete_character(&p1, user, alt_id).await });
+        let h2 = tokio::spawn(async move { delete_character(&p2, user, alt_id).await });
+        let _ = h1.await.unwrap();
+        let _ = h2.await.unwrap();
+
+        let chars = characters::list_for_account(&pool, user).await.unwrap();
+        assert!(!chars.is_empty(), "account never emptied");
+        assert!(chars.iter().any(|c| c.is_main), "a main survives");
+        assert!(chars.iter().any(|c| c.id == main_id));
+    }
+
+    #[sqlx::test]
+    async fn delete_character_last_character_rejected(pool: PgPool) {
+        let user = accounts::create_account(&pool).await.unwrap();
+        let only = insert_main_character(&pool, user, 6001).await;
+
+        let err = delete_character(&pool, user, only).await.unwrap_err();
+        assert!(matches!(
+            err,
+            AppError::Conflict(ConflictKind::CannotRemoveLastCharacter)
+        ));
+        // Rolled back: the row survives.
+        assert_eq!(
+            characters::list_for_account(&pool, user)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[sqlx::test]
+    async fn delete_character_main_with_siblings_rejected(pool: PgPool) {
+        let user = accounts::create_account(&pool).await.unwrap();
+        let main_id = insert_main_character(&pool, user, 7001).await;
+        let _alt = insert_test_character_with_tokens(&pool, user, 7002).await;
+
+        let err = delete_character(&pool, user, main_id).await.unwrap_err();
+        assert!(matches!(
+            err,
+            AppError::Conflict(ConflictKind::CannotRemoveMain)
+        ));
+        // Rolled back: the main survives.
+        assert_eq!(
+            characters::list_for_account(&pool, user)
+                .await
+                .unwrap()
+                .len(),
+            2
+        );
+    }
+
+    #[sqlx::test]
+    async fn delete_character_foreign_is_not_found(pool: PgPool) {
+        let owner = accounts::create_account(&pool).await.unwrap();
+        let other = accounts::create_account(&pool).await.unwrap();
+        let owner_main = insert_main_character(&pool, owner, 8001).await;
+        let _owner_alt = insert_test_character_with_tokens(&pool, owner, 8002).await;
+
+        // `other` cannot delete `owner`'s character.
+        let err = delete_character(&pool, other, owner_main)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AppError::NotFound));
+        assert_eq!(
+            characters::list_for_account(&pool, owner)
+                .await
+                .unwrap()
+                .len(),
+            2
+        );
+    }
+
+    /// Inserts a token-bearing character and promotes it to main.
+    async fn insert_main_character(pool: &PgPool, account_id: Uuid, eve_character_id: i64) -> Uuid {
+        let id = insert_test_character_with_tokens(pool, account_id, eve_character_id).await;
+        let mut tx = pool.begin().await.unwrap();
+        characters::promote_if_no_main(&mut tx, account_id, id)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        id
     }
 
     async fn insert_test_character_with_tokens(

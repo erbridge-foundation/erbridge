@@ -69,17 +69,11 @@ pub async fn delete(pool: &PgPool, session_id: &str) -> Result<()> {
     Ok(())
 }
 
-pub async fn delete_for_account(pool: &PgPool, account_id: Uuid) -> Result<u64> {
-    let result = sqlx::query!("DELETE FROM session WHERE account_id = $1", account_id)
-        .execute(pool)
-        .await
-        .context("failed to delete sessions for account")?;
-    Ok(result.rows_affected())
-}
-
-/// Transactional variant of [`delete_for_account`], so a caller can tear down an
-/// account's sessions atomically alongside other writes (e.g. the block
-/// transaction, which clears tokens and inserts the block row in one unit).
+/// Deletes every session row for an account within the caller's transaction, so
+/// the teardown commits atomically alongside other writes (e.g. the block
+/// transaction and the account soft-delete, which clear tokens and delete
+/// sessions in one unit). There is no pool-side variant: every session teardown
+/// is part of a larger transaction.
 pub async fn delete_for_account_in_tx(
     tx: &mut Transaction<'_, Postgres>,
     account_id: Uuid,
@@ -243,14 +237,16 @@ mod tests {
     }
 
     #[sqlx::test]
-    async fn delete_for_account_removes_all_rows_for_account(pool: PgPool) {
+    async fn delete_for_account_in_tx_removes_only_target_account(pool: PgPool) {
         let a = make_account(&pool).await;
         let b = make_account(&pool).await;
         insert(&pool, "a1", a, None, false).await.unwrap();
         insert(&pool, "a2", a, None, false).await.unwrap();
         insert(&pool, "b1", b, None, false).await.unwrap();
 
-        let removed = delete_for_account(&pool, a).await.unwrap();
+        let mut tx = pool.begin().await.unwrap();
+        let removed = delete_for_account_in_tx(&mut tx, a).await.unwrap();
+        tx.commit().await.unwrap();
         assert_eq!(removed, 2);
 
         assert!(list_ids_for_account(&pool, a).await.unwrap().is_empty());

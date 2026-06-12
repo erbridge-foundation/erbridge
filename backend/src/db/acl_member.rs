@@ -56,17 +56,24 @@ pub struct AclMember {
 
 /// Inserts a member into an ACL. The caller (service layer) is responsible for
 /// validating the `member_type`/`permission`/id-column coherence; the database
-/// CHECK constraints are the backstop and surface as `DbError`.
+/// CHECK and unique constraints are the backstop and surface as `DbError`.
+///
+/// Generic over the executor so the service can run the insert inside its
+/// audit transaction (passing `&mut *tx`) while tests can seed against the pool
+/// directly — one function, no pool/tx twin.
 #[allow(clippy::too_many_arguments)]
-pub async fn add_member(
-    pool: &PgPool,
+pub async fn add_member<'e, E>(
+    executor: E,
     acl_id: Uuid,
     member_type: &str,
     eve_entity_id: Option<i64>,
     character_id: Option<Uuid>,
     name: &str,
     permission: &str,
-) -> Result<AclMember, DbError> {
+) -> Result<AclMember, DbError>
+where
+    E: sqlx::PgExecutor<'e>,
+{
     let m = sqlx::query_as!(
         AclMember,
         r#"
@@ -82,7 +89,7 @@ pub async fn add_member(
         name,
         permission,
     )
-    .fetch_one(pool)
+    .fetch_one(executor)
     .await?;
 
     Ok(m)
@@ -109,12 +116,15 @@ pub async fn list_members(pool: &PgPool, acl_id: Uuid) -> Result<Vec<AclMember>>
 /// Updates a member's permission within an ACL. Returns the updated row, or
 /// `None` if no such member exists on that ACL. A CHECK violation (e.g. raising
 /// a corporation member to `admin`) surfaces as `DbError`.
-pub async fn update_member_permission(
-    pool: &PgPool,
+pub async fn update_member_permission<'e, E>(
+    executor: E,
     acl_id: Uuid,
     member_id: Uuid,
     permission: &str,
-) -> Result<Option<AclMember>, DbError> {
+) -> Result<Option<AclMember>, DbError>
+where
+    E: sqlx::PgExecutor<'e>,
+{
     let m = sqlx::query_as!(
         AclMember,
         r#"
@@ -128,7 +138,7 @@ pub async fn update_member_permission(
         member_id,
         permission,
     )
-    .fetch_optional(pool)
+    .fetch_optional(executor)
     .await?;
 
     Ok(m)
@@ -137,11 +147,14 @@ pub async fn update_member_permission(
 /// Removes a member from an ACL. Returns the removed row (so the caller can
 /// snapshot the member's name + EVE id into the audit event), or `None` if no
 /// such member exists on that ACL.
-pub async fn remove_member(
-    pool: &PgPool,
+pub async fn remove_member<'e, E>(
+    executor: E,
     acl_id: Uuid,
     member_id: Uuid,
-) -> Result<Option<AclMember>> {
+) -> Result<Option<AclMember>>
+where
+    E: sqlx::PgExecutor<'e>,
+{
     let m = sqlx::query_as!(
         AclMember,
         r#"
@@ -153,7 +166,7 @@ pub async fn remove_member(
         acl_id,
         member_id,
     )
-    .fetch_optional(pool)
+    .fetch_optional(executor)
     .await
     .context("failed to remove acl member")?;
 
@@ -263,7 +276,7 @@ mod tests {
         let err = add_member(&pool, a.id, "fleet", Some(1), None, "X", "read")
             .await
             .unwrap_err();
-        assert!(matches!(err, DbError::Other(_)));
+        assert!(matches!(err, DbError::CheckViolation { .. }));
     }
 
     #[sqlx::test]
@@ -273,7 +286,7 @@ mod tests {
         let err = add_member(&pool, a.id, "character", None, None, "X", "superuser")
             .await
             .unwrap_err();
-        assert!(matches!(err, DbError::Other(_)));
+        assert!(matches!(err, DbError::CheckViolation { .. }));
     }
 
     #[sqlx::test]
@@ -283,7 +296,7 @@ mod tests {
         let err = add_member(&pool, a.id, "corporation", Some(5), None, "Corp", "manage")
             .await
             .unwrap_err();
-        assert!(matches!(err, DbError::Other(_)));
+        assert!(matches!(err, DbError::CheckViolation { .. }));
     }
 
     #[sqlx::test]
@@ -308,5 +321,207 @@ mod tests {
         assert_eq!(m.permission, "admin");
         assert_eq!(m.eve_entity_id, Some(95465499));
         assert_eq!(m.character_id, Some(char_id));
+    }
+
+    // ---- uniqueness (partial unique indexes) ----
+
+    #[sqlx::test]
+    async fn duplicate_character_member_violates_unique(pool: PgPool) {
+        let owner = accounts::create_account(&pool).await.unwrap();
+        let a = insert_acl_for_test(&pool, owner, "ACL").await;
+        let char_id = insert_character(&pool, owner, 12121, "Pilot").await;
+        add_member(
+            &pool,
+            a.id,
+            "character",
+            Some(12121),
+            Some(char_id),
+            "Pilot",
+            "read",
+        )
+        .await
+        .unwrap();
+        let err = add_member(
+            &pool,
+            a.id,
+            "character",
+            Some(12121),
+            Some(char_id),
+            "Pilot",
+            "read",
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, DbError::UniqueViolation { .. }));
+    }
+
+    #[sqlx::test]
+    async fn duplicate_corporation_member_violates_unique(pool: PgPool) {
+        let owner = accounts::create_account(&pool).await.unwrap();
+        let a = insert_acl_for_test(&pool, owner, "ACL").await;
+        add_member(&pool, a.id, "corporation", Some(500), None, "Corp", "read")
+            .await
+            .unwrap();
+        let err = add_member(&pool, a.id, "corporation", Some(500), None, "Corp", "read")
+            .await
+            .unwrap_err();
+        assert!(matches!(err, DbError::UniqueViolation { .. }));
+    }
+
+    #[sqlx::test]
+    async fn duplicate_alliance_member_violates_unique(pool: PgPool) {
+        let owner = accounts::create_account(&pool).await.unwrap();
+        let a = insert_acl_for_test(&pool, owner, "ACL").await;
+        add_member(&pool, a.id, "alliance", Some(600), None, "Alliance", "read")
+            .await
+            .unwrap();
+        let err = add_member(&pool, a.id, "alliance", Some(600), None, "Alliance", "read")
+            .await
+            .unwrap_err();
+        assert!(matches!(err, DbError::UniqueViolation { .. }));
+    }
+
+    #[sqlx::test]
+    async fn same_eve_id_corp_and_alliance_both_allowed(pool: PgPool) {
+        // The entity index keys on member_type too, so the same eve_entity_id can
+        // be both a corporation and an alliance member of one ACL.
+        let owner = accounts::create_account(&pool).await.unwrap();
+        let a = insert_acl_for_test(&pool, owner, "ACL").await;
+        add_member(&pool, a.id, "corporation", Some(700), None, "X", "read")
+            .await
+            .unwrap();
+        add_member(&pool, a.id, "alliance", Some(700), None, "X", "read")
+            .await
+            .unwrap();
+        assert_eq!(list_members(&pool, a.id).await.unwrap().len(), 2);
+    }
+
+    #[sqlx::test]
+    async fn migration_dedupe_keeps_oldest_and_index_recreates(pool: PgPool) {
+        // Reproduce the pre-migration dirty state: drop the unique indexes,
+        // insert duplicate members, then run the migration's dedupe + index
+        // creation and assert one (the oldest) row of each set survives.
+        let owner = accounts::create_account(&pool).await.unwrap();
+        let a = insert_acl_for_test(&pool, owner, "Dirty").await;
+        let char_id = insert_character(&pool, owner, 31415, "Pilot").await;
+
+        sqlx::query("DROP INDEX acl_member_unique_character")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DROP INDEX acl_member_unique_entity")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Two duplicate corporation rows (older then newer) + two duplicate
+        // character rows. The created_at ordering decides which survives.
+        let older = add_member(&pool, a.id, "corporation", Some(900), None, "Old", "read")
+            .await
+            .unwrap();
+        sqlx::query("UPDATE acl_member SET created_at = now() - interval '1 hour' WHERE id = $1")
+            .bind(older.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let _newer = add_member(&pool, a.id, "corporation", Some(900), None, "New", "read")
+            .await
+            .unwrap();
+        add_member(
+            &pool,
+            a.id,
+            "character",
+            Some(31415),
+            Some(char_id),
+            "Pilot",
+            "read",
+        )
+        .await
+        .unwrap();
+        add_member(
+            &pool,
+            a.id,
+            "character",
+            Some(31415),
+            Some(char_id),
+            "Pilot",
+            "read",
+        )
+        .await
+        .unwrap();
+
+        // The dedupe statements from the migration.
+        sqlx::query(
+            r#"
+            WITH ranked AS (
+                SELECT id, row_number() OVER (
+                    PARTITION BY acl_id, character_id
+                    ORDER BY created_at ASC, id ASC) AS rn
+                FROM acl_member WHERE member_type = 'character'
+            )
+            DELETE FROM acl_member USING ranked
+            WHERE acl_member.id = ranked.id AND ranked.rn > 1
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            r#"
+            WITH ranked AS (
+                SELECT id, row_number() OVER (
+                    PARTITION BY acl_id, member_type, eve_entity_id
+                    ORDER BY created_at ASC, id ASC) AS rn
+                FROM acl_member WHERE member_type <> 'character'
+            )
+            DELETE FROM acl_member USING ranked
+            WHERE acl_member.id = ranked.id AND ranked.rn > 1
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // One of each survives; the surviving corporation row is the oldest.
+        let members = list_members(&pool, a.id).await.unwrap();
+        assert_eq!(members.len(), 2, "one character + one corporation survive");
+        let corp = members
+            .iter()
+            .find(|m| m.member_type == "corporation")
+            .unwrap();
+        assert_eq!(corp.id, older.id, "oldest corporation row is kept");
+
+        // The indexes recreate cleanly now the data is clean.
+        sqlx::query(
+            "CREATE UNIQUE INDEX acl_member_unique_character
+             ON acl_member (acl_id, character_id) WHERE member_type = 'character'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "CREATE UNIQUE INDEX acl_member_unique_entity
+             ON acl_member (acl_id, member_type, eve_entity_id) WHERE member_type <> 'character'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    #[sqlx::test]
+    async fn same_corp_in_different_acls_allowed(pool: PgPool) {
+        // Uniqueness is scoped per-ACL: the same corporation may be a member of
+        // two different ACLs.
+        let owner = accounts::create_account(&pool).await.unwrap();
+        let a = insert_acl_for_test(&pool, owner, "A").await;
+        let b = insert_acl_for_test(&pool, owner, "B").await;
+        add_member(&pool, a.id, "corporation", Some(800), None, "Corp", "read")
+            .await
+            .unwrap();
+        add_member(&pool, b.id, "corporation", Some(800), None, "Corp", "read")
+            .await
+            .unwrap();
+        assert_eq!(list_members(&pool, a.id).await.unwrap().len(), 1);
+        assert_eq!(list_members(&pool, b.id).await.unwrap().len(), 1);
     }
 }

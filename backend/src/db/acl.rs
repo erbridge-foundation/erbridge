@@ -35,7 +35,13 @@ pub async fn insert_acl(
     .context("failed to insert acl")
 }
 
-pub async fn find_acl_by_id(pool: &PgPool, id: Uuid) -> Result<Option<Acl>> {
+/// Fetches an ACL by id. Generic over the executor so the service can run the
+/// ownership check inside the same transaction as the mutation it guards
+/// (passing `&mut *tx`), while read-only callers pass the pool.
+pub async fn find_acl_by_id<'e, E>(executor: E, id: Uuid) -> Result<Option<Acl>>
+where
+    E: sqlx::PgExecutor<'e>,
+{
     sqlx::query_as!(
         Acl,
         r#"
@@ -45,7 +51,7 @@ pub async fn find_acl_by_id(pool: &PgPool, id: Uuid) -> Result<Option<Acl>> {
         "#,
         id,
     )
-    .fetch_optional(pool)
+    .fetch_optional(executor)
     .await
     .context("failed to fetch acl by id")
 }

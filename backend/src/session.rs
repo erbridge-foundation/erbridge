@@ -75,14 +75,6 @@ impl SessionStore {
     pub async fn remove(&self, session_id: &str) -> Result<()> {
         db_sessions::delete(&self.pool, session_id).await
     }
-
-    pub async fn remove_all_for_account(&self, account_id: Uuid) -> Result<u64> {
-        db_sessions::delete_for_account(&self.pool, account_id).await
-    }
-
-    pub async fn list_session_ids_for_account(&self, account_id: Uuid) -> Result<Vec<String>> {
-        db_sessions::list_ids_for_account(&self.pool, account_id).await
-    }
 }
 
 /// In-flight OAuth record (between `/auth/login` and `/auth/callback`).

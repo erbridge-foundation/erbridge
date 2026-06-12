@@ -141,6 +141,7 @@ pub async fn list_members(
         (status = 401, description = "Unauthenticated", body = ErrorEnvelope),
         (status = 403, description = "Not the owner", body = ErrorEnvelope),
         (status = 404, description = "ACL not found", body = ErrorEnvelope),
+        (status = 409, description = "Entity is already a member (duplicate_acl_member)", body = ErrorEnvelope),
     ),
     security(("session_cookie" = []), ("bearer_token" = [])),
     tag = "acls",

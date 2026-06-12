@@ -40,6 +40,9 @@ pub async fn create_key(
             DbError::UniqueViolation { .. } => {
                 AppError::Conflict(ConflictKind::ApiKeyNameAlreadyExists)
             }
+            DbError::CheckViolation { constraint } => {
+                AppError::Internal(anyhow::anyhow!("unexpected check violation: {constraint}"))
+            }
             DbError::Other(err) => AppError::Internal(err),
         })?;
 

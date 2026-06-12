@@ -109,6 +109,16 @@ pub async fn revoke_admin(pool: &PgPool, actor: Uuid, target: Uuid) -> Result<()
         .await
         .map_err(|e| AppError::Internal(e.into()))?;
 
+    // Lock + count the active admins *before* the flip. `count_server_admins_tx`
+    // takes a `FOR UPDATE` lock on every active admin row, so concurrent revokes
+    // serialise on that shared row set; locking before (not after) the flip
+    // avoids a lock-ordering deadlock between two revokes of different targets.
+    // A count <= 1 means the only active admin is the target itself, so revoking
+    // it would leave zero — reject.
+    let active_admins = accounts::count_server_admins_tx(&mut tx)
+        .await
+        .map_err(AppError::Internal)?;
+
     let changed = accounts::set_server_admin(&mut tx, target, false)
         .await
         .map_err(AppError::Internal)?;
@@ -122,12 +132,7 @@ pub async fn revoke_admin(pool: &PgPool, actor: Uuid, target: Uuid) -> Result<()
         return Ok(());
     }
 
-    // Guard runs after the flip, within the tx, so the count reflects the
-    // pending change. Zero active admins remaining → reject and roll back.
-    let remaining = accounts::count_server_admins_tx(&mut tx)
-        .await
-        .map_err(AppError::Internal)?;
-    if remaining == 0 {
+    if active_admins <= 1 {
         tx.rollback()
             .await
             .map_err(|e| AppError::Internal(e.into()))?;

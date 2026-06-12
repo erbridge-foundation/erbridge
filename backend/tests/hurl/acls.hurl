@@ -79,6 +79,17 @@ jsonpath "$.data.eve_entity_id" == 98000001
 jsonpath "$.data.permission" == "read"
 jsonpath "$.error" not exists
 
+# ── 6b. Re-adding the same corporation member → 409 duplicate_acl_member ──────
+
+POST {{base_url}}/api/v1/acls/{{acl_id}}/members
+Content-Type: application/json
+Authorization: Bearer {{erb_api_key}}
+{"member_type": "corporation", "eve_entity_id": 98000001, "name": "Smoke Corp", "permission": "read_write"}
+
+HTTP 409
+[Asserts]
+jsonpath "$.error.code" == "duplicate_acl_member"
+
 # ── 7. Corporation member cannot be granted manage → 400 ─────────────────────
 
 POST {{base_url}}/api/v1/acls/{{acl_id}}/members

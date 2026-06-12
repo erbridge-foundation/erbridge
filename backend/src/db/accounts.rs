@@ -183,19 +183,24 @@ pub async fn count_server_admins(pool: &PgPool) -> Result<i64> {
 }
 
 /// The same active-admin count as `count_server_admins`, but participating in
-/// the caller's transaction. The revoke-admin last-admin guard runs this
-/// *inside* the revoke transaction so the count is consistent with the pending
-/// `UPDATE` (the pool-based variant stays for the soft-delete guard, which
-/// reads outside any transaction).
+/// the caller's transaction and taking a `FOR UPDATE` row lock on every active
+/// admin (in a deterministic `id` order). The lock is what makes the last-admin
+/// guard race-free across *different* accounts: two concurrent admin deletes
+/// each soft-delete a different row, so their `UPDATE`s alone never contend —
+/// but both must pass through this locked count, so the second blocks until the
+/// first commits and then re-reads the reduced count, failing the guard.
+/// The revoke-admin guard reuses it for the same reason.
 pub async fn count_server_admins_tx(tx: &mut Transaction<'_, Postgres>) -> Result<i64> {
-    let row = sqlx::query!(
-        "SELECT COUNT(*) AS \"count!\" FROM account
-         WHERE is_server_admin = TRUE AND status = 'active'"
+    let rows = sqlx::query_scalar!(
+        "SELECT id FROM account
+         WHERE is_server_admin = TRUE AND status = 'active'
+         ORDER BY id
+         FOR UPDATE"
     )
-    .fetch_one(&mut **tx)
+    .fetch_all(&mut **tx)
     .await
     .context("failed to count server admins (tx)")?;
-    Ok(row.count)
+    Ok(rows.len() as i64)
 }
 
 /// Sets or clears `is_server_admin` on an account. Returns `true` if a row was

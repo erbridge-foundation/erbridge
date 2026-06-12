@@ -26,13 +26,9 @@ pub async fn delete_account(
     AuthenticatedAccount(account_id): AuthenticatedAccount,
     Extension(refresh_slot): Extension<RefreshedJwtSlot>,
 ) -> Result<(StatusCode, axum::http::HeaderMap), AppError> {
+    // The service soft-deletes the account and deletes its sessions in one
+    // transaction; the handler only owns the response-side cookie concerns.
     account_service::delete_account(&state.db, account_id).await?;
-
-    state
-        .session_store
-        .remove_all_for_account(account_id)
-        .await
-        .map_err(AppError::Internal)?;
 
     // Stop the wrapping `refresh_session_cookie` middleware from overwriting
     // the cleared cookie with a freshly-minted session JWT.

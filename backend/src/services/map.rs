@@ -310,6 +310,9 @@ async fn require_map_permission(
 fn map_slug_err(e: DbError) -> AppError {
     match e {
         DbError::UniqueViolation { .. } => AppError::Conflict(ConflictKind::MapSlugAlreadyExists),
+        DbError::CheckViolation { constraint } => {
+            AppError::Internal(anyhow::anyhow!("unexpected check violation: {constraint}"))
+        }
         DbError::Other(err) => AppError::Internal(err),
     }
 }
