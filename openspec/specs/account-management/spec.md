@@ -105,6 +105,8 @@ The backend SHALL refuse to delete the account's only character with HTTP 409 �
 
 The backend SHALL refuse to delete the character flagged `is_main = true` while at least one other character exists, with HTTP 409. The caller must promote another character to main first.
 
+Both guards SHALL be evaluated inside the same transaction as the delete, against the state that includes the transaction's own pending write, such that concurrent requests cannot jointly violate either invariant (e.g. two parallel deletes on a two-character account removing both rows).
+
 #### Scenario: Owner removes a non-main character with siblings
 - **WHEN** the caller owns characters A (main) and B (not main) and calls `DELETE /api/v1/characters/<B.id>`
 - **THEN** B's row is hard-deleted, the response is HTTP 204, and A remains the main
@@ -117,6 +119,10 @@ The backend SHALL refuse to delete the character flagged `is_main = true` while 
 - **WHEN** the caller's account has exactly one character and calls `DELETE /api/v1/characters/<id>`
 - **THEN** the response is HTTP 409 with `error.code = "cannot_remove_last_character"`; the row is not deleted
 
+#### Scenario: Concurrent deletes cannot empty an account
+- **WHEN** the caller owns exactly characters A (main) and B (not main) and two `DELETE /api/v1/characters/<B.id>`-style requests for the deletable set race
+- **THEN** at most one delete succeeds and the account always retains at least one character, with the survivor flagged `is_main = true`
+
 #### Scenario: Non-owner cannot remove another account's character
 - **WHEN** account X calls `DELETE /api/v1/characters/<id>` for a character belonging to account Y
 - **THEN** the response is HTTP 404; no row is deleted
@@ -128,6 +134,10 @@ The backend SHALL refuse to delete the character flagged `is_main = true` while 
 ### Requirement: DELETE /api/v1/account soft-deletes the caller's account
 
 `DELETE /api/v1/account` SHALL initiate soft-delete on the authenticated account by setting `account.status = 'soft_deleted'` and `account.delete_requested_at = now()`. It SHALL delete every row in the `session` table belonging to that account (so any other browser the user is logged in on is immediately logged out) and SHALL clear the caller's session cookie in the response. API keys belonging to the account SHALL NOT be deleted (a soft-deleted account that reactivates by re-login keeps its keys).
+
+The status flip, the EVE-credential clear, and the session deletion SHALL all occur in the same transaction: a soft-deleted account MUST NOT retain a usable session under any partial-failure ordering, because cookie-path authentication enforces soft-delete solely through session absence.
+
+If the account is a server admin, the last-admin guard (refuse with HTTP 409 `cannot_remove_last_server_admin` when no other active admin would remain) SHALL be evaluated inside the same transaction as the status flip, such that two concurrent deletion requests from the final two admin accounts cannot both succeed.
 
 Whenever an `account` row transitions to `status = 'soft_deleted'` — via this endpoint or any future path that performs the same transition — every `eve_character` row owned by that account SHALL, in the same transaction as the status change, have its EVE-credential columns cleared:
 
@@ -152,9 +162,13 @@ A subsequent SSO login as any of the account's characters SHALL reactivate the a
 - **WHEN** an account with one or more linked `eve_character` rows is soft-deleted
 - **THEN** in the same transaction as the `account.status` flip, every owned `eve_character` row has `encrypted_access_token = NULL`, `encrypted_refresh_token = NULL`, `access_token_expires_at = NULL`, and `scopes = '{}'`, while the row itself and its identity columns (name, corporation, alliance, `eve_character_id`, `account_id`, `is_main`) are preserved
 
-#### Scenario: Soft-delete is atomic with token clear
+#### Scenario: Soft-delete is atomic with token clear and session deletion
 - **WHEN** the database fails partway through the soft-delete transaction
-- **THEN** the transaction is rolled back: either both the `account.status` flip and the token-column clear take effect, or neither does
+- **THEN** the transaction is rolled back: the `account.status` flip, the token-column clear, and the `session`-row deletion either all take effect or none do — at no point does a soft-deleted account retain a live session row
+
+#### Scenario: Concurrent deletion by the last two admins cannot remove both
+- **WHEN** the only two active server-admin accounts each call `DELETE /api/v1/account` concurrently
+- **THEN** at most one request succeeds; the other receives HTTP 409 `cannot_remove_last_server_admin`, and at least one active server admin remains
 
 #### Scenario: Account row remains queryable while soft-deleted
 - **WHEN** an account is soft-deleted
