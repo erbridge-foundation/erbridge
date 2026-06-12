@@ -701,27 +701,36 @@ mod tests {
         reqwest::Client::new().into()
     }
 
-    /// A JWT-shaped access token carrying the given owner hash, for mocking the
-    /// SSO refresh endpoint (the refresh path parses the `owner` claim).
-    fn refresh_access_jwt(owner: &str) -> String {
-        use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-        let header = URL_SAFE_NO_PAD.encode(br#"{"alg":"none"}"#);
-        let payload = URL_SAFE_NO_PAD.encode(
-            format!(r#"{{"sub":"CHARACTER:EVE:42","name":"Self","owner":"{owner}","scp":"a"}}"#)
-                .as_bytes(),
-        );
-        format!("{header}.{payload}.sig")
+    use crate::esi::jwks::JwksCache;
+    use crate::esi::test_support::{EsiClaims, TestKeypair, jwks_json, test_keypair};
+
+    /// An RS256-signed access token (kid `kid-1`) carrying the given owner hash
+    /// for character 42, for mocking the SSO refresh endpoint. Pair with
+    /// [`jwks_cache`] (built from the same keypair) so verification succeeds.
+    fn refresh_access_jwt(kp: &TestKeypair, owner: &str) -> String {
+        kp.sign(&EsiClaims::valid(42, "Self", owner))
+    }
+
+    /// A JWKS cache holding only `kp`'s public key, no network refetch.
+    fn jwks_cache(kp: &TestKeypair) -> JwksCache {
+        JwksCache::from_keys_for_test(
+            http(),
+            "http://unused",
+            crate::esi::jwks::decode_keys_for_test(jwks_json(&[kp]).as_bytes()),
+        )
     }
 
     /// An ESI context pointing search/resolve at `esi_base` and token refresh at
     /// `token_endpoint`. Uses the all-zero test key matching `account_with_main`.
     fn ctx<'a>(
         http: &'a ClientWithMiddleware,
+        jwks: &'a JwksCache,
         esi_base: &'a str,
         token_endpoint: &'a str,
     ) -> EsiSearchContext<'a> {
         EsiSearchContext {
             http,
+            jwks,
             esi_base_url: esi_base,
             token_endpoint,
             client_id: "client",
@@ -793,9 +802,11 @@ mod tests {
         // Account with no characters → no main token material → Unavailable.
         let admin = accounts::create_account(&pool).await.unwrap();
         let client = http();
+        let kp = test_keypair("kid-1");
+        let jwks = jwks_cache(&kp);
         let outcome = esi_search_characters(
             &pool,
-            ctx(&client, "http://unused", "http://unused"),
+            ctx(&client, &jwks, "http://unused", "http://unused"),
             admin,
             "wasp",
             None,
@@ -841,7 +852,12 @@ mod tests {
         let client = http();
         let outcome = esi_search_characters(
             &pool,
-            ctx(&client, &server.uri(), "http://unused"),
+            ctx(
+                &client,
+                &jwks_cache(&test_keypair("kid-1")),
+                &server.uri(),
+                "http://unused",
+            ),
             admin,
             "pilot",
             None,
@@ -874,7 +890,12 @@ mod tests {
         let client = http();
         let outcome = esi_search_characters(
             &pool,
-            ctx(&client, &server.uri(), "http://unused"),
+            ctx(
+                &client,
+                &jwks_cache(&test_keypair("kid-1")),
+                &server.uri(),
+                "http://unused",
+            ),
             admin,
             "zzz",
             None,
@@ -902,7 +923,12 @@ mod tests {
         let client = http();
         let outcome = esi_search_characters(
             &pool,
-            ctx(&client, &server.uri(), "http://unused"),
+            ctx(
+                &client,
+                &jwks_cache(&test_keypair("kid-1")),
+                &server.uri(),
+                "http://unused",
+            ),
             admin,
             "wasp",
             None,
@@ -915,14 +941,17 @@ mod tests {
     #[sqlx::test]
     async fn esi_search_refreshes_expired_token_then_searches(pool: PgPool) {
         let admin = account_with_expired_main(&pool, 42).await;
+        let kp = test_keypair("kid-1");
+        let jwks = jwks_cache(&kp);
 
         let server = MockServer::start().await;
         // Token endpoint returns a fresh token set. The access token must be a
-        // JWT carrying the `owner` claim — the refresh path now parses it.
+        // JWT the refresh path can verify against the JWKS and whose `owner`
+        // claim it then reads.
         Mock::given(method("POST"))
             .and(path("/oauth/token"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "access_token": refresh_access_jwt("owner-hash"),
+                "access_token": refresh_access_jwt(&kp, "owner-hash"),
                 "refresh_token": "fresh-refresh",
                 "expires_in": 1200
             })))
@@ -948,7 +977,7 @@ mod tests {
         let client = http();
         let outcome = esi_search_characters(
             &pool,
-            ctx(&client, &server.uri(), &token_endpoint),
+            ctx(&client, &jwks, &server.uri(), &token_endpoint),
             admin,
             "sel",
             None,
@@ -980,7 +1009,12 @@ mod tests {
         let client = http();
         let outcome = esi_search_characters(
             &pool,
-            ctx(&client, &server.uri(), &token_endpoint),
+            ctx(
+                &client,
+                &jwks_cache(&test_keypair("kid-1")),
+                &server.uri(),
+                &token_endpoint,
+            ),
             admin,
             "sel",
             None,

@@ -43,6 +43,14 @@ async fn main() -> anyhow::Result<()> {
         .build();
     let esi_metadata = Arc::new(esi_metadata);
 
+    // Fetch the SSO JWKS at startup (fail-fast like discovery — the app cannot
+    // verify any identity without it). The cache refetches itself on rotation.
+    tracing::info!("fetching ESI JWKS");
+    let jwks = esi::jwks::JwksCache::fetch(http_client.clone(), &esi_metadata.jwks_uri)
+        .await
+        .context("failed to fetch ESI JWKS")?;
+    let jwks = Arc::new(jwks);
+
     tracing::info!("connecting to database and running migrations");
     let db = db::connect(&config.database_url)
         .await
@@ -55,6 +63,7 @@ async fn main() -> anyhow::Result<()> {
         config,
         db,
         esi_metadata,
+        jwks,
         session_store,
         inflight_store,
         http_client,
@@ -66,6 +75,7 @@ async fn main() -> anyhow::Result<()> {
     backend::services::token_sweep::spawn(
         state.db.clone(),
         state.http_client.clone(),
+        state.jwks.clone(),
         state.esi_metadata.token_endpoint.clone(),
         state.config.esi_client_id.clone(),
         state.config.esi_client_secret.clone(),

@@ -31,6 +31,7 @@ struct RefreshResponse {
 /// just means "no usable token" to the caller.
 pub async fn refresh_access_token(
     http: &reqwest_middleware::ClientWithMiddleware,
+    jwks: &crate::esi::jwks::JwksCache,
     token_endpoint: &str,
     client_id: &str,
     client_secret: &str,
@@ -52,10 +53,11 @@ pub async fn refresh_access_token(
         .await
         .ok()?;
 
-    // The refreshed access token is itself a JWT carrying the owner hash; parse
-    // it so the sweep can compare ownership. A token we cannot parse is treated
-    // as a refresh failure (`None`).
-    let owner_hash = crate::esi::jwt::parse_claims(&resp.access_token)
+    // The refreshed access token is itself a JWT carrying the owner hash; verify
+    // it against the SSO JWKS so the sweep compares an authenticated owner
+    // claim. A token we cannot verify is treated as a refresh failure (`None`).
+    let owner_hash = crate::esi::jwt::verify_and_parse(&resp.access_token, jwks)
+        .await
         .ok()?
         .owner;
 

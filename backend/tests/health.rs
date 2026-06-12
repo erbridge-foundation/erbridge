@@ -42,6 +42,9 @@ fn build_state(pool: PgPool) -> AppState {
             token_endpoint: "https://login.eveonline.com/v2/oauth/token".into(),
             jwks_uri: "https://login.eveonline.com/oauth/jwks".into(),
         }),
+        jwks: std::sync::Arc::new(backend::esi::test_support::jwks_cache_for(
+            &backend::esi::test_support::test_keypair("kid-1"),
+        )),
         session_store: SessionStore::new(pool.clone()),
         inflight_store: InflightStore::new(),
         http_client: reqwest::Client::new().into(),

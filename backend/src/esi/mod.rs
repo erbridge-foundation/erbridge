@@ -1,8 +1,12 @@
+pub mod jwks;
 pub mod jwt;
 pub mod public_info;
 pub mod rate_limit;
 pub mod search;
 pub mod token;
+
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
 
 use anyhow::{Context, Result};
 use serde::Deserialize;

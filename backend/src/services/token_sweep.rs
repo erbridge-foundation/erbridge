@@ -59,6 +59,7 @@ pub(crate) fn decide(
 pub fn spawn(
     pool: PgPool,
     http: reqwest_middleware::ClientWithMiddleware,
+    jwks: std::sync::Arc<crate::esi::jwks::JwksCache>,
     token_endpoint: String,
     client_id: String,
     client_secret: String,
@@ -71,6 +72,7 @@ pub fn spawn(
             if let Err(e) = run_once(
                 &pool,
                 &http,
+                &jwks,
                 &token_endpoint,
                 &client_id,
                 &client_secret,
@@ -91,6 +93,7 @@ pub fn spawn(
 pub async fn run_once(
     pool: &PgPool,
     http: &reqwest_middleware::ClientWithMiddleware,
+    jwks: &crate::esi::jwks::JwksCache,
     token_endpoint: &str,
     client_id: &str,
     client_secret: &str,
@@ -109,6 +112,7 @@ pub async fn run_once(
             Ok(refresh_plaintext) => {
                 token::refresh_access_token(
                     http,
+                    jwks,
                     token_endpoint,
                     client_id,
                     client_secret,
@@ -241,7 +245,8 @@ mod tests {
 #[cfg(test)]
 mod run_once_tests {
     use super::*;
-    use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+    use crate::esi::jwks::JwksCache;
+    use crate::esi::test_support::{EsiClaims, TestKeypair, jwks_json, test_keypair};
     use reqwest_middleware::ClientBuilder;
     use sqlx::PgPool;
     use uuid::Uuid;
@@ -256,14 +261,19 @@ mod run_once_tests {
         ClientBuilder::new(reqwest::Client::new()).build()
     }
 
-    /// A JWT-shaped access token carrying the given owner hash.
-    fn access_jwt(owner: &str) -> String {
-        let header = URL_SAFE_NO_PAD.encode(br#"{"alg":"none"}"#);
-        let payload = URL_SAFE_NO_PAD.encode(
-            format!(r#"{{"sub":"CHARACTER:EVE:1","name":"P","owner":"{owner}","scp":"a"}}"#)
-                .as_bytes(),
-        );
-        format!("{header}.{payload}.sig")
+    /// A JWKS cache holding only `kp`'s public key, no network refetch.
+    fn jwks_cache(kp: &TestKeypair) -> JwksCache {
+        JwksCache::from_keys_for_test(
+            http(),
+            "http://unused",
+            crate::esi::jwks::decode_keys_for_test(jwks_json(&[kp]).as_bytes()),
+        )
+    }
+
+    /// An RS256-signed access token (character 1) carrying the given owner hash,
+    /// verifiable against [`jwks_cache`] built from the same keypair.
+    fn access_jwt(kp: &TestKeypair, owner: &str) -> String {
+        kp.sign(&EsiClaims::valid(1, "P", owner))
     }
 
     async fn seed(pool: &PgPool, eve_id: i64, owner: &str) -> Uuid {
@@ -305,14 +315,14 @@ mod run_once_tests {
         .token_status
     }
 
-    /// A mock token endpoint returning a refresh response whose access token
-    /// carries `owner`.
-    async fn mock_refresh_returning(owner: &str) -> (MockServer, String) {
+    /// A mock token endpoint returning a refresh response whose access token is
+    /// signed by `kp` and carries `owner`.
+    async fn mock_refresh_returning(kp: &TestKeypair, owner: &str) -> (MockServer, String) {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/oauth/token"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "access_token": access_jwt(owner),
+                "access_token": access_jwt(kp, owner),
                 "refresh_token": "rotated-refresh",
                 "expires_in": 1200,
             })))
@@ -325,11 +335,20 @@ mod run_once_tests {
     #[sqlx::test]
     async fn matching_hash_keeps_valid_and_rotates(pool: PgPool) {
         seed(&pool, 1, "hash-x").await;
-        let (_s, endpoint) = mock_refresh_returning("hash-x").await;
+        let kp = test_keypair("kid-1");
+        let (_s, endpoint) = mock_refresh_returning(&kp, "hash-x").await;
 
-        run_once(&pool, &http(), &endpoint, "id", "secret", SECRET)
-            .await
-            .unwrap();
+        run_once(
+            &pool,
+            &http(),
+            &jwks_cache(&kp),
+            &endpoint,
+            "id",
+            "secret",
+            SECRET,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(status_of(&pool, 1).await, "valid");
     }
@@ -337,11 +356,20 @@ mod run_once_tests {
     #[sqlx::test]
     async fn changed_hash_flags_owner_mismatch_and_audits(pool: PgPool) {
         let account_id = seed(&pool, 1, "hash-old").await;
-        let (_s, endpoint) = mock_refresh_returning("hash-new").await;
+        let kp = test_keypair("kid-1");
+        let (_s, endpoint) = mock_refresh_returning(&kp, "hash-new").await;
 
-        run_once(&pool, &http(), &endpoint, "id", "secret", SECRET)
-            .await
-            .unwrap();
+        run_once(
+            &pool,
+            &http(),
+            &jwks_cache(&kp),
+            &endpoint,
+            "id",
+            "secret",
+            SECRET,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(status_of(&pool, 1).await, "owner_mismatch");
         // Credentials wiped, new hash recorded.
@@ -377,9 +405,44 @@ mod run_once_tests {
             .await;
         let endpoint = format!("{}/oauth/token", server.uri());
 
-        run_once(&pool, &http(), &endpoint, "id", "secret", SECRET)
-            .await
-            .unwrap();
+        run_once(
+            &pool,
+            &http(),
+            &jwks_cache(&test_keypair("kid-1")),
+            &endpoint,
+            "id",
+            "secret",
+            SECRET,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(status_of(&pool, 1).await, "token_expired");
+    }
+
+    #[sqlx::test]
+    async fn unverifiable_refreshed_token_flags_token_expired(pool: PgPool) {
+        // The refresh succeeds at the HTTP level but returns a JWT signed by a
+        // key the JWKS does not hold: verification fails, so the character is
+        // treated as a refresh failure and the unverified owner claim is never
+        // compared (it would have matched "hash-x" and kept it valid otherwise).
+        seed(&pool, 1, "hash-x").await;
+        let signer = test_keypair("kid-evil");
+        let cache_kp = test_keypair("kid-good");
+        // Endpoint serves a token signed by `signer`, carrying the matching hash.
+        let (_s, endpoint) = mock_refresh_returning(&signer, "hash-x").await;
+
+        run_once(
+            &pool,
+            &http(),
+            &jwks_cache(&cache_kp),
+            &endpoint,
+            "id",
+            "secret",
+            SECRET,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(status_of(&pool, 1).await, "token_expired");
     }
@@ -396,11 +459,20 @@ mod run_once_tests {
         .await
         .unwrap();
         // Refresh would otherwise succeed and keep it valid...
-        let (_s, endpoint) = mock_refresh_returning("hash-x").await;
+        let kp = test_keypair("kid-1");
+        let (_s, endpoint) = mock_refresh_returning(&kp, "hash-x").await;
 
-        run_once(&pool, &http(), &endpoint, "id", "secret", SECRET)
-            .await
-            .unwrap();
+        run_once(
+            &pool,
+            &http(),
+            &jwks_cache(&kp),
+            &endpoint,
+            "id",
+            "secret",
+            SECRET,
+        )
+        .await
+        .unwrap();
 
         // ...but the idle waterfall expires it in the same run.
         assert_eq!(status_of(&pool, 1).await, "token_expired");

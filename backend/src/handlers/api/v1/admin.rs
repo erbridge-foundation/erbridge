@@ -112,6 +112,7 @@ pub async fn esi_search_characters(
 
     let ctx = EsiSearchContext {
         http: &state.http_client,
+        jwks: &state.jwks,
         esi_base_url: public_info::ESI_BASE,
         token_endpoint: &state.esi_metadata.token_endpoint,
         client_id: &state.config.esi_client_id,

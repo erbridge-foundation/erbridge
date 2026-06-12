@@ -36,6 +36,8 @@ pub const RESULT_LIMIT: usize = 25;
 /// for the authenticated outbound call. Shared with the admin character search.
 pub struct EsiSearchContext<'a> {
     pub http: &'a ClientWithMiddleware,
+    /// Cached SSO JWKS for verifying the refreshed access-token JWT.
+    pub jwks: &'a crate::esi::jwks::JwksCache,
     /// ESI base URL for the search + name-resolution calls. Prod passes the real
     /// ESI base; tests point it at a mock server.
     pub esi_base_url: &'a str,
@@ -331,6 +333,7 @@ pub(crate) async fn get_usable_main_access_token(
 
     let refreshed = match token::refresh_access_token(
         ctx.http,
+        ctx.jwks,
         ctx.token_endpoint,
         ctx.client_id,
         ctx.client_secret,
@@ -375,9 +378,25 @@ mod tests {
         reqwest::Client::new().into()
     }
 
-    fn ctx<'a>(http: &'a ClientWithMiddleware, esi_base: &'a str) -> EsiSearchContext<'a> {
+    /// A throwaway JWKS cache for the search tests, which all use valid stored
+    /// tokens or an unused token endpoint and so never reach JWT verification.
+    fn test_jwks() -> crate::esi::jwks::JwksCache {
+        use crate::esi::test_support::{jwks_json, test_keypair};
+        crate::esi::jwks::JwksCache::from_keys_for_test(
+            http(),
+            "http://unused",
+            crate::esi::jwks::decode_keys_for_test(jwks_json(&[&test_keypair("kid-1")]).as_bytes()),
+        )
+    }
+
+    fn ctx<'a>(
+        http: &'a ClientWithMiddleware,
+        jwks: &'a crate::esi::jwks::JwksCache,
+        esi_base: &'a str,
+    ) -> EsiSearchContext<'a> {
         EsiSearchContext {
             http,
+            jwks,
             esi_base_url: esi_base,
             token_endpoint: "http://unused",
             client_id: "client",
@@ -424,7 +443,7 @@ mod tests {
         let client = http();
         let outcome = search_entities(
             &pool,
-            &ctx(&client, "http://unused"),
+            &ctx(&client, &test_jwks(), "http://unused"),
             account,
             "wasp",
             &[SearchCategory::Character],
@@ -447,7 +466,7 @@ mod tests {
         let client = http();
         let outcome = search_entities(
             &pool,
-            &ctx(&client, &server.uri()),
+            &ctx(&client, &test_jwks(), &server.uri()),
             account,
             "wasp",
             &[SearchCategory::Character],
@@ -470,7 +489,7 @@ mod tests {
         let client = http();
         let outcome = search_entities(
             &pool,
-            &ctx(&client, &server.uri()),
+            &ctx(&client, &test_jwks(), &server.uri()),
             account,
             "zzz",
             &[
@@ -518,7 +537,7 @@ mod tests {
         let client = http();
         let outcome = search_entities(
             &pool,
-            &ctx(&client, &server.uri()),
+            &ctx(&client, &test_jwks(), &server.uri()),
             account,
             "wasp",
             &[SearchCategory::Character],
@@ -577,7 +596,7 @@ mod tests {
         let client = http();
         let outcome = search_entities(
             &pool,
-            &ctx(&client, &server.uri()),
+            &ctx(&client, &test_jwks(), &server.uri()),
             account,
             "new",
             &[SearchCategory::Character],
@@ -657,7 +676,7 @@ mod tests {
         let client = http();
         let outcome = search_entities(
             &pool,
-            &ctx(&client, &server.uri()),
+            &ctx(&client, &test_jwks(), &server.uri()),
             account,
             "wasp",
             &[

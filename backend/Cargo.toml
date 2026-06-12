@@ -30,6 +30,7 @@ hex = "0.4"
 urlencoding = "2"
 base64 = "0.22"
 sha2 = "0.10"
+hkdf = "0.12"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 utoipa = { version = "5", features = ["axum_extras", "chrono", "uuid"] }
@@ -38,11 +39,20 @@ reqwest-middleware = "0.4"
 reqwest-tracing = "0.5"
 async-trait = "0.1"
 strum = { version = "0.27", features = ["derive"] }
+rsa = { version = "0.9", features = ["sha2"], optional = true }
+
+[features]
+# Exposes `esi::test_support` (RS256 keypair + signed-JWT/JWKS builders) so the
+# integration-test crate can mint signed tokens. Pulls in `rsa`, which is
+# otherwise unused in the production build.
+test-support = ["dep:rsa"]
 
 [dev-dependencies]
 http-body-util = "0.1"
 jsonschema = "0.17"
 wiremock = "0.6"
+# The crate's own test-support helpers, available to integration tests.
+backend = { path = ".", features = ["test-support"] }
 
 [lints.clippy]
 # The skill bans unwrap/expect in non-test code; clippy.toml's

@@ -323,6 +323,16 @@ mod tests {
                 token_endpoint: "https://login.eveonline.com/v2/oauth/token".into(),
                 jwks_uri: "https://login.eveonline.com/oauth/jwks".into(),
             }),
+            jwks: {
+                use crate::esi::test_support::{jwks_json, test_keypair};
+                Arc::new(crate::esi::jwks::JwksCache::from_keys_for_test(
+                    reqwest::Client::new().into(),
+                    "http://unused",
+                    crate::esi::jwks::decode_keys_for_test(
+                        jwks_json(&[&test_keypair("kid-1")]).as_bytes(),
+                    ),
+                ))
+            },
             session_store: SessionStore::new(pool.clone()),
             inflight_store: InflightStore::new(),
             http_client: reqwest::Client::new().into(),

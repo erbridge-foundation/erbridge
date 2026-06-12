@@ -3,18 +3,40 @@ use aes_gcm::{
     aead::{Aead, AeadCore, KeyInit, OsRng},
 };
 use anyhow::{Context, Result, anyhow};
+use hkdf::Hkdf;
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use serde::{Deserialize, Serialize};
+use sha2::Sha256;
+
+/// HKDF `info` label for the session-JWT signing key. The `/v1` suffix is a
+/// domain-separation version tag that leaves room for deliberate future key
+/// rotation without colliding with previously derived material.
+const SESSION_JWT_INFO: &[u8] = b"erbridge/session-jwt/v1";
 
 /// Derives the 32-byte AES-256-GCM key for token encryption from the root secret.
-/// Uses the first 32 bytes of the hex-decoded secret, padded with zeros if short.
+///
+/// This is the **legacy** derivation: the first 32 bytes of the hex-decoded
+/// secret, taken verbatim. It is deliberately *not* HKDF-derived so that tokens
+/// encrypted before the key-separation change remain decryptable — rotating
+/// this key would buy nothing (same root secret) at the cost of a data
+/// migration over every stored token. See `design.md`.
 pub fn token_encryption_key(encryption_secret: &str) -> Result<Vec<u8>> {
     hex_decode_secret(encryption_secret)
 }
 
-/// Derives the HS256 signing key for session JWTs from the root secret.
+/// Derives the HS256 signing key for session JWTs from the root secret via
+/// HKDF-SHA256 with a distinct domain-separation label, so the signing key and
+/// the token-encryption key are no longer the same bytes (the cross-algorithm
+/// key-reuse gap closed by harden-token-crypto). No salt: the root secret is
+/// already high-entropy random hex, and a fixed `info` label provides the
+/// separation we need.
 pub fn jwt_signing_key(encryption_secret: &str) -> Result<Vec<u8>> {
-    hex_decode_secret(encryption_secret)
+    let ikm = hex_decode_secret(encryption_secret)?;
+    let hkdf = Hkdf::<Sha256>::new(None, &ikm);
+    let mut okm = [0u8; 32];
+    hkdf.expand(SESSION_JWT_INFO, &mut okm)
+        .map_err(|e| anyhow!("HKDF expand failed: {e}"))?;
+    Ok(okm.to_vec())
 }
 
 fn hex_decode_secret(secret: &str) -> Result<Vec<u8>> {
@@ -147,6 +169,30 @@ mod tests {
         let other_key = hex::decode("f".repeat(64)).unwrap();
         let token = sign_session_jwt("sess", &key).unwrap();
         assert!(verify_session_jwt(&token, &other_key).is_err());
+    }
+
+    #[test]
+    fn derived_keys_differ_from_each_other_and_from_raw_secret() {
+        let secret = "a".repeat(64);
+        let raw = hex::decode(&secret).unwrap();
+        let enc = token_encryption_key(&secret).unwrap();
+        let sign = jwt_signing_key(&secret).unwrap();
+        // The encryption key is the legacy raw-bytes derivation...
+        assert_eq!(enc, raw[..32]);
+        // ...while the signing key is HKDF-expanded and so differs from both the
+        // encryption key and the raw secret bytes.
+        assert_ne!(sign, enc);
+        assert_ne!(sign, raw[..32].to_vec());
+        assert_eq!(sign.len(), 32);
+    }
+
+    #[test]
+    fn jwt_signing_key_derivation_is_deterministic() {
+        let secret = "b".repeat(64);
+        assert_eq!(
+            jwt_signing_key(&secret).unwrap(),
+            jwt_signing_key(&secret).unwrap()
+        );
     }
 
     #[test]

@@ -61,6 +61,9 @@ fn build_state(pool: PgPool) -> AppState {
         config: test_config(),
         db: pool.clone(),
         esi_metadata: test_esi_metadata(),
+        jwks: std::sync::Arc::new(backend::esi::test_support::jwks_cache_for(
+            &backend::esi::test_support::test_keypair("kid-1"),
+        )),
         session_store: SessionStore::new(pool),
         inflight_store: InflightStore::new(),
         http_client: reqwest::Client::new().into(),

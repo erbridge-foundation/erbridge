@@ -147,9 +147,11 @@ async fn callback_inner(state: &AppState, query: &CallbackQuery) -> Result<Respo
         .await
         .map_err(|e| AppError::BadGateway(format!("ESI token parse error: {e}")))?;
 
-    // Parse the access token JWT (no validation against JWKS — ESI tokens are validated
-    // structurally only; full JWKS validation is a future hardening step).
-    let claims = crate::esi::jwt::parse_claims(&token_resp.access_token)
+    // Verify the access-token JWT against the SSO JWKS before trusting any of
+    // its claims (signature, expiry, issuer). A verification failure is the same
+    // error class as a malformed token exchange (502, no writes).
+    let claims = crate::esi::jwt::verify_and_parse(&token_resp.access_token, &state.jwks)
+        .await
         .map_err(|e| AppError::BadGateway(format!("invalid ESI access token: {e}")))?;
 
     let eve_character_id: i64 = claims
