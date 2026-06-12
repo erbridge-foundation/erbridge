@@ -393,8 +393,7 @@ mod tests {
     #[test]
     fn character_member_requires_character_id() {
         // Has the EVE id but no internal FK link → rejected.
-        let err =
-            validate_member_shape(&input(MemberType::Character, Some(5), None)).unwrap_err();
+        let err = validate_member_shape(&input(MemberType::Character, Some(5), None)).unwrap_err();
         assert!(matches!(err, AppError::BadRequest(_)));
     }
 
@@ -427,8 +426,12 @@ mod tests {
     #[test]
     fn valid_character_member_passes() {
         // A character carries both its EVE id and the internal FK link.
-        validate_member_shape(&input(MemberType::Character, Some(95465499), Some(Uuid::new_v4())))
-            .unwrap();
+        validate_member_shape(&input(
+            MemberType::Character,
+            Some(95465499),
+            Some(Uuid::new_v4()),
+        ))
+        .unwrap();
     }
 
     #[test]
@@ -556,7 +559,9 @@ mod tests {
         .await
         .unwrap();
 
-        remove_member(&pool, owner, acl.id, member.id).await.unwrap();
+        remove_member(&pool, owner, acl.id, member.id)
+            .await
+            .unwrap();
 
         // The member row is gone, but the audit row names it via the snapshot.
         assert!(
