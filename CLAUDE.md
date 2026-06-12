@@ -23,9 +23,11 @@ If you believe a skill rule is wrong or needs updating, **stop and raise it with
 
 For any openspec change whose implementation touches frontend code, the verification step (typically tasks.md §7 or equivalent) MUST include all three of:
 
-- `pnpm --filter frontend test` — Vitest unit/component tests
-- `pnpm --filter frontend run check` — svelte-check (type checking + paraglide compile)
-- `pnpm --filter frontend run test:e2e` — Playwright e2e tests
+- `pnpm test` — Vitest unit/component tests
+- `pnpm run check` — svelte-check (type checking + paraglide compile)
+- `pnpm run test:e2e` — Playwright e2e tests
+
+Run these **from the `frontend/` directory**. This repo has no pnpm workspace root, so `pnpm --filter frontend …` errors with `ERR_PNPM_NO_PKG_MANIFEST` — `cd frontend` and invoke the scripts directly. (Each script chains `paraglide` compile first, so they also keep `src/lib/paraglide` in sync.)
 
 All three must pass before a change is marked complete and before any commit lands. `pnpm test` alone is **not** sufficient — it runs only Vitest. The e2e suite catches regressions in destructive-action wiring, route changes, and form-action flows that unit tests cannot see.
 
