@@ -96,17 +96,19 @@ pub async fn delete_key(pool: &PgPool, id: Uuid, account_id: Uuid) -> Result<boo
         .await
         .map_err(|e| AppError::Internal(e.into()))?;
 
-    let deleted = db::delete_for_account_in_tx(&mut tx, id, account_id)
+    let key_name = match db::delete_for_account_in_tx(&mut tx, id, account_id)
         .await
-        .map_err(AppError::Internal)?;
-
-    if !deleted {
-        // Nothing to audit — roll back the empty tx and return.
-        tx.rollback()
-            .await
-            .map_err(|e| AppError::Internal(e.into()))?;
-        return Ok(false);
-    }
+        .map_err(AppError::Internal)?
+    {
+        Some(name) => name,
+        None => {
+            // Nothing to audit — roll back the empty tx and return.
+            tx.rollback()
+                .await
+                .map_err(|e| AppError::Internal(e.into()))?;
+            return Ok(false);
+        }
+    };
 
     audit::record_in_tx(
         &mut tx,
@@ -115,6 +117,7 @@ pub async fn delete_key(pool: &PgPool, id: Uuid, account_id: Uuid) -> Result<boo
         AuditEvent::ApiKeyRevoked {
             account_id,
             key_id: id,
+            key_name,
         },
     )
     .await

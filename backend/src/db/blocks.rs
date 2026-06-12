@@ -46,20 +46,22 @@ pub async fn insert_block(
     Ok(result.rows_affected() > 0)
 }
 
-/// Removes a block row. Returns `true` if a row was deleted, `false` if no row
-/// matched (so the caller maps that to a 404).
+/// Removes a block row. Returns the deleted row's `character_name` snapshot
+/// (the outer `Option` discriminates "no row matched" — mapped to a 404 by the
+/// caller — from a matched row whose `character_name` may itself be NULL).
 pub async fn delete_block(
     tx: &mut Transaction<'_, Postgres>,
     eve_character_id: i64,
-) -> Result<bool> {
-    let result = sqlx::query!(
-        "DELETE FROM blocked_eve_character WHERE eve_character_id = $1",
+) -> Result<Option<Option<String>>> {
+    let row = sqlx::query!(
+        "DELETE FROM blocked_eve_character WHERE eve_character_id = $1
+         RETURNING character_name",
         eve_character_id
     )
-    .execute(&mut **tx)
+    .fetch_optional(&mut **tx)
     .await
     .context("failed to delete block")?;
-    Ok(result.rows_affected() > 0)
+    Ok(row.map(|r| r.character_name))
 }
 
 /// All block rows, newest first. Reads flat — no join to `eve_character`.
@@ -217,7 +219,8 @@ mod tests {
         let mut tx = pool.begin().await.unwrap();
         let deleted = delete_block(&mut tx, 42).await.unwrap();
         tx.commit().await.unwrap();
-        assert!(deleted);
+        // Matched row → Some; its snapshotted character_name is returned.
+        assert_eq!(deleted, Some(Some("Griefer".to_string())));
         assert!(list_blocks(&pool).await.unwrap().is_empty());
     }
 
@@ -226,7 +229,7 @@ mod tests {
         let mut tx = pool.begin().await.unwrap();
         let deleted = delete_block(&mut tx, 999).await.unwrap();
         tx.commit().await.unwrap();
-        assert!(!deleted);
+        assert!(deleted.is_none());
     }
 
     #[sqlx::test]

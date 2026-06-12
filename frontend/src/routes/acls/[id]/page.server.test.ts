@@ -186,8 +186,36 @@ describe('acls/[id] addMember action — identifier by type', () => {
 		updated_at: 'now'
 	};
 
-	it('sends character_id for a character member', async () => {
+	it('sends both eve_entity_id and character_id for a character member', async () => {
 		vi.mocked(addAclMember).mockResolvedValue(aMember);
+		const result = await actions.addMember(
+			makeActionEvent('acl1', {
+				member_type: 'character',
+				character_id: 'c-uuid',
+				eve_entity_id: '95465499',
+				name: 'Wasp',
+				permission: 'manage'
+			})
+		);
+		expect(result).toBeUndefined();
+		// A character carries its durable EVE id (eve_entity_id, uniform with
+		// corp/alliance) plus the internal FK link (character_id).
+		expect(addAclMember).toHaveBeenCalledWith(
+			expect.anything(),
+			'http://backend:3000',
+			'acl1',
+			{
+				member_type: 'character',
+				permission: 'manage',
+				name: 'Wasp',
+				eve_entity_id: 95465499,
+				character_id: 'c-uuid'
+			},
+			'session=jwt'
+		);
+	});
+
+	it('rejects a character member missing eve_entity_id', async () => {
 		const result = await actions.addMember(
 			makeActionEvent('acl1', {
 				member_type: 'character',
@@ -196,14 +224,8 @@ describe('acls/[id] addMember action — identifier by type', () => {
 				permission: 'manage'
 			})
 		);
-		expect(result).toBeUndefined();
-		expect(addAclMember).toHaveBeenCalledWith(
-			expect.anything(),
-			'http://backend:3000',
-			'acl1',
-			{ member_type: 'character', permission: 'manage', name: 'Wasp', character_id: 'c-uuid' },
-			'session=jwt'
-		);
+		expect(result).toMatchObject({ status: 400 });
+		expect(addAclMember).not.toHaveBeenCalled();
 	});
 
 	it('sends eve_entity_id for a corporation member', async () => {

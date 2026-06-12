@@ -197,6 +197,13 @@ pub async fn attach_acl_to_map(
         return Err(AppError::Forbidden);
     }
 
+    // Snapshot the map name into the audit event so the row names both the ACL
+    // (the target) and the map (the secondary entity) after either is deleted.
+    let map = db::find_map_by_id(pool, map_id)
+        .await
+        .map_err(AppError::Internal)?
+        .ok_or(AppError::NotFound)?;
+
     let mut tx = pool
         .begin()
         .await
@@ -213,6 +220,7 @@ pub async fn attach_acl_to_map(
         AuditEvent::AclAttachedToMap {
             account_id,
             map_id,
+            map_name: map.name,
             acl_id,
         },
     )
@@ -235,6 +243,13 @@ pub async fn detach_acl_from_map(
 ) -> Result<(), AppError> {
     require_map_permission(pool, map_id, account_id, Permission::Admin).await?;
 
+    // Snapshot the map name into the audit event (the map is the secondary
+    // entity; the ACL is the target).
+    let map = db::find_map_by_id(pool, map_id)
+        .await
+        .map_err(AppError::Internal)?
+        .ok_or(AppError::NotFound)?;
+
     let mut tx = pool
         .begin()
         .await
@@ -254,6 +269,7 @@ pub async fn detach_acl_from_map(
         AuditEvent::AclDetachedFromMap {
             account_id,
             map_id,
+            map_name: map.name,
             acl_id,
         },
     )

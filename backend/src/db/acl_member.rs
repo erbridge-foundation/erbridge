@@ -134,18 +134,30 @@ pub async fn update_member_permission(
     Ok(m)
 }
 
-/// Removes a member from an ACL. Returns `true` if a row was removed.
-pub async fn remove_member(pool: &PgPool, acl_id: Uuid, member_id: Uuid) -> Result<bool> {
-    let result = sqlx::query!(
-        "DELETE FROM acl_member WHERE id = $2 AND acl_id = $1",
+/// Removes a member from an ACL. Returns the removed row (so the caller can
+/// snapshot the member's name + EVE id into the audit event), or `None` if no
+/// such member exists on that ACL.
+pub async fn remove_member(
+    pool: &PgPool,
+    acl_id: Uuid,
+    member_id: Uuid,
+) -> Result<Option<AclMember>> {
+    let m = sqlx::query_as!(
+        AclMember,
+        r#"
+        DELETE FROM acl_member
+        WHERE id = $2 AND acl_id = $1
+        RETURNING id, acl_id, member_type, eve_entity_id, character_id, name, permission,
+                  created_at, updated_at
+        "#,
         acl_id,
         member_id,
     )
-    .execute(pool)
+    .fetch_optional(pool)
     .await
     .context("failed to remove acl member")?;
 
-    Ok(result.rows_affected() > 0)
+    Ok(m)
 }
 
 #[cfg(test)]
@@ -233,8 +245,13 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(remove_member(&pool, a.id, m.id).await.unwrap());
+        let removed = remove_member(&pool, a.id, m.id).await.unwrap().unwrap();
+        assert_eq!(removed.id, m.id);
+        assert_eq!(removed.name, "Corp");
+        assert_eq!(removed.eve_entity_id, Some(98));
         assert!(list_members(&pool, a.id).await.unwrap().is_empty());
+        // Removing again finds no row.
+        assert!(remove_member(&pool, a.id, m.id).await.unwrap().is_none());
     }
 
     // ---- CHECK-constraint rejections (the database backstop) ----
@@ -273,12 +290,15 @@ mod tests {
     async fn character_may_hold_admin(pool: PgPool) {
         let owner = accounts::create_account(&pool).await.unwrap();
         let a = insert_acl_for_test(&pool, owner, "ACL").await;
-        let char_id = insert_character(&pool, owner, 1, "Admin").await;
+        let char_id = insert_character(&pool, owner, 95465499, "Admin").await;
+        // A character member carries BOTH its EVE id (eve_entity_id, the durable
+        // ESI identity, symmetric with corp/alliance) and character_id (the
+        // internal FK link for cascade-delete).
         let m = add_member(
             &pool,
             a.id,
             "character",
-            None,
+            Some(95465499),
             Some(char_id),
             "Admin",
             "admin",
@@ -286,5 +306,7 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(m.permission, "admin");
+        assert_eq!(m.eve_entity_id, Some(95465499));
+        assert_eq!(m.character_id, Some(char_id));
     }
 }

@@ -457,6 +457,8 @@ async fn test_set_main_writes_character_set_main_with_outgoing_main_snapshot(poo
     assert_eq!(r.actor_character_id, Some(88880)); // OUTGOING main (A)
     assert_eq!(r.actor_character_name.as_deref(), Some("Pilot A"));
     assert_eq!(r.details["eve_character_id"], 88881i64); // INCOMING main (B)
+    assert_eq!(r.details["character_name"], "Pilot B"); // snapshotted subject name
+    assert_eq!(r.target_name.as_deref(), Some("Pilot B")); // self-contained target
 
     sqlx::query!("DELETE FROM audit_log")
         .execute(&pool)
@@ -481,6 +483,7 @@ async fn test_set_main_writes_character_set_main_with_outgoing_main_snapshot(poo
     let r = &rows[0];
     assert_eq!(r.actor_character_id, Some(88881)); // OUTGOING main (B)
     assert_eq!(r.details["eve_character_id"], 88880i64); // INCOMING main (A)
+    assert_eq!(r.details["character_name"], "Pilot A");
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -520,6 +523,8 @@ async fn test_remove_character_writes_character_removed(pool: PgPool) {
     assert_eq!(r.actor_character_id, Some(99990)); // main
     assert_eq!(r.actor_character_name.as_deref(), Some("Main Pilot"));
     assert_eq!(r.details["eve_character_id"], 99991i64);
+    assert_eq!(r.details["character_name"], "Alt Pilot"); // snapshotted subject
+    assert_eq!(r.target_name.as_deref(), Some("Alt Pilot"));
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -620,6 +625,7 @@ async fn test_revoke_api_key_writes_api_key_revoked(pool: PgPool) {
     assert_no_unexpected_event_types(&rows, &["api_key_revoked"]);
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].details["key_id"], created.id.to_string());
+    assert_eq!(rows[0].details["key_name"], "to-revoke"); // label snapshotted
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -850,10 +856,12 @@ async fn router_set_main_succeeds_and_writes_audit_row(pool: PgPool) {
     assert_eq!(rows[0].actor_character_name.as_deref(), Some("Pilot A"));
     // Details carry the incoming main — Pilot B.
     assert_eq!(rows[0].details["eve_character_id"], 20201_i64);
-    // Target is the character being promoted (Pilot B); no carried name.
+    // Target is the character being promoted (Pilot B); the name is now
+    // snapshotted (self-contained) into both details and target_name.
     assert_eq!(rows[0].target_type.as_deref(), Some("character"));
     assert_eq!(rows[0].target_id.as_deref(), Some("20201"));
-    assert!(rows[0].target_name.is_none());
+    assert_eq!(rows[0].details["character_name"], "Pilot B");
+    assert_eq!(rows[0].target_name.as_deref(), Some("Pilot B"));
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -894,10 +902,11 @@ async fn router_delete_character_succeeds_and_writes_audit_row(pool: PgPool) {
     assert_eq!(rows[0].actor_account_id, Some(account_id));
     assert_eq!(rows[0].actor_character_id, Some(21210));
     assert_eq!(rows[0].details["eve_character_id"], 21211_i64);
-    // Target is the removed character (Alt); no carried name.
+    // Target is the removed character (Alt); name snapshotted (self-contained).
     assert_eq!(rows[0].target_type.as_deref(), Some("character"));
     assert_eq!(rows[0].target_id.as_deref(), Some("21211"));
-    assert!(rows[0].target_name.is_none());
+    assert_eq!(rows[0].details["character_name"], "Alt");
+    assert_eq!(rows[0].target_name.as_deref(), Some("Alt"));
 }
 
 // Silence unused-import warnings for utility re-exports.

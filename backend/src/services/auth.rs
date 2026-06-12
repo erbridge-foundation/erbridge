@@ -73,6 +73,7 @@ pub async fn complete_sso_callback(
             None,
             AuditEvent::BlockedLoginRejected {
                 eve_character_id: input.eve_character_id,
+                character_name: Some(input.character_name.to_string()),
             },
         )
         .await?;

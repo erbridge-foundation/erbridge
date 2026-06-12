@@ -67,12 +67,13 @@ pub async fn set_main_character(
     account_id: Uuid,
     character_id: Uuid,
 ) -> Result<CharacterInfo, AppError> {
-    // Verify ownership and capture the new main's EVE ID for the audit payload.
-    let new_main_eve_id = match characters::lookup_for_account(pool, character_id)
+    // Verify ownership and capture the new main's EVE ID + name for the audit
+    // payload (snapshotted so the row stays readable after a later rename/delete).
+    let (new_main_eve_id, new_main_name) = match characters::lookup_for_account(pool, character_id)
         .await
         .map_err(AppError::Internal)?
     {
-        Some((owner_id, eve_id, _)) if owner_id == account_id => eve_id,
+        Some((owner_id, eve_id, name, _)) if owner_id == account_id => (eve_id, name),
         _ => return Err(AppError::NotFound),
     };
 
@@ -89,6 +90,7 @@ pub async fn set_main_character(
         AuditEvent::CharacterSetMain {
             account_id,
             eve_character_id: new_main_eve_id,
+            character_name: new_main_name,
         },
     )
     .await
@@ -163,7 +165,7 @@ pub async fn delete_character(
     account_id: Uuid,
     character_id: Uuid,
 ) -> Result<(), AppError> {
-    let (owner_id, eve_character_id, is_main) =
+    let (owner_id, eve_character_id, character_name, is_main) =
         match characters::lookup_for_account(pool, character_id)
             .await
             .map_err(AppError::Internal)?
@@ -199,6 +201,7 @@ pub async fn delete_character(
         AuditEvent::CharacterRemoved {
             account_id,
             eve_character_id,
+            character_name,
         },
     )
     .await

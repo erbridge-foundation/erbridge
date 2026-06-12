@@ -2,6 +2,7 @@
 	import { m } from '$lib/paraglide/messages';
 	import { goto } from '$app/navigation';
 	import type { AuditLogEntryDto, AuditLogPageDto } from '$lib/api';
+	import AuditDetailsDialog from '$lib/components/AuditDetailsDialog.svelte';
 	import {
 		EVENT_TYPES,
 		TARGET_TYPES,
@@ -171,6 +172,17 @@
 		}
 	}
 
+	// Per-row Details dialog: the currently-open entry (or null when closed).
+	// Pure render of the snapshotted `details` payload — no id resolution, no
+	// mutation.
+	let detailsEntry = $state<AuditLogEntryDto | null>(null);
+	function openDetails(entry: AuditLogEntryDto) {
+		detailsEntry = entry;
+	}
+	function closeDetails() {
+		detailsEntry = null;
+	}
+
 	// Sentinel observer drives loadMore when it scrolls into view.
 	function sentinel(node: HTMLElement) {
 		const observer = new IntersectionObserver((obsEntries) => {
@@ -261,12 +273,13 @@
 					<th>{m.admin_audit_col_actor()}</th>
 					<th>{m.admin_audit_col_event()}</th>
 					<th>{m.admin_audit_col_target()}</th>
+					<th>{m.admin_audit_col_details()}</th>
 				</tr>
 			</thead>
 			<tbody>
 				{#each groups as group (group.key)}
 					<tr class="day-header">
-						<th colspan="4" scope="colgroup">{dayHeader(group.key)}</th>
+						<th colspan="5" scope="colgroup">{dayHeader(group.key)}</th>
 					</tr>
 					{#each group.entries as entry (entry.id)}
 						<tr class:security={isSecurityEvent(entry.event_type)}>
@@ -302,6 +315,15 @@
 									<span class="muted">—</span>
 								{/if}
 							</td>
+							<td>
+								<button
+									type="button"
+									class="btn ghost details-btn"
+									onclick={() => openDetails(entry)}
+								>
+									{m.admin_audit_details_open()}
+								</button>
+							</td>
 						</tr>
 					{/each}
 				{/each}
@@ -309,6 +331,12 @@
 		</table>
 	{/if}
 </section>
+
+<AuditDetailsDialog
+	details={detailsEntry?.details ?? null}
+	open={detailsEntry !== null}
+	onClose={closeDetails}
+/>
 
 {#if nextBefore}
 	<div class="sentinel" use:sentinel></div>
@@ -479,6 +507,10 @@
 	}
 	.cell-btn:hover {
 		text-decoration: underline;
+	}
+	.details-btn {
+		padding: 3px 10px;
+		font-size: 0.6875rem;
 	}
 
 	.btn {

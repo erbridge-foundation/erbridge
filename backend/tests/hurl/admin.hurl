@@ -281,3 +281,19 @@ Cookie: session={{admin_session}}
 HTTP 200
 [Asserts]
 jsonpath "$.data.entries" isCollection
+
+# ── 21. Audit `q` matches a value carried only in details ─────────────────────
+#
+# "hurl-smoke" is the block reason from steps 11–13; it is never an actor or
+# target name — it lives only in the event's `details` payload. Finding it
+# proves the `q` axis now searches `details::text` (self-contained search), and
+# that a name/value snapshotted into details is findable. (Run after the block
+# steps above, which emit eve_character_blocked rows carrying this reason.)
+
+GET {{base_url}}/api/v1/admin/audit?q=hurl-smoke&window=90d
+Cookie: session={{admin_session}}
+HTTP 200
+[Asserts]
+jsonpath "$.data.entries" isCollection
+jsonpath "$.data.entries[0].event_type" == "eve_character_blocked"
+jsonpath "$.data.entries[0].details.reason" == "hurl-smoke"

@@ -183,7 +183,8 @@
 								/>
 								<span class="result-name">{c.name}</span>
 								{@render addForm('character', key, c.name, [
-									['character_id', c.id]
+									['character_id', c.id],
+									['eve_entity_id', String(c.eve_character_id)]
 								])}
 							</li>
 						{/each}

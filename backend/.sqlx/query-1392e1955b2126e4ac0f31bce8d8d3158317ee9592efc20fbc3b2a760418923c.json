@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM blocked_eve_character WHERE eve_character_id = $1\n         RETURNING character_name",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "character_name",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "1392e1955b2126e4ac0f31bce8d8d3158317ee9592efc20fbc3b2a760418923c"
+}

@@ -224,6 +224,7 @@ pub async fn block_character(
         None,
         AuditEvent::EveCharacterBlocked {
             eve_character_id,
+            character_name: character_name.map(|n| n.to_string()),
             reason: reason.map(|r| r.to_string()),
         },
     )
@@ -249,21 +250,27 @@ pub async fn unblock_character(
         .await
         .map_err(|e| AppError::Internal(e.into()))?;
 
-    let deleted = blocks::delete_block(&mut tx, eve_character_id)
+    let character_name = match blocks::delete_block(&mut tx, eve_character_id)
         .await
-        .map_err(AppError::Internal)?;
-    if !deleted {
-        tx.rollback()
-            .await
-            .map_err(|e| AppError::Internal(e.into()))?;
-        return Err(AppError::NotFound);
-    }
+        .map_err(AppError::Internal)?
+    {
+        Some(name) => name,
+        None => {
+            tx.rollback()
+                .await
+                .map_err(|e| AppError::Internal(e.into()))?;
+            return Err(AppError::NotFound);
+        }
+    };
 
     audit::record_in_tx(
         &mut tx,
         Some(actor),
         None,
-        AuditEvent::EveCharacterUnblocked { eve_character_id },
+        AuditEvent::EveCharacterUnblocked {
+            eve_character_id,
+            character_name,
+        },
     )
     .await
     .map_err(AppError::Internal)?;

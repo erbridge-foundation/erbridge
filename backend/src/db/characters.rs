@@ -289,13 +289,17 @@ pub async fn is_main(pool: &PgPool, id: Uuid) -> Result<Option<(Uuid, bool)>> {
     Ok(row.and_then(|r| r.account_id.map(|acc_id| (acc_id, r.is_main))))
 }
 
-/// Looks up the `(account_id, eve_character_id, is_main)` for an internal
+/// Looks up the `(account_id, eve_character_id, name, is_main)` for an internal
 /// character UUID. Returns `None` when no row exists or the row is an orphan
 /// (`account_id IS NULL`). Used by audit-emitting services that need the EVE
-/// ID alongside the ownership check.
-pub async fn lookup_for_account(pool: &PgPool, id: Uuid) -> Result<Option<(Uuid, i64, bool)>> {
+/// ID and name alongside the ownership check (so the audit row carries a
+/// snapshotted character name even after the character is later deleted).
+pub async fn lookup_for_account(
+    pool: &PgPool,
+    id: Uuid,
+) -> Result<Option<(Uuid, i64, String, bool)>> {
     let row = sqlx::query!(
-        "SELECT account_id, eve_character_id, is_main
+        "SELECT account_id, eve_character_id, name, is_main
          FROM eve_character WHERE id = $1",
         id
     )
@@ -305,7 +309,7 @@ pub async fn lookup_for_account(pool: &PgPool, id: Uuid) -> Result<Option<(Uuid,
 
     Ok(row.and_then(|r| {
         r.account_id
-            .map(|acc_id| (acc_id, r.eve_character_id, r.is_main))
+            .map(|acc_id| (acc_id, r.eve_character_id, r.name, r.is_main))
     }))
 }
 
@@ -532,6 +536,7 @@ pub async fn update_tokens_by_eve_id(
 pub struct RefreshableCharacter {
     pub eve_character_id: i64,
     pub account_id: Option<Uuid>,
+    pub name: String,
     pub encrypted_refresh_token: Vec<u8>,
     pub owner_hash: Option<String>,
 }
@@ -541,7 +546,7 @@ pub struct RefreshableCharacter {
 pub async fn list_refreshable(pool: &PgPool) -> Result<Vec<RefreshableCharacter>> {
     let rows = sqlx::query!(
         r#"
-        SELECT eve_character_id, account_id, encrypted_refresh_token, owner_hash
+        SELECT eve_character_id, account_id, name, encrypted_refresh_token, owner_hash
         FROM eve_character
         WHERE token_status <> 'token_expired'
           AND encrypted_refresh_token IS NOT NULL
@@ -557,6 +562,7 @@ pub async fn list_refreshable(pool: &PgPool) -> Result<Vec<RefreshableCharacter>
             r.encrypted_refresh_token.map(|token| RefreshableCharacter {
                 eve_character_id: r.eve_character_id,
                 account_id: r.account_id,
+                name: r.name,
                 encrypted_refresh_token: token,
                 owner_hash: r.owner_hash,
             })

@@ -17,7 +17,7 @@ function row(container: HTMLElement, name: string): HTMLElement {
 }
 
 describe('MemberPicker inline add form — identifier by type', () => {
-	it('a character row carries member_type=character + character_id + name', () => {
+	it('a character row carries member_type, character_id, eve_entity_id + name', () => {
 		const { container } = render(MemberPicker, {
 			props: { characters: [aCharacter], searched: true }
 		});
@@ -27,7 +27,9 @@ describe('MemberPicker inline add form — identifier by type', () => {
 		expect((form.querySelector('[name=member_type]') as HTMLInputElement).value).toBe('character');
 		expect((form.querySelector('[name=character_id]') as HTMLInputElement).value).toBe('char-uuid-1');
 		expect((form.querySelector('[name=name]') as HTMLInputElement).value).toBe('Wasp 223');
-		expect(form.querySelector('[name=eve_entity_id]')).toBeNull();
+		// A character now also carries its durable EVE id (the eve_character_id),
+		// so the audit snapshot is uniform with corp/alliance members.
+		expect((form.querySelector('[name=eve_entity_id]') as HTMLInputElement).value).toBe('7');
 		// Submit button is the inline "add", not a select/select-then-scroll.
 		expect(within(li).getByRole('button', { name: 'add member' })).toBeInTheDocument();
 	});

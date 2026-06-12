@@ -15,7 +15,11 @@ use crate::{
 /// identifier columns match the member type before touching the db.
 pub struct AddMemberInput {
     pub member_type: MemberType,
+    /// The member's durable EVE id — the EVE character/corporation/alliance id,
+    /// uniform across all member types. Snapshotted into the audit event.
     pub eve_entity_id: Option<i64>,
+    /// Internal FK link to `eve_character` for character members (cascade-delete);
+    /// `None` for corporation/alliance members.
     pub character_id: Option<Uuid>,
     pub name: String,
     pub permission: AclPermission,
@@ -187,7 +191,8 @@ pub async fn add_member(
         AuditEvent::AclMemberAdded {
             account_id,
             acl_id,
-            member_id: member.id,
+            member_name: member.name.clone(),
+            eve_entity_id: member.eve_entity_id,
             member_type: input.member_type.as_str().to_string(),
             permission: input.permission.as_str().to_string(),
         },
@@ -227,7 +232,8 @@ pub async fn update_member_permission(
         AuditEvent::AclMemberPermissionChanged {
             account_id,
             acl_id,
-            member_id,
+            member_name: updated.name.clone(),
+            eve_entity_id: updated.eve_entity_id,
             permission: permission.as_str().to_string(),
         },
     )
@@ -251,10 +257,8 @@ pub async fn remove_member(
 
     let removed = member_db::remove_member(pool, acl_id, member_id)
         .await
-        .map_err(AppError::Internal)?;
-    if !removed {
-        return Err(AppError::NotFound);
-    }
+        .map_err(AppError::Internal)?
+        .ok_or(AppError::NotFound)?;
 
     let mut tx = pool
         .begin()
@@ -267,7 +271,8 @@ pub async fn remove_member(
         AuditEvent::AclMemberRemoved {
             account_id,
             acl_id,
-            member_id,
+            member_name: removed.name.clone(),
+            eve_entity_id: removed.eve_entity_id,
         },
     )
     .await
@@ -296,10 +301,17 @@ async fn load_owned_acl(pool: &PgPool, account_id: Uuid, acl_id: Uuid) -> Result
     Ok(acl)
 }
 
-/// Validates that the identifier columns match the member type: a `character`
-/// member must carry `character_id` (and not `eve_entity_id`); a `corporation`
-/// or `alliance` member must carry `eve_entity_id` (and not `character_id`).
+/// Validates that the identifier columns match the member type. Every member
+/// carries `eve_entity_id` — the durable EVE id (character/corporation/alliance)
+/// — so the audit snapshot is uniform. A `character` member additionally carries
+/// `character_id`, the internal FK link used for cascade-delete; corporation and
+/// alliance members carry no `character_id`.
 pub fn validate_member_shape(input: &AddMemberInput) -> Result<(), AppError> {
+    if input.eve_entity_id.is_none() {
+        return Err(AppError::BadRequest(
+            "members require eve_entity_id".to_string(),
+        ));
+    }
     match input.member_type {
         MemberType::Character => {
             if input.character_id.is_none() {
@@ -307,18 +319,8 @@ pub fn validate_member_shape(input: &AddMemberInput) -> Result<(), AppError> {
                     "character members require character_id".to_string(),
                 ));
             }
-            if input.eve_entity_id.is_some() {
-                return Err(AppError::BadRequest(
-                    "character members must not carry eve_entity_id".to_string(),
-                ));
-            }
         }
         MemberType::Corporation | MemberType::Alliance => {
-            if input.eve_entity_id.is_none() {
-                return Err(AppError::BadRequest(
-                    "corporation/alliance members require eve_entity_id".to_string(),
-                ));
-            }
             if input.character_id.is_some() {
                 return Err(AppError::BadRequest(
                     "corporation/alliance members must not carry character_id".to_string(),
@@ -390,15 +392,18 @@ mod tests {
 
     #[test]
     fn character_member_requires_character_id() {
-        let err = validate_member_shape(&input(MemberType::Character, None, None)).unwrap_err();
+        // Has the EVE id but no internal FK link → rejected.
+        let err =
+            validate_member_shape(&input(MemberType::Character, Some(5), None)).unwrap_err();
         assert!(matches!(err, AppError::BadRequest(_)));
     }
 
     #[test]
-    fn character_member_rejects_eve_entity_id() {
-        let err =
-            validate_member_shape(&input(MemberType::Character, Some(5), Some(Uuid::new_v4())))
-                .unwrap_err();
+    fn character_member_requires_eve_entity_id() {
+        // Has the FK link but no durable EVE id → rejected (the audit snapshot
+        // would have no EVE id).
+        let err = validate_member_shape(&input(MemberType::Character, None, Some(Uuid::new_v4())))
+            .unwrap_err();
         assert!(matches!(err, AppError::BadRequest(_)));
     }
 
@@ -421,7 +426,9 @@ mod tests {
 
     #[test]
     fn valid_character_member_passes() {
-        validate_member_shape(&input(MemberType::Character, None, Some(Uuid::new_v4()))).unwrap();
+        // A character carries both its EVE id and the internal FK link.
+        validate_member_shape(&input(MemberType::Character, Some(95465499), Some(Uuid::new_v4())))
+            .unwrap();
     }
 
     #[test]
@@ -452,5 +459,124 @@ mod tests {
             parse_permission("root"),
             Err(AppError::BadRequest(_))
         ));
+    }
+
+    // ---- emit-site name-snapshot integration tests ----
+
+    use crate::db::accounts;
+    use sqlx::PgPool;
+
+    async fn latest_details(pool: &PgPool, event_type: &str) -> serde_json::Value {
+        sqlx::query_scalar!(
+            "SELECT details FROM audit_log WHERE event_type = $1
+             ORDER BY occurred_at DESC, id DESC LIMIT 1",
+            event_type,
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap()
+    }
+
+    #[sqlx::test]
+    async fn add_member_snapshots_name_and_eve_id(pool: PgPool) {
+        let owner = accounts::create_account(&pool).await.unwrap();
+        let acl = db::insert_acl_for_test(&pool, owner, "Corp ACL").await;
+
+        add_member(
+            &pool,
+            owner,
+            acl.id,
+            AddMemberInput {
+                member_type: MemberType::Corporation,
+                eve_entity_id: Some(98000001),
+                character_id: None,
+                name: "Wasp Industries".to_string(),
+                permission: AclPermission::Read,
+            },
+        )
+        .await
+        .unwrap();
+
+        let d = latest_details(&pool, "acl_member_added").await;
+        assert_eq!(d["member_name"], "Wasp Industries");
+        assert_eq!(d["eve_entity_id"], 98000001i64);
+        assert!(d.get("member_id").is_none());
+        assert!(d.get("acl_id").is_none());
+    }
+
+    #[sqlx::test]
+    async fn add_character_member_snapshots_eve_id(pool: PgPool) {
+        use crate::db::test_helpers::insert_character;
+
+        let owner = accounts::create_account(&pool).await.unwrap();
+        let acl = db::insert_acl_for_test(&pool, owner, "Corp ACL").await;
+        // A character member carries its EVE id in eve_entity_id (the durable
+        // ESI identity, uniform with corp/alliance) plus character_id (the
+        // internal FK link). The audit snapshot uses eve_entity_id.
+        let char_id = insert_character(&pool, owner, 95465499, "Tocoquadi").await;
+
+        add_member(
+            &pool,
+            owner,
+            acl.id,
+            AddMemberInput {
+                member_type: MemberType::Character,
+                eve_entity_id: Some(95465499),
+                character_id: Some(char_id),
+                name: "Tocoquadi".to_string(),
+                permission: AclPermission::Manage,
+            },
+        )
+        .await
+        .unwrap();
+
+        let d = latest_details(&pool, "acl_member_added").await;
+        assert_eq!(d["member_name"], "Tocoquadi");
+        // The bug: this was NULL for character members. It must be the EVE id.
+        assert_eq!(d["eve_entity_id"], 95465499i64);
+    }
+
+    #[sqlx::test]
+    async fn remove_member_snapshots_removed_member_name(pool: PgPool) {
+        let owner = accounts::create_account(&pool).await.unwrap();
+        let acl = db::insert_acl_for_test(&pool, owner, "Corp ACL").await;
+
+        let member = add_member(
+            &pool,
+            owner,
+            acl.id,
+            AddMemberInput {
+                member_type: MemberType::Corporation,
+                eve_entity_id: Some(98000002),
+                character_id: None,
+                name: "Doomed Corp".to_string(),
+                permission: AclPermission::Read,
+            },
+        )
+        .await
+        .unwrap();
+
+        remove_member(&pool, owner, acl.id, member.id).await.unwrap();
+
+        // The member row is gone, but the audit row names it via the snapshot.
+        assert!(
+            member_db::list_members(&pool, acl.id)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        let d = latest_details(&pool, "acl_member_removed").await;
+        assert_eq!(d["member_name"], "Doomed Corp");
+        assert_eq!(d["eve_entity_id"], 98000002i64);
+    }
+
+    #[sqlx::test]
+    async fn remove_missing_member_is_not_found(pool: PgPool) {
+        let owner = accounts::create_account(&pool).await.unwrap();
+        let acl = db::insert_acl_for_test(&pool, owner, "Corp ACL").await;
+        let err = remove_member(&pool, owner, acl.id, Uuid::new_v4())
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AppError::NotFound));
     }
 }

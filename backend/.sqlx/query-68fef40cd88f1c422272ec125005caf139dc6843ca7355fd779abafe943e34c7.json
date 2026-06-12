@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT eve_character_id, account_id, encrypted_refresh_token, owner_hash\n        FROM eve_character\n        WHERE token_status <> 'token_expired'\n          AND encrypted_refresh_token IS NOT NULL\n        ",
+  "query": "\n        SELECT eve_character_id, account_id, name, encrypted_refresh_token, owner_hash\n        FROM eve_character\n        WHERE token_status <> 'token_expired'\n          AND encrypted_refresh_token IS NOT NULL\n        ",
   "describe": {
     "columns": [
       {
@@ -15,11 +15,16 @@
       },
       {
         "ordinal": 2,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
         "name": "encrypted_refresh_token",
         "type_info": "Bytea"
       },
       {
-        "ordinal": 3,
+        "ordinal": 4,
         "name": "owner_hash",
         "type_info": "Text"
       }
@@ -30,9 +35,10 @@
     "nullable": [
       false,
       true,
+      false,
       true,
       true
     ]
   },
-  "hash": "dda9d0ef3d487f0e8ca32461d7a1447b0d1c36822aa83544a20001c3cba3bf1a"
+  "hash": "68fef40cd88f1c422272ec125005caf139dc6843ca7355fd779abafe943e34c7"
 }

@@ -72,9 +72,10 @@ export const actions: Actions = {
 		}
 	},
 
-	// Add a member. The picker submits the already-resolved identifier: a
-	// character carries `character_id` (the eve_character.id UUID); a corp/alliance
-	// carries `eve_entity_id`.
+	// Add a member. The picker submits the already-resolved identity. Every
+	// member carries `eve_entity_id` — the durable EVE id (character/corp/
+	// alliance) — so the audit snapshot is uniform. A character additionally
+	// carries `character_id` (the eve_character.id UUID, the internal FK link).
 	addMember: async ({ request, fetch, params }) => {
 		const cookie = request.headers.get('cookie') ?? '';
 		const data = await request.formData();
@@ -97,19 +98,20 @@ export const actions: Actions = {
 			name: typeof name === 'string' ? name : ''
 		};
 
+		// The durable EVE id is required for every member type.
+		const idRaw = data.get('eve_entity_id');
+		const eve_entity_id = typeof idRaw === 'string' ? Number(idRaw) : NaN;
+		if (!Number.isInteger(eve_entity_id) || eve_entity_id <= 0) {
+			return fail(400, { action: 'addMember', code: 'bad_request', message: 'No entity selected' });
+		}
+		body.eve_entity_id = eve_entity_id;
+
 		if (memberType === 'character') {
 			const characterId = data.get('character_id');
 			if (typeof characterId !== 'string' || characterId === '') {
 				return fail(400, { action: 'addMember', code: 'bad_request', message: 'No character selected' });
 			}
 			body.character_id = characterId;
-		} else {
-			const idRaw = data.get('eve_entity_id');
-			const eve_entity_id = typeof idRaw === 'string' ? Number(idRaw) : NaN;
-			if (!Number.isInteger(eve_entity_id) || eve_entity_id <= 0) {
-				return fail(400, { action: 'addMember', code: 'bad_request', message: 'No entity selected' });
-			}
-			body.eve_entity_id = eve_entity_id;
 		}
 
 		try {

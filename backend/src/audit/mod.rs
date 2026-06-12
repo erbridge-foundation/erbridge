@@ -102,10 +102,15 @@ impl AuditTarget {
     }
 }
 
-/// Catalogue of recordable actions. Variants marked **dormant** are present
-/// from day one but emitted by no production code path yet — they activate
-/// when the feature that needs them lands. The catalogue is stable: existing
-/// `event_type()` strings SHALL NOT be renamed once shipped.
+/// Catalogue of recordable actions. A few variants marked **dormant** are
+/// present from day one but emitted by no production code path yet — they
+/// activate when the feature that needs them lands. The catalogue is stable:
+/// existing `event_type()` strings SHALL NOT be renamed once shipped.
+///
+/// Self-contained naming: every entity a variant references carries a
+/// snapshotted human-readable name (captured at write time by the emit site),
+/// so the audit row stays readable after the entity is deleted. ESI-resolved
+/// entities additionally carry their durable EVE id.
 #[derive(Debug, Clone)]
 pub enum AuditEvent {
     AccountRegistered {
@@ -131,10 +136,12 @@ pub enum AuditEvent {
     CharacterRemoved {
         account_id: Uuid,
         eve_character_id: i64,
+        character_name: String,
     },
     CharacterSetMain {
         account_id: Uuid,
         eve_character_id: i64,
+        character_name: String,
     },
     /// Renamed from the older iteration's `GhostCharacterClaimed` — the
     /// current codebase uses "orphan" throughout for `account_id IS NULL`
@@ -152,6 +159,7 @@ pub enum AuditEvent {
     ApiKeyRevoked {
         account_id: Uuid,
         key_id: Uuid,
+        key_name: String,
     },
     ServerAdminGranted {
         account_id: Uuid,
@@ -161,14 +169,14 @@ pub enum AuditEvent {
     ServerAdminRevoked {
         account_id: Uuid,
     },
-    /// Dormant: emitted by a future admin-initiated block endpoint.
     EveCharacterBlocked {
         eve_character_id: i64,
+        character_name: Option<String>,
         reason: Option<String>,
     },
-    /// Dormant: emitted by a future admin-initiated unblock endpoint.
     EveCharacterUnblocked {
         eve_character_id: i64,
+        character_name: Option<String>,
     },
     /// Emitted by the SSO callback when a blocked character is refused. Unlike
     /// every other variant this records a rejected *attempt* rather than a
@@ -178,6 +186,7 @@ pub enum AuditEvent {
     /// `details` / the target columns.
     BlockedLoginRejected {
         eve_character_id: i64,
+        character_name: Option<String>,
     },
     /// Emitted by the daily token-refresh sweep when a character's owner hash
     /// changed on a successful refresh — i.e. the character was transferred to a
@@ -185,76 +194,76 @@ pub enum AuditEvent {
     CharacterOwnerMismatch {
         account_id: Uuid,
         eve_character_id: i64,
+        character_name: String,
     },
-    /// Dormant: emitted by a future map-create handler.
     MapCreated {
         account_id: Uuid,
         map_id: Uuid,
         name: String,
     },
-    /// Dormant: emitted by a future map-delete handler.
     MapDeleted {
         account_id: Uuid,
         map_id: Uuid,
         name: String,
     },
-    /// Dormant: emitted by a future ACL-create handler.
     AclCreated {
         account_id: Uuid,
         acl_id: Uuid,
         name: String,
     },
-    /// Dormant: emitted by a future ACL-rename handler.
     AclRenamed {
         account_id: Uuid,
         acl_id: Uuid,
         old_name: String,
         new_name: String,
     },
-    /// Dormant: emitted by a future ACL-delete handler.
     AclDeleted {
         account_id: Uuid,
         acl_id: Uuid,
         name: String,
     },
-    /// Dormant: emitted by a future ACL-member-add handler.
     AclMemberAdded {
         account_id: Uuid,
         acl_id: Uuid,
-        member_id: Uuid,
+        member_name: String,
+        /// The member's EVE id for a character/corporation/alliance member;
+        /// the durable external join key. `None` for member types without one.
+        eve_entity_id: Option<i64>,
         member_type: String,
         permission: String,
     },
-    /// Dormant: emitted by a future ACL-member-permission-change handler.
     AclMemberPermissionChanged {
         account_id: Uuid,
         acl_id: Uuid,
-        member_id: Uuid,
+        member_name: String,
+        eve_entity_id: Option<i64>,
         permission: String,
     },
-    /// Dormant: emitted by a future ACL-member-remove handler.
     AclMemberRemoved {
         account_id: Uuid,
         acl_id: Uuid,
-        member_id: Uuid,
+        member_name: String,
+        eve_entity_id: Option<i64>,
     },
-    /// Dormant: emitted by a future ACL-attach handler.
     AclAttachedToMap {
         account_id: Uuid,
         map_id: Uuid,
+        map_name: String,
         acl_id: Uuid,
     },
-    /// Dormant: emitted by a future ACL-detach handler.
     AclDetachedFromMap {
         account_id: Uuid,
         map_id: Uuid,
+        map_name: String,
         acl_id: Uuid,
     },
     /// Dormant: emitted by a future admin-override map-ownership-change handler.
     AdminMapOwnershipChanged {
         map_id: Uuid,
         old_owner: Uuid,
+        old_owner_name: Option<String>,
         new_owner: Uuid,
+        new_owner_name: Option<String>,
     },
     /// Dormant: emitted by a future admin-override map-hard-delete handler.
     AdminMapHardDeleted {
@@ -265,7 +274,9 @@ pub enum AuditEvent {
     AdminAclOwnershipChanged {
         acl_id: Uuid,
         old_owner: Uuid,
+        old_owner_name: Option<String>,
         new_owner: Uuid,
+        new_owner_name: Option<String>,
     },
     /// Dormant: emitted by a future admin-override acl-hard-delete handler.
     AdminAclHardDeleted {
@@ -339,17 +350,23 @@ impl AuditEvent {
                 "character_name": character_name,
             }),
             Self::CharacterRemoved {
-                eve_character_id, ..
+                eve_character_id,
+                character_name,
+                ..
             } => json!({
                 "eve_character_id": eve_character_id,
+                "character_name": character_name,
             }),
             // The `eve_character_id` carried here is the *new* main; the actor
             // character snapshot will be the outgoing main (resolved at write
             // time, before the is_main flip commits).
             Self::CharacterSetMain {
-                eve_character_id, ..
+                eve_character_id,
+                character_name,
+                ..
             } => json!({
                 "eve_character_id": eve_character_id,
+                "character_name": character_name,
             }),
             // actor is NULL for login-time orphan claim and Some(account) for
             // the add-character flow — include account_id for consistency so
@@ -367,8 +384,11 @@ impl AuditEvent {
                 "key_id": key_id,
                 "name": name,
             }),
-            Self::ApiKeyRevoked { key_id, .. } => json!({
+            Self::ApiKeyRevoked {
+                key_id, key_name, ..
+            } => json!({
                 "key_id": key_id,
+                "key_name": key_name,
             }),
             // actor is NULL for first-account bootstrap and Some(admin) for
             // future admin-initiated grant — include target account_id.
@@ -380,25 +400,37 @@ impl AuditEvent {
             Self::ServerAdminRevoked { account_id } => json!({ "account_id": account_id }),
             Self::EveCharacterBlocked {
                 eve_character_id,
+                character_name,
                 reason,
             } => json!({
                 "eve_character_id": eve_character_id,
+                "character_name": character_name,
                 "reason": reason,
             }),
-            Self::EveCharacterUnblocked { eve_character_id } => json!({
+            Self::EveCharacterUnblocked {
+                eve_character_id,
+                character_name,
+            } => json!({
                 "eve_character_id": eve_character_id,
+                "character_name": character_name,
             }),
             // actor is NULL (no session) — the rejected character is the subject,
             // carried here so the row is self-contained.
-            Self::BlockedLoginRejected { eve_character_id } => json!({
+            Self::BlockedLoginRejected {
+                eve_character_id,
+                character_name,
+            } => json!({
                 "eve_character_id": eve_character_id,
+                "character_name": character_name,
             }),
             Self::CharacterOwnerMismatch {
                 account_id,
                 eve_character_id,
+                character_name,
             } => json!({
                 "account_id": account_id,
                 "eve_character_id": eve_character_id,
+                "character_name": character_name,
             }),
             Self::MapCreated { map_id, name, .. } => json!({
                 "map_id": map_id,
@@ -426,63 +458,81 @@ impl AuditEvent {
                 "acl_id": acl_id,
                 "name": name,
             }),
+            // The ACL is the target (named via target_name); the member is the
+            // secondary entity, carried with its name + EVE id. The internal
+            // member UUID is deliberately NOT stored — it is deleted on remove.
             Self::AclMemberAdded {
-                acl_id,
-                member_id,
+                member_name,
+                eve_entity_id,
                 member_type,
                 permission,
                 ..
             } => json!({
-                "acl_id": acl_id,
-                "member_id": member_id,
+                "member_name": member_name,
+                "eve_entity_id": eve_entity_id,
                 "member_type": member_type,
                 "permission": permission,
             }),
             Self::AclMemberPermissionChanged {
-                acl_id,
-                member_id,
+                member_name,
+                eve_entity_id,
                 permission,
                 ..
             } => json!({
-                "acl_id": acl_id,
-                "member_id": member_id,
+                "member_name": member_name,
+                "eve_entity_id": eve_entity_id,
                 "permission": permission,
             }),
             Self::AclMemberRemoved {
-                acl_id, member_id, ..
+                member_name,
+                eve_entity_id,
+                ..
             } => json!({
-                "acl_id": acl_id,
-                "member_id": member_id,
+                "member_name": member_name,
+                "eve_entity_id": eve_entity_id,
             }),
-            Self::AclAttachedToMap { map_id, acl_id, .. } => json!({
+            // The ACL is the target; the map is the secondary entity carried
+            // with id + name. `acl_name` is the target's name, surfaced in
+            // details too so the relationship reads as a pair.
+            Self::AclAttachedToMap {
+                map_id, map_name, ..
+            } => json!({
                 "map_id": map_id,
-                "acl_id": acl_id,
+                "map_name": map_name,
             }),
-            Self::AclDetachedFromMap { map_id, acl_id, .. } => json!({
+            Self::AclDetachedFromMap {
+                map_id, map_name, ..
+            } => json!({
                 "map_id": map_id,
-                "acl_id": acl_id,
+                "map_name": map_name,
             }),
             Self::AdminMapOwnershipChanged {
-                map_id,
                 old_owner,
+                old_owner_name,
                 new_owner,
+                new_owner_name,
+                ..
             } => json!({
-                "map_id": map_id,
                 "old_owner": old_owner,
+                "old_owner_name": old_owner_name,
                 "new_owner": new_owner,
+                "new_owner_name": new_owner_name,
             }),
             Self::AdminMapHardDeleted { map_id, name } => json!({
                 "map_id": map_id,
                 "name": name,
             }),
             Self::AdminAclOwnershipChanged {
-                acl_id,
                 old_owner,
+                old_owner_name,
                 new_owner,
+                new_owner_name,
+                ..
             } => json!({
-                "acl_id": acl_id,
                 "old_owner": old_owner,
+                "old_owner_name": old_owner_name,
                 "new_owner": new_owner,
+                "new_owner_name": new_owner_name,
             }),
             Self::AdminAclHardDeleted { acl_id, name } => json!({
                 "acl_id": acl_id,
@@ -508,7 +558,7 @@ impl AuditEvent {
             | Self::ServerAdminGranted { account_id, .. }
             | Self::ServerAdminRevoked { account_id } => AuditTarget::account(*account_id),
 
-            // Character targets carrying a name.
+            // Character targets carrying an always-present name.
             Self::OrphanCharacterClaimed {
                 eve_character_id,
                 character_name,
@@ -518,23 +568,38 @@ impl AuditEvent {
                 eve_character_id,
                 character_name,
                 ..
-            } => AuditTarget::character(*eve_character_id, Some(character_name)),
-
-            // Character targets with no carried name.
-            Self::CharacterRemoved {
-                eve_character_id, ..
+            }
+            | Self::CharacterRemoved {
+                eve_character_id,
+                character_name,
+                ..
             }
             | Self::CharacterSetMain {
-                eve_character_id, ..
+                eve_character_id,
+                character_name,
+                ..
             }
-            | Self::EveCharacterBlocked {
-                eve_character_id, ..
-            }
-            | Self::EveCharacterUnblocked { eve_character_id }
-            | Self::BlockedLoginRejected { eve_character_id }
             | Self::CharacterOwnerMismatch {
-                eve_character_id, ..
-            } => AuditTarget::character(*eve_character_id, None),
+                eve_character_id,
+                character_name,
+                ..
+            } => AuditTarget::character(*eve_character_id, Some(character_name)),
+
+            // Character targets carrying a name the emit site may not have at
+            // the SSO/admin boundary (left NULL when absent).
+            Self::EveCharacterBlocked {
+                eve_character_id,
+                character_name,
+                ..
+            }
+            | Self::EveCharacterUnblocked {
+                eve_character_id,
+                character_name,
+            }
+            | Self::BlockedLoginRejected {
+                eve_character_id,
+                character_name,
+            } => AuditTarget::character(*eve_character_id, character_name.as_deref()),
 
             // Map targets carrying a name.
             Self::MapCreated { map_id, name, .. }
@@ -708,8 +773,10 @@ fn substring_pattern(fragment: &str) -> String {
 /// `actor_account_id`, `target_type`, `target_id`, `target_name`
 /// (case-insensitive *substring* match via `ILIKE '%fragment%'`, LIKE
 /// metacharacters in the fragment escaped to match literally), `q` (the
-/// combined name search matching `actor_character_name` OR `target_name` as a
-/// case-insensitive substring, same escaping), the `since` lower time bound
+/// combined name search matching `actor_character_name` OR `target_name` OR the
+/// textual representation of `details` as a case-insensitive substring, same
+/// escaping — so a name snapshotted only into `details`, e.g. an ACL member, is
+/// findable), the `since` lower time bound
 /// (`occurred_at >= since`), and the `before` keyset cursor / exclusive upper
 /// time bound (`occurred_at < before`). `since` and `before` together express
 /// the time window; the `since` range uses `audit_log_occurred_at_idx`.
@@ -747,7 +814,8 @@ pub async fn list_audit_log(
           AND ($4::TEXT IS NULL        OR target_id        = $4)
           AND ($5::TEXT IS NULL        OR target_name ILIKE $5 ESCAPE '\')
           AND ($6::TEXT IS NULL        OR (actor_character_name ILIKE $6 ESCAPE '\'
-                                          OR target_name        ILIKE $6 ESCAPE '\'))
+                                          OR target_name        ILIKE $6 ESCAPE '\'
+                                          OR details::text      ILIKE $6 ESCAPE '\'))
           AND ($7::TIMESTAMPTZ IS NULL OR occurred_at     >= $7)
           AND ($8::TIMESTAMPTZ IS NULL OR occurred_at      < $8)
         ORDER BY occurred_at DESC
@@ -863,9 +931,11 @@ mod tests {
         let event = AuditEvent::CharacterRemoved {
             account_id: id,
             eve_character_id: 42,
+            character_name: "Doomed Alt".into(),
         };
         assert_eq!(event.event_type(), "character_removed");
         assert_eq!(event.details()["eve_character_id"], 42i64);
+        assert_eq!(event.details()["character_name"], "Doomed Alt");
         assert!(event.details().get("account_id").is_none());
     }
 
@@ -875,12 +945,14 @@ mod tests {
         let event = AuditEvent::CharacterOwnerMismatch {
             account_id: id,
             eve_character_id: 555,
+            character_name: "Transferred Pilot".into(),
         };
         assert_eq!(event.event_type(), "character_owner_mismatch");
         // The sweep has no session, so the previous-owner account id lives in
         // details (actor column is NULL), alongside the subject character.
         assert_eq!(event.details()["account_id"], serde_json::json!(id));
         assert_eq!(event.details()["eve_character_id"], 555i64);
+        assert_eq!(event.details()["character_name"], "Transferred Pilot");
     }
 
     #[test]
@@ -889,9 +961,11 @@ mod tests {
         let event = AuditEvent::CharacterSetMain {
             account_id: id,
             eve_character_id: 99,
+            character_name: "New Main".into(),
         };
         assert_eq!(event.event_type(), "character_set_main");
         assert_eq!(event.details()["eve_character_id"], 99i64);
+        assert_eq!(event.details()["character_name"], "New Main");
         assert!(event.details().get("account_id").is_none());
     }
 
@@ -932,9 +1006,14 @@ mod tests {
     fn api_key_revoked_serialises_correctly() {
         let account_id = test_uuid();
         let key_id = other_uuid();
-        let event = AuditEvent::ApiKeyRevoked { account_id, key_id };
+        let event = AuditEvent::ApiKeyRevoked {
+            account_id,
+            key_id,
+            key_name: "CI Deploy Key".into(),
+        };
         assert_eq!(event.event_type(), "api_key_revoked");
         assert_eq!(event.details()["key_id"], key_id.to_string());
+        assert_eq!(event.details()["key_name"], "CI Deploy Key");
         assert!(event.details().get("account_id").is_none());
     }
 
@@ -973,11 +1052,13 @@ mod tests {
     fn eve_character_blocked_serialises_correctly_with_reason() {
         let event = AuditEvent::EveCharacterBlocked {
             eve_character_id: 12345,
+            character_name: Some("Griefer".into()),
             reason: Some("botting".into()),
         };
         assert_eq!(event.event_type(), "eve_character_blocked");
         let d = event.details();
         assert_eq!(d["eve_character_id"], 12345i64);
+        assert_eq!(d["character_name"], "Griefer");
         assert_eq!(d["reason"], "botting");
     }
 
@@ -985,30 +1066,34 @@ mod tests {
     fn eve_character_blocked_serialises_correctly_without_reason() {
         let event = AuditEvent::EveCharacterBlocked {
             eve_character_id: 12345,
+            character_name: None,
             reason: None,
         };
         assert!(event.details()["reason"].is_null());
+        assert!(event.details()["character_name"].is_null());
     }
 
     #[test]
     fn eve_character_unblocked_serialises_correctly() {
         let event = AuditEvent::EveCharacterUnblocked {
             eve_character_id: 12345,
+            character_name: Some("Reformed Pilot".into()),
         };
         assert_eq!(event.event_type(), "eve_character_unblocked");
         assert_eq!(event.details()["eve_character_id"], 12345i64);
+        assert_eq!(event.details()["character_name"], "Reformed Pilot");
     }
 
     #[test]
     fn blocked_login_rejected_serialises_correctly() {
         let event = AuditEvent::BlockedLoginRejected {
             eve_character_id: 98765,
+            character_name: Some("Sneaky Alt".into()),
         };
         assert_eq!(event.event_type(), "blocked_login_rejected");
         let d = event.details();
         assert_eq!(d["eve_character_id"], 98765i64);
-        // The subject character is the only payload — actor is NULL at emit time.
-        assert_eq!(d.as_object().unwrap().len(), 1);
+        assert_eq!(d["character_name"], "Sneaky Alt");
     }
 
     #[test]
@@ -1090,48 +1175,62 @@ mod tests {
     fn acl_member_added_serialises_correctly() {
         let account_id = test_uuid();
         let acl_id = other_uuid();
-        let member_id = Uuid::parse_str("00000000-0000-0000-0000-000000000003").unwrap();
         let event = AuditEvent::AclMemberAdded {
             account_id,
             acl_id,
-            member_id,
+            member_name: "Wasp 222".into(),
+            eve_entity_id: Some(95465499),
             member_type: "character".into(),
-            permission: "read".into(),
+            permission: "admin".into(),
         };
         assert_eq!(event.event_type(), "acl_member_added");
         let d = event.details();
-        assert_eq!(d["member_id"], member_id.to_string());
+        // Self-contained: the member's name + EVE id are snapshotted, the
+        // internal member UUID is NOT stored, and acl_id (== target_id) is gone.
+        assert_eq!(d["member_name"], "Wasp 222");
+        assert_eq!(d["eve_entity_id"], 95465499i64);
         assert_eq!(d["member_type"], "character");
-        assert_eq!(d["permission"], "read");
+        assert_eq!(d["permission"], "admin");
+        assert!(d.get("member_id").is_none());
+        assert!(d.get("acl_id").is_none());
     }
 
     #[test]
     fn acl_member_permission_changed_serialises_correctly() {
         let account_id = test_uuid();
         let acl_id = other_uuid();
-        let member_id = Uuid::parse_str("00000000-0000-0000-0000-000000000003").unwrap();
         let event = AuditEvent::AclMemberPermissionChanged {
             account_id,
             acl_id,
-            member_id,
+            member_name: "Wasp 222".into(),
+            eve_entity_id: Some(95465499),
             permission: "read_write".into(),
         };
         assert_eq!(event.event_type(), "acl_member_permission_changed");
-        assert_eq!(event.details()["permission"], "read_write");
+        let d = event.details();
+        assert_eq!(d["permission"], "read_write");
+        assert_eq!(d["member_name"], "Wasp 222");
+        assert_eq!(d["eve_entity_id"], 95465499i64);
+        assert!(d.get("member_id").is_none());
     }
 
     #[test]
     fn acl_member_removed_serialises_correctly() {
         let account_id = test_uuid();
         let acl_id = other_uuid();
-        let member_id = Uuid::parse_str("00000000-0000-0000-0000-000000000003").unwrap();
         let event = AuditEvent::AclMemberRemoved {
             account_id,
             acl_id,
-            member_id,
+            member_name: "Wasp 222".into(),
+            eve_entity_id: Some(95465499),
         };
         assert_eq!(event.event_type(), "acl_member_removed");
-        assert_eq!(event.details()["member_id"], member_id.to_string());
+        let d = event.details();
+        // The row stays readable after the acl_member row is deleted: the name
+        // is snapshotted, not joined.
+        assert_eq!(d["member_name"], "Wasp 222");
+        assert_eq!(d["eve_entity_id"], 95465499i64);
+        assert!(d.get("member_id").is_none());
     }
 
     #[test]
@@ -1142,12 +1241,16 @@ mod tests {
         let event = AuditEvent::AclAttachedToMap {
             account_id,
             map_id,
+            map_name: "Home Chain".into(),
             acl_id,
         };
         assert_eq!(event.event_type(), "acl_attached_to_map");
         let d = event.details();
+        // The map is the secondary entity (id + name); the ACL is the target,
+        // named via target_name, so acl_id is not duplicated here.
         assert_eq!(d["map_id"], map_id.to_string());
-        assert_eq!(d["acl_id"], acl_id.to_string());
+        assert_eq!(d["map_name"], "Home Chain");
+        assert!(d.get("acl_id").is_none());
     }
 
     #[test]
@@ -1158,12 +1261,14 @@ mod tests {
         let event = AuditEvent::AclDetachedFromMap {
             account_id,
             map_id,
+            map_name: "Home Chain".into(),
             acl_id,
         };
         assert_eq!(event.event_type(), "acl_detached_from_map");
         let d = event.details();
         assert_eq!(d["map_id"], map_id.to_string());
-        assert_eq!(d["acl_id"], acl_id.to_string());
+        assert_eq!(d["map_name"], "Home Chain");
+        assert!(d.get("acl_id").is_none());
     }
 
     #[test]
@@ -1174,13 +1279,18 @@ mod tests {
         let event = AuditEvent::AdminMapOwnershipChanged {
             map_id,
             old_owner: old,
+            old_owner_name: Some("Wasp 222".into()),
             new_owner: new,
+            new_owner_name: Some("Wasp 223".into()),
         };
         assert_eq!(event.event_type(), "admin_map_ownership_changed");
         let d = event.details();
-        assert_eq!(d["map_id"], map_id.to_string());
+        // map_id (== target_id) is dropped; the owners carry id + snapshotted name.
+        assert!(d.get("map_id").is_none());
         assert_eq!(d["old_owner"], old.to_string());
+        assert_eq!(d["old_owner_name"], "Wasp 222");
         assert_eq!(d["new_owner"], new.to_string());
+        assert_eq!(d["new_owner_name"], "Wasp 223");
     }
 
     #[test]
@@ -1202,9 +1312,15 @@ mod tests {
         let event = AuditEvent::AdminAclOwnershipChanged {
             acl_id,
             old_owner: old,
+            old_owner_name: Some("Wasp 222".into()),
             new_owner: new,
+            new_owner_name: Some("Wasp 223".into()),
         };
         assert_eq!(event.event_type(), "admin_acl_ownership_changed");
+        let d = event.details();
+        assert!(d.get("acl_id").is_none());
+        assert_eq!(d["old_owner_name"], "Wasp 222");
+        assert_eq!(d["new_owner_name"], "Wasp 223");
     }
 
     #[test]
@@ -1303,6 +1419,7 @@ mod tests {
             &AuditEvent::ApiKeyRevoked {
                 account_id: id,
                 key_id: other_uuid(),
+                key_name: "k".into(),
             },
             id,
         );
@@ -1342,35 +1459,79 @@ mod tests {
     }
 
     #[test]
-    fn target_nameless_character_events() {
+    fn target_named_character_subject_events() {
+        // Character-subject events now carry the subject's name into target_name
+        // (self-contained naming), where the emit site can supply it.
         let id = test_uuid();
-        assert_nameless_target(
+        assert_named_target(
             &AuditEvent::CharacterRemoved {
                 account_id: id,
                 eve_character_id: 42,
+                character_name: "Doomed Alt".into(),
             },
             "character",
             "42",
+            "Doomed Alt",
         );
-        assert_nameless_target(
+        assert_named_target(
             &AuditEvent::CharacterSetMain {
                 account_id: id,
                 eve_character_id: 99,
+                character_name: "New Main".into(),
             },
             "character",
             "99",
+            "New Main",
         );
-        assert_nameless_target(
+        assert_named_target(
+            &AuditEvent::CharacterOwnerMismatch {
+                account_id: test_uuid(),
+                eve_character_id: 24680,
+                character_name: "Transferred".into(),
+            },
+            "character",
+            "24680",
+            "Transferred",
+        );
+        // The SSO/admin-boundary events carry an Option name; Some → Known.
+        assert_named_target(
             &AuditEvent::EveCharacterBlocked {
                 eve_character_id: 12345,
+                character_name: Some("Griefer".into()),
                 reason: None,
             },
             "character",
             "12345",
+            "Griefer",
         );
-        assert_nameless_target(
+        assert_named_target(
             &AuditEvent::EveCharacterUnblocked {
                 eve_character_id: 12345,
+                character_name: Some("Reformed".into()),
+            },
+            "character",
+            "12345",
+            "Reformed",
+        );
+        assert_named_target(
+            &AuditEvent::BlockedLoginRejected {
+                eve_character_id: 98765,
+                character_name: Some("Sneaky Alt".into()),
+            },
+            "character",
+            "98765",
+            "Sneaky Alt",
+        );
+    }
+
+    #[test]
+    fn target_nameless_when_subject_name_absent() {
+        // When the SSO-boundary emit site has no name, target_name is left NULL.
+        assert_nameless_target(
+            &AuditEvent::EveCharacterBlocked {
+                eve_character_id: 12345,
+                character_name: None,
+                reason: None,
             },
             "character",
             "12345",
@@ -1378,17 +1539,10 @@ mod tests {
         assert_nameless_target(
             &AuditEvent::BlockedLoginRejected {
                 eve_character_id: 98765,
+                character_name: None,
             },
             "character",
             "98765",
-        );
-        assert_nameless_target(
-            &AuditEvent::CharacterOwnerMismatch {
-                account_id: test_uuid(),
-                eve_character_id: 24680,
-            },
-            "character",
-            "24680",
         );
     }
 
@@ -1429,7 +1583,9 @@ mod tests {
             &AuditEvent::AdminMapOwnershipChanged {
                 map_id,
                 old_owner: account_id,
+                old_owner_name: None,
                 new_owner: other_uuid(),
+                new_owner_name: None,
             },
             "map",
             &map_id.to_string(),
@@ -1486,7 +1642,8 @@ mod tests {
             &AuditEvent::AclMemberAdded {
                 account_id,
                 acl_id,
-                member_id,
+                member_name: "Wasp 222".into(),
+                eve_entity_id: Some(95465499),
                 member_type: "character".into(),
                 permission: "read".into(),
             },
@@ -1497,7 +1654,8 @@ mod tests {
             &AuditEvent::AclMemberPermissionChanged {
                 account_id,
                 acl_id,
-                member_id,
+                member_name: "Wasp 222".into(),
+                eve_entity_id: Some(95465499),
                 permission: "read_write".into(),
             },
             "acl",
@@ -1507,7 +1665,8 @@ mod tests {
             &AuditEvent::AclMemberRemoved {
                 account_id,
                 acl_id,
-                member_id,
+                member_name: "Wasp 222".into(),
+                eve_entity_id: Some(95465499),
             },
             "acl",
             &acl_id.to_string(),
@@ -1516,6 +1675,7 @@ mod tests {
             &AuditEvent::AclAttachedToMap {
                 account_id,
                 map_id: other_uuid(),
+                map_name: "Home Chain".into(),
                 acl_id,
             },
             "acl",
@@ -1525,6 +1685,7 @@ mod tests {
             &AuditEvent::AclDetachedFromMap {
                 account_id,
                 map_id: other_uuid(),
+                map_name: "Home Chain".into(),
                 acl_id,
             },
             "acl",
@@ -1534,7 +1695,9 @@ mod tests {
             &AuditEvent::AdminAclOwnershipChanged {
                 acl_id,
                 old_owner: account_id,
+                old_owner_name: None,
                 new_owner: member_id,
+                new_owner_name: None,
             },
             "acl",
             &acl_id.to_string(),
@@ -2008,6 +2171,7 @@ mod tests {
             None,
             AuditEvent::EveCharacterBlocked {
                 eve_character_id: 314159,
+                character_name: None,
                 reason: Some("botting".into()),
             },
         )
@@ -2263,6 +2427,71 @@ mod tests {
             2,
             "both actor- and target-side matches returned"
         );
+    }
+
+    #[sqlx::test]
+    async fn list_audit_log_q_matches_name_only_in_details(pool: PgPool) {
+        // The "Wasp 222" case: the member name lives only in details (actor and
+        // target_name are unrelated), yet the row is found via details::text.
+        sqlx::query!(
+            "INSERT INTO audit_log
+               (event_type, details, actor_character_name, target_type, target_id, target_name)
+             VALUES ('acl_member_added',
+                     '{\"member_name\":\"Wasp 222\",\"permission\":\"admin\"}'::jsonb,
+                     'Some Admin', 'acl', $1, 'Corp ACL')",
+            Uuid::new_v4().to_string(),
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        // A row where "Wasp 222" appears nowhere — excluded.
+        insert_named_row(&pool, "map_created", Some("Nobody"), Some("Empty")).await;
+
+        let rows = list_audit_log(
+            &pool,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("wasp 222"),
+            None,
+            None,
+            10,
+        )
+        .await
+        .unwrap();
+        assert_eq!(rows.len(), 1, "matched via details::text");
+        assert_eq!(rows[0].event_type, "acl_member_added");
+    }
+
+    #[sqlx::test]
+    async fn list_audit_log_q_matches_non_name_details_value(pool: PgPool) {
+        // The accepted trade-off: q matches any details text, including non-name
+        // scalar values like a permission. Documented behaviour, not a bug.
+        sqlx::query!(
+            "INSERT INTO audit_log (event_type, details)
+             VALUES ('acl_member_added', '{\"permission\":\"admin\"}'::jsonb)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let rows = list_audit_log(
+            &pool,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("admin"),
+            None,
+            None,
+            10,
+        )
+        .await
+        .unwrap();
+        assert_eq!(rows.len(), 1);
     }
 
     #[sqlx::test]

@@ -251,6 +251,28 @@ test.describe('/admin/audit browser', () => {
 		await expect(page).toHaveURL(/window=30d/);
 		await expect(page.getByText('Old Wasp ACL')).toBeVisible();
 	});
+
+	test('a row Details dialog shows the snapshotted fields and closes', async ({ page }) => {
+		await page.goto('/admin/audit');
+
+		// The acl_member_added row (target "Corp ACL") carries the added member's
+		// name in details. Open its Details dialog.
+		const dialog = page.getByRole('dialog', { name: 'Event details' });
+		await expect(dialog).toBeHidden();
+
+		await page.getByRole('button', { name: 'View details' }).first().click();
+		await expect(dialog).toBeVisible();
+
+		// The snapshotted member name is rendered verbatim — answering "who was
+		// added" without leaving the page or any id resolution.
+		await expect(dialog.getByText('member_name')).toBeVisible();
+		await expect(dialog.getByText('Wasp 222')).toBeVisible();
+
+		// Dismiss; the dialog closes and the audit list is unchanged.
+		await dialog.getByRole('button', { name: 'Close' }).click();
+		await expect(dialog).toBeHidden();
+		await expect(page.getByText('Corp ACL')).toBeVisible();
+	});
 });
 
 test.describe('/admin (non-admin session)', () => {

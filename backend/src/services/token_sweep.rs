@@ -170,6 +170,7 @@ pub async fn run_once(
                         AuditEvent::CharacterOwnerMismatch {
                             account_id,
                             eve_character_id: ch.eve_character_id,
+                            character_name: ch.name.clone(),
                         },
                     )
                     .await?;

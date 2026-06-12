@@ -73,9 +73,11 @@ pub struct AclNameRequest {
 pub struct AddMemberRequest {
     /// One of `character`, `corporation`, `alliance`.
     pub member_type: String,
-    /// Required for corporation/alliance members; the EVE entity id.
+    /// The member's durable EVE id — the EVE character/corporation/alliance id.
+    /// Required for every member type (the picker has it from its ESI search).
     pub eve_entity_id: Option<i64>,
-    /// Required for character members; the `eve_character.id` UUID.
+    /// Required for character members; the `eve_character.id` UUID (the internal
+    /// FK link). `None` for corporation/alliance members.
     pub character_id: Option<Uuid>,
     /// Optional display-name snapshot.
     #[serde(default)]

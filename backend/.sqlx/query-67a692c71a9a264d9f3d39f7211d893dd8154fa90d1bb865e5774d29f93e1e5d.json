@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO audit_log (event_type, details)\n             VALUES ('acl_member_added', '{\"permission\":\"admin\"}'::jsonb)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "67a692c71a9a264d9f3d39f7211d893dd8154fa90d1bb865e5774d29f93e1e5d"
+}

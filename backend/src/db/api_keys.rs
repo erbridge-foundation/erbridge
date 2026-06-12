@@ -151,27 +151,30 @@ pub async fn delete_for_account(pool: &PgPool, id: Uuid, account_id: Uuid) -> Re
 }
 
 /// Transactional variant of [`delete_for_account`] for callers that need to
-/// commit the delete alongside an audit emission in one transaction.
+/// commit the delete alongside an audit emission in one transaction. Returns the
+/// deleted key's `name` (so the caller can snapshot the label into the audit
+/// event), or `None` if no matching key was deleted.
 pub async fn delete_for_account_in_tx(
     tx: &mut Transaction<'_, Postgres>,
     id: Uuid,
     account_id: Uuid,
-) -> Result<bool> {
-    let result = sqlx::query!(
+) -> Result<Option<String>> {
+    let row = sqlx::query!(
         r#"
         DELETE FROM api_key
         WHERE id = $1
           AND account_id = $2
           AND scope = 'account'
+        RETURNING name
         "#,
         id,
         account_id,
     )
-    .execute(&mut **tx)
+    .fetch_optional(&mut **tx)
     .await
     .context("failed to delete api key")?;
 
-    Ok(result.rows_affected() > 0)
+    Ok(row.map(|r| r.name))
 }
 
 #[cfg(test)]

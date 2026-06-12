@@ -170,6 +170,9 @@ function seededAuditEntries(): AuditEntry[] {
 			occurred_at: atToday(10 * HOUR + 30 * MIN),
 			actor_character_name: 'Wasp 223',
 			event_type: 'acl_member_added',
+			// Self-contained: the added member's name is snapshotted into details
+			// (the Details dialog reads this verbatim, no id resolution).
+			details: { member_name: 'Wasp 222', member_type: 'character', permission: 'admin' },
 			target_type: 'acl',
 			target_id: 'acl-1',
 			target_name: 'Corp ACL'
