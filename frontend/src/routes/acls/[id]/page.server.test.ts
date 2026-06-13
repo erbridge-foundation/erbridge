@@ -247,12 +247,30 @@ describe('acls/[id] addMember action — identifier by type', () => {
 		);
 	});
 
-	it('fails 400 when a character member has no character_id', async () => {
+	it('sends a character member with no character_id (backend mints the orphan)', async () => {
+		vi.mocked(addAclMember).mockResolvedValue({ ...aMember, character_id: 'minted-uuid' });
 		const result = await actions.addMember(
-			makeActionEvent('acl1', { member_type: 'character', permission: 'read' })
+			makeActionEvent('acl1', {
+				member_type: 'character',
+				eve_entity_id: '95465499',
+				name: 'New Pilot',
+				permission: 'read'
+			})
 		);
-		expect(result).toMatchObject({ status: 400, data: { action: 'addMember', code: 'bad_request' } });
-		expect(addAclMember).not.toHaveBeenCalled();
+		expect(result).toBeUndefined();
+		// No character_id is forwarded — the backend mints from eve_entity_id.
+		expect(addAclMember).toHaveBeenCalledWith(
+			expect.anything(),
+			'http://backend:3000',
+			'acl1',
+			{
+				member_type: 'character',
+				permission: 'read',
+				name: 'New Pilot',
+				eve_entity_id: 95465499
+			},
+			'session=jwt'
+		);
 	});
 
 	it('fails 400 when a corporation member has a non-numeric eve_entity_id', async () => {

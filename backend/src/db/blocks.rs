@@ -91,6 +91,25 @@ pub async fn list_blocks(pool: &PgPool) -> Result<Vec<BlockedEveCharacter>> {
         .collect())
 }
 
+/// The subset of `eve_character_ids` that are blocked, as a set, in a single
+/// query (`WHERE eve_character_id = ANY($1)`). Backs the admin search's
+/// `already_blocked` annotation without one query per result. Membership in the
+/// returned set is the block flag; ids not in the set are unblocked.
+pub async fn blocked_set(
+    pool: &PgPool,
+    eve_character_ids: &[i64],
+) -> Result<std::collections::HashSet<i64>> {
+    let rows = sqlx::query!(
+        "SELECT eve_character_id FROM blocked_eve_character WHERE eve_character_id = ANY($1)",
+        eve_character_ids
+    )
+    .fetch_all(pool)
+    .await
+    .context("failed to fetch blocked set")?;
+
+    Ok(rows.into_iter().map(|r| r.eve_character_id).collect())
+}
+
 /// Whether a specific EVE character id is in the block list. Used by the SSO
 /// callback before any account/character write.
 pub async fn is_eve_character_blocked(pool: &PgPool, eve_character_id: i64) -> Result<bool> {
@@ -204,5 +223,26 @@ mod tests {
         block(&pool, 42, admin).await;
         assert!(is_eve_character_blocked(&pool, 42).await.unwrap());
         assert!(!is_eve_character_blocked(&pool, 43).await.unwrap());
+    }
+
+    #[sqlx::test]
+    async fn blocked_set_returns_only_blocked_ids(pool: PgPool) {
+        let admin = accounts::create_account(&pool).await.unwrap();
+        block(&pool, 100, admin).await;
+        block(&pool, 300, admin).await;
+
+        // Query a mixed set: 100 and 300 are blocked; 200 and 400 are not.
+        let set = blocked_set(&pool, &[100, 200, 300, 400]).await.unwrap();
+        assert!(set.contains(&100));
+        assert!(set.contains(&300));
+        assert!(!set.contains(&200));
+        assert!(!set.contains(&400));
+        assert_eq!(set.len(), 2);
+    }
+
+    #[sqlx::test]
+    async fn blocked_set_empty_input_is_empty(pool: PgPool) {
+        let set = blocked_set(&pool, &[]).await.unwrap();
+        assert!(set.is_empty());
     }
 }

@@ -76,8 +76,10 @@ export const actions: Actions = {
 
 	// Add a member. The picker submits the already-resolved identity. Every
 	// member carries `eve_entity_id` — the durable EVE id (character/corp/
-	// alliance) — so the audit snapshot is uniform. A character additionally
-	// carries `character_id` (the eve_character.id UUID, the internal FK link).
+	// alliance) — so the audit snapshot is uniform. A character MAY additionally
+	// carry `character_id` (the eve_character.id UUID) when the search matched a
+	// local row; when absent (an unknown character) the backend mints the orphan
+	// from `eve_entity_id` at add time.
 	addMember: async ({ request, fetch, params }) => {
 		const cookie = request.headers.get('cookie') ?? '';
 		const data = await request.formData();
@@ -109,11 +111,13 @@ export const actions: Actions = {
 		body.eve_entity_id = eve_entity_id;
 
 		if (memberType === 'character') {
+			// character_id is optional: forward it only when the picker carried it
+			// (the search matched an existing row). Absent → the backend mints the
+			// orphan from eve_entity_id.
 			const characterId = data.get('character_id');
-			if (typeof characterId !== 'string' || characterId === '') {
-				return fail(400, { action: 'addMember', code: 'bad_request', message: 'No character selected' });
+			if (typeof characterId === 'string' && characterId !== '') {
+				body.character_id = characterId;
 			}
-			body.character_id = characterId;
 		}
 
 		try {

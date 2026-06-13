@@ -5,12 +5,15 @@ use uuid::Uuid;
 use crate::services::entity_search::{CharacterMatch, EntityMatch, EntitySearchResults};
 
 /// A character match, carrying the `eve_character.id` UUID an `acl_member`
-/// references (minted as an orphan if the character had no row) plus the numeric
-/// `eve_character_id` and current name.
+/// references **only when a local row already exists** (account-owned or orphan),
+/// plus the numeric `eve_character_id` and current name. When the character is
+/// unknown, `id` is null — the search mints nothing, and the orphan is minted at
+/// the ACL member add (which accepts `eve_entity_id` with no `character_id`).
 #[derive(Serialize, ToSchema)]
 pub struct EntityCharacterDto {
     /// The internal `eve_character.id` UUID — the value an `acl_member` stores.
-    pub id: Uuid,
+    /// Null when no local row exists for the character yet.
+    pub id: Option<Uuid>,
     pub eve_character_id: i64,
     pub name: String,
 }

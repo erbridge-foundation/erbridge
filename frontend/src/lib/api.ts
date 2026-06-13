@@ -199,6 +199,9 @@ export interface AclMemberDto {
 export interface AddMemberRequest {
 	member_type: string;
 	eve_entity_id?: number | null;
+	// Optional for character members: when present the existing eve_character row
+	// is referenced; when absent the backend mints the orphan from eve_entity_id
+	// at add time. Always omitted for corporation/alliance members.
 	character_id?: string | null;
 	name?: string;
 	permission: string;
@@ -210,7 +213,10 @@ export interface UpdateMemberRequest {
 
 // keep in sync with: backend/src/dto/entity.rs
 export interface EntityCharacterDto {
-	id: string;
+	// The internal eve_character.id UUID — present only when a local row already
+	// exists for the character. Null for an unknown character (the search mints
+	// nothing; the orphan is minted at the ACL member add from eve_entity_id).
+	id: string | null;
 	eve_character_id: number;
 	name: string;
 }

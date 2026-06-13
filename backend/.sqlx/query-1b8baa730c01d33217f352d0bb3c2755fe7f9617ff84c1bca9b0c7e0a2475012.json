@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT account_id FROM eve_character WHERE eve_character_id = 8888",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "account_id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "1b8baa730c01d33217f352d0bb3c2755fe7f9617ff84c1bca9b0c7e0a2475012"
+}

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            SELECT id, account_id, name, corporation_id, corporation_name,\n                   encrypted_refresh_token, is_main\n            FROM eve_character WHERE eve_character_id = 999\n            ",
+  "query": "\n            SELECT id, account_id, name, encrypted_refresh_token, is_main, scopes\n            FROM eve_character WHERE eve_character_id = 123456\n            ",
   "describe": {
     "columns": [
       {
@@ -20,23 +20,18 @@
       },
       {
         "ordinal": 3,
-        "name": "corporation_id",
-        "type_info": "Int8"
-      },
-      {
-        "ordinal": 4,
-        "name": "corporation_name",
-        "type_info": "Text"
-      },
-      {
-        "ordinal": 5,
         "name": "encrypted_refresh_token",
         "type_info": "Bytea"
       },
       {
-        "ordinal": 6,
+        "ordinal": 4,
         "name": "is_main",
         "type_info": "Bool"
+      },
+      {
+        "ordinal": 5,
+        "name": "scopes",
+        "type_info": "TextArray"
       }
     ],
     "parameters": {
@@ -46,11 +41,10 @@
       false,
       true,
       false,
-      false,
-      false,
       true,
+      false,
       false
     ]
   },
-  "hash": "598391fa06653856b28ce9c2412205f2c6a9377afb6862a71817bdfdbe037f47"
+  "hash": "2c07fbbb8d13002066af34de529035973047180f620be42cb3bc68a63c215f8c"
 }

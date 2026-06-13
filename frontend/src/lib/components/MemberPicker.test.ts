@@ -5,6 +5,8 @@ import MemberPicker from './MemberPicker.svelte';
 afterEach(() => cleanup());
 
 const aCharacter = { id: 'char-uuid-1', eve_character_id: 7, name: 'Wasp 223' };
+// An unknown character: no local row, so the search returns a null UUID.
+const anUnknownCharacter = { id: null, eve_character_id: 9, name: 'New Pilot' };
 const aCorp = { eve_entity_id: 98000001, name: 'Test Corp' };
 const anAlliance = { eve_entity_id: 99000001, name: 'Test Alliance' };
 
@@ -32,6 +34,18 @@ describe('MemberPicker inline add form — identifier by type', () => {
 		expect((form.querySelector('[name=eve_entity_id]') as HTMLInputElement).value).toBe('7');
 		// Submit button is the inline "add", not a select/select-then-scroll.
 		expect(within(li).getByRole('button', { name: 'add member' })).toBeInTheDocument();
+	});
+
+	it('an unknown character row carries eve_entity_id but NO character_id', () => {
+		const { container } = render(MemberPicker, {
+			props: { characters: [anUnknownCharacter], searched: true }
+		});
+		const form = row(container, 'New Pilot').querySelector('form.add-inline') as HTMLFormElement;
+		expect((form.querySelector('[name=member_type]') as HTMLInputElement).value).toBe('character');
+		// The durable EVE id is always submitted (the mint key on the backend).
+		expect((form.querySelector('[name=eve_entity_id]') as HTMLInputElement).value).toBe('9');
+		// No local row → no character_id; the backend mints the orphan from the EVE id.
+		expect(form.querySelector('[name=character_id]')).toBeNull();
 	});
 
 	it('a corporation row carries eve_entity_id and no character_id', () => {

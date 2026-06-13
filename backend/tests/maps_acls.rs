@@ -252,6 +252,72 @@ async fn acl_crud_and_member_lifecycle(pool: PgPool) {
 }
 
 #[sqlx::test]
+async fn add_character_member_without_character_id_mints_orphan(pool: PgPool) {
+    // The picker can add a never-seen character by its EVE id with no
+    // character_id; the add mints the orphan and the member references it.
+    let state = build_state(pool.clone());
+    let (_account, cookie) = create_session(&state).await;
+    let router = backend::build_router(state);
+
+    let resp = send(
+        &router,
+        req(
+            Method::POST,
+            "/api/v1/acls",
+            &cookie,
+            Some(json!({"name": "Mint ACL"})),
+        ),
+    )
+    .await;
+    let acl_id = json_body(resp).await["data"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // No eve_character row exists for 778899 yet.
+    let before = sqlx::query!(
+        "SELECT COUNT(*) AS \"c!\" FROM eve_character WHERE eve_character_id = 778899"
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap()
+    .c;
+    assert_eq!(before, 0);
+
+    let resp = send(
+        &router,
+        req(
+            Method::POST,
+            &format!("/api/v1/acls/{acl_id}/members"),
+            &cookie,
+            Some(json!({
+                "member_type": "character",
+                "eve_entity_id": 778899,
+                "name": "Minted Pilot",
+                "permission": "read",
+            })),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let body = json_body(resp).await;
+    // The member carries a resolved character_id (the minted orphan's UUID).
+    assert!(body["data"]["character_id"].is_string());
+
+    // Exactly one orphan row was minted for the EVE id, holding no tokens.
+    let row = sqlx::query!(
+        "SELECT account_id, encrypted_refresh_token, is_main
+         FROM eve_character WHERE eve_character_id = 778899"
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(row.account_id.is_none());
+    assert!(row.encrypted_refresh_token.is_none());
+    assert!(!row.is_main);
+}
+
+#[sqlx::test]
 async fn corporation_member_cannot_be_granted_manage(pool: PgPool) {
     let state = build_state(pool.clone());
     let (_account, cookie) = create_session(&state).await;

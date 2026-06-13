@@ -13,7 +13,7 @@ use crate::{
     response::{
         AclListResponse, AclMemberListResponse, AclMemberResponse, AclResponse, ApiResponse,
     },
-    services::acl::{self as svc, AddMemberInput},
+    services::acl::{self as svc, AddMemberInput, MintContext},
 };
 
 #[utoipa::path(
@@ -182,7 +182,10 @@ pub async fn add_member(
         name: body.name,
         permission,
     };
-    let member = svc::add_member(&state.db, account_id, acl_id, input).await?;
+    let mint = MintContext {
+        http: &state.http_client,
+    };
+    let member = svc::add_member(&state.db, &mint, account_id, acl_id, input).await?;
     Ok((
         StatusCode::CREATED,
         Json(ApiResponse::data(AclMemberDto::from(member))),

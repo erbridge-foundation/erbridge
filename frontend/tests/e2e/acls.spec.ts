@@ -88,4 +88,26 @@ test.describe('/acls', () => {
 		await deleteDialog.getByRole('button', { name: 'delete ACL' }).click();
 		await expect(page.getByRole('link', { name: 'Fleet Cmd' })).toHaveCount(0);
 	});
+
+	test('add an unknown character (no local row) — the add mints the orphan', async ({ page }) => {
+		await page.goto('/acls');
+
+		await page.getByRole('button', { name: 'create ACL' }).click();
+		const createDialog = page.getByRole('dialog');
+		await createDialog.getByRole('textbox', { name: 'Name' }).fill('Mint ACL');
+		await createDialog.getByRole('button', { name: 'create ACL' }).click();
+		await page.getByRole('link', { name: 'Mint ACL' }).click();
+		await expect(page.getByRole('heading', { name: 'Mint ACL' })).toBeVisible();
+
+		// The unknown pilot has id: null in the search corpus, so the picker submits
+		// no character_id; the add still succeeds (backend mints the orphan).
+		await page.getByRole('searchbox').fill('Unknown Pilot');
+		await page.getByRole('searchbox').press('Enter');
+		const result = page.locator('li', { hasText: 'Unknown Pilot' });
+		await expect(result).toBeVisible();
+		await result.getByRole('button', { name: 'add member' }).click();
+
+		// The member is added despite never having had a local row.
+		await expect(page.locator('tr', { hasText: 'Unknown Pilot' })).toBeVisible();
+	});
 });

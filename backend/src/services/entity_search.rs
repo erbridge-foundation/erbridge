@@ -1,13 +1,15 @@
 //! Account-authenticated entity search over ESI.
 //!
 //! Resolves a name fragment to the identifiers an `acl_member` stores — a
-//! character to its `eve_character.id` UUID (minting an orphan row when the
-//! character has no row yet), and a corporation/alliance to its numeric
-//! `eve_entity_id`. The search runs on behalf of one of the requesting
-//! account's characters, using that character's best-effort-refreshed access
-//! token; any reason a usable token can't be obtained (or ESI rejects / is
-//! unreachable) resolves to the graceful [`EntitySearchOutcome::Unavailable`],
-//! never a 5xx.
+//! character to its `eve_character.id` UUID **when a local row already exists**
+//! (account-owned or orphan), and a corporation/alliance to its numeric
+//! `eve_entity_id`. The search is write-free: it never mints rows. An unknown
+//! character carries no UUID; minting happens at the ACL member add instead.
+//!
+//! The search runs on behalf of one of the requesting account's characters,
+//! using that character's best-effort-refreshed access token; any reason a usable
+//! token can't be obtained (or ESI rejects / is unreachable) resolves to the
+//! graceful [`EntitySearchOutcome::Unavailable`], never a 5xx.
 //!
 //! This module owns the token-acquisition path shared with the admin
 //! character search (`services::admin`), so both refresh tokens identically.
@@ -47,10 +49,12 @@ pub struct EsiSearchContext<'a> {
     pub encryption_key: &'a [u8],
 }
 
-/// A single character match, resolved to the referenceable `eve_character.id`
-/// UUID (minted as an orphan if the character had no row).
+/// A single character match. `id` carries the referenceable `eve_character.id`
+/// UUID **only when a local row already exists** (account-owned or orphan); it is
+/// `None` for an unknown character — the search mints nothing, so the UUID is
+/// minted later at the ACL member add.
 pub struct CharacterMatch {
-    pub id: Uuid,
+    pub id: Option<Uuid>,
     pub eve_character_id: i64,
     pub name: String,
 }
@@ -80,8 +84,9 @@ pub enum EntitySearchOutcome {
 
 /// Searches EVE entities by name fragment across `categories` on behalf of
 /// `account_id`, resolving each match to the identifier its member type needs.
-/// Character matches resolve to the `eve_character.id` UUID, minting an orphan
-/// (public-info populated, no tokens) when the character has no row yet.
+/// Character matches carry the `eve_character.id` UUID only when a local row
+/// already exists; unknown characters carry `None` and no row is minted — the
+/// search is write-free.
 ///
 /// Any failure to obtain a usable token, an ESI rejection (missing scope / bad
 /// token), or ESI being unreachable resolves to [`EntitySearchOutcome::Unavailable`].
@@ -118,159 +123,65 @@ pub async fn search_entities(
         Err(_) => return Ok(EntitySearchOutcome::Unavailable),
     };
 
-    // Characters: resolve names, then find-or-mint each to its UUID.
-    let resolved_chars = search::resolve_character_names(
-        ctx.http,
-        ctx.esi_base_url,
-        &matches.character,
-        RESULT_LIMIT,
+    // Cap each category, then resolve every matched id to its name in a SINGLE
+    // bulk call across all categories.
+    let character_ids: Vec<i64> = matches.character.into_iter().take(RESULT_LIMIT).collect();
+    let corporation_ids: Vec<i64> = matches.corporation.into_iter().take(RESULT_LIMIT).collect();
+    let alliance_ids: Vec<i64> = matches.alliance.into_iter().take(RESULT_LIMIT).collect();
+
+    let all_ids: Vec<i64> = character_ids
+        .iter()
+        .chain(corporation_ids.iter())
+        .chain(alliance_ids.iter())
+        .copied()
+        .collect();
+    let resolved = search::resolve_names_bulk(ctx.http, ctx.esi_base_url, &all_ids).await;
+
+    // Characters: attach the existing-row UUID with one batched lookup; unknown
+    // characters carry `None`. No write happens in the search path.
+    let known_ids = characters::find_ids_by_eve_character_ids(
+        pool,
+        &resolved
+            .characters
+            .iter()
+            .map(|(id, _)| *id)
+            .collect::<Vec<_>>(),
     )
-    .await;
-    let mut characters = Vec::with_capacity(resolved_chars.len());
-    for (eve_character_id, name) in resolved_chars {
-        let id = find_or_mint_character(pool, ctx, eve_character_id, &name).await?;
-        characters.push(CharacterMatch {
-            id,
+    .await?;
+    let characters = resolved
+        .characters
+        .into_iter()
+        .map(|(eve_character_id, name)| CharacterMatch {
+            id: known_ids.get(&eve_character_id).copied(),
             eve_character_id,
             name,
-        });
-    }
+        })
+        .collect();
 
-    // Corporations / alliances: name-resolve only; the numeric id is the
-    // identifier the member row stores.
-    let corporations =
-        resolve_entities(ctx, SearchCategory::Corporation, &matches.corporation).await;
-    let alliances = resolve_entities(ctx, SearchCategory::Alliance, &matches.alliance).await;
+    // Corporations / alliances: the numeric id is the identifier the member row
+    // stores; carry the resolved name.
+    let corporations = resolved
+        .corporations
+        .into_iter()
+        .map(|(eve_entity_id, name)| EntityMatch {
+            eve_entity_id,
+            name,
+        })
+        .collect();
+    let alliances = resolved
+        .alliances
+        .into_iter()
+        .map(|(eve_entity_id, name)| EntityMatch {
+            eve_entity_id,
+            name,
+        })
+        .collect();
 
     Ok(EntitySearchOutcome::Available(EntitySearchResults {
         characters,
         corporations,
         alliances,
     }))
-}
-
-/// Resolves a corp/alliance id batch to `EntityMatch`es, dropping unresolvable
-/// ids and capping at [`RESULT_LIMIT`].
-async fn resolve_entities(
-    ctx: &EsiSearchContext<'_>,
-    category: SearchCategory,
-    ids: &[i64],
-) -> Vec<EntityMatch> {
-    search::resolve_entity_names(ctx.http, ctx.esi_base_url, category, ids, RESULT_LIMIT)
-        .await
-        .into_iter()
-        .map(|(eve_entity_id, name)| EntityMatch {
-            eve_entity_id,
-            name,
-        })
-        .collect()
-}
-
-/// Resolves a matched character's `eve_character_id` to its `eve_character.id`
-/// UUID, minting an orphan row (public-info populated, no tokens) when none
-/// exists. The corp/alliance public-info for the orphan is fetched best-effort;
-/// a failed corp lookup leaves a placeholder so the row's NOT NULL columns hold.
-async fn find_or_mint_character(
-    pool: &PgPool,
-    ctx: &EsiSearchContext<'_>,
-    eve_character_id: i64,
-    name: &str,
-) -> Result<Uuid, AppError> {
-    if let Some(id) = characters::find_id_by_eve_character_id(pool, eve_character_id).await? {
-        return Ok(id);
-    }
-
-    // No row — mint an orphan. Fetch the character's corp (and alliance) for the
-    // public-info snapshot. corporation_id/corporation_name are NOT NULL, so a
-    // failed public-info fetch falls back to a 0/"" placeholder rather than
-    // failing the whole search.
-    let (corporation_id, corporation_name, alliance_id, alliance_name) =
-        fetch_affiliations(ctx, eve_character_id).await;
-
-    let id = characters::create_orphan(
-        pool,
-        eve_character_id,
-        name,
-        corporation_id,
-        &corporation_name,
-        alliance_id,
-        alliance_name.as_deref(),
-    )
-    .await?;
-    Ok(id)
-}
-
-/// Best-effort fetch of a character's corporation (and alliance) affiliation for
-/// the orphan snapshot. Returns `(corporation_id, corporation_name, alliance_id,
-/// alliance_name)`; on any failure the corp falls back to `(0, "")` and the
-/// alliance to `None`, so the orphan's NOT NULL columns are always satisfiable.
-async fn fetch_affiliations(
-    ctx: &EsiSearchContext<'_>,
-    eve_character_id: i64,
-) -> (i64, String, Option<i64>, Option<String>) {
-    #[derive(serde::Deserialize)]
-    struct CharacterAffiliation {
-        corporation_id: i64,
-        #[serde(default)]
-        alliance_id: Option<i64>,
-    }
-
-    let url = format!("{}/characters/{eve_character_id}/", ctx.esi_base_url);
-    let affil: Option<CharacterAffiliation> = async {
-        ctx.http
-            .get(&url)
-            .send()
-            .await
-            .ok()?
-            .error_for_status()
-            .ok()?
-            .json()
-            .await
-            .ok()
-    }
-    .await;
-
-    let Some(affil) = affil else {
-        return (0, String::new(), None, None);
-    };
-
-    let corporation_name = search::resolve_entity_names(
-        ctx.http,
-        ctx.esi_base_url,
-        SearchCategory::Corporation,
-        &[affil.corporation_id],
-        1,
-    )
-    .await
-    .into_iter()
-    .next()
-    .map(|(_, name)| name)
-    .unwrap_or_default();
-
-    let (alliance_id, alliance_name) = match affil.alliance_id {
-        Some(aid) => {
-            let name = search::resolve_entity_names(
-                ctx.http,
-                ctx.esi_base_url,
-                SearchCategory::Alliance,
-                &[aid],
-                1,
-            )
-            .await
-            .into_iter()
-            .next()
-            .map(|(_, name)| name);
-            (Some(aid), name)
-        }
-        None => (None, None),
-    };
-
-    (
-        affil.corporation_id,
-        corporation_name,
-        alliance_id,
-        alliance_name,
-    )
 }
 
 /// A usable, decrypted access token for a character.
@@ -519,11 +430,12 @@ mod tests {
             )
             .mount(&server)
             .await;
-        Mock::given(method("GET"))
-            .and(path("/characters/555/"))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_json(serde_json::json!({ "name": "Wasp 223" })),
-            )
+        // Bulk name resolution for all matched ids.
+        Mock::given(method("POST"))
+            .and(path("/universe/names/"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                { "id": 555, "name": "Wasp 223", "category": "character" }
+            ])))
             .mount(&server)
             .await;
 
@@ -542,7 +454,7 @@ mod tests {
             EntitySearchOutcome::Unavailable => panic!("expected Available"),
         };
         assert_eq!(results.characters.len(), 1);
-        assert_eq!(results.characters[0].id, existing_id);
+        assert_eq!(results.characters[0].id, Some(existing_id));
         assert_eq!(results.characters[0].eve_character_id, 555);
 
         // No second row was created for 555.
@@ -557,7 +469,7 @@ mod tests {
     }
 
     #[sqlx::test]
-    async fn unknown_character_is_minted_as_orphan(pool: PgPool) {
+    async fn unknown_character_carries_no_uuid_and_mints_nothing(pool: PgPool) {
         let account = account_with_main(&pool, 1).await;
 
         let server = MockServer::start().await;
@@ -568,21 +480,12 @@ mod tests {
             )
             .mount(&server)
             .await;
-        // Name resolution for the matched character.
-        Mock::given(method("GET"))
-            .and(path("/characters/999/"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "name": "New Pilot",
-                "corporation_id": 2000001
-            })))
-            .mount(&server)
-            .await;
-        // Corp name for the orphan snapshot.
-        Mock::given(method("GET"))
-            .and(path("/corporations/2000001/"))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_json(serde_json::json!({ "name": "New Corp" })),
-            )
+        // Bulk name resolution; the character is unknown locally.
+        Mock::given(method("POST"))
+            .and(path("/universe/names/"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                { "id": 999, "name": "New Pilot", "category": "character" }
+            ])))
             .mount(&server)
             .await;
 
@@ -601,27 +504,79 @@ mod tests {
             EntitySearchOutcome::Unavailable => panic!("expected Available"),
         };
         assert_eq!(results.characters.len(), 1);
-        let minted = &results.characters[0];
-        assert_eq!(minted.eve_character_id, 999);
+        let matched = &results.characters[0];
+        assert_eq!(matched.eve_character_id, 999);
+        assert_eq!(matched.name, "New Pilot");
+        // Unknown character → no UUID and no row minted.
+        assert!(matched.id.is_none());
 
-        // An orphan row was minted with the public-info snapshot and no tokens.
-        let row = sqlx::query!(
-            r#"
-            SELECT id, account_id, name, corporation_id, corporation_name,
-                   encrypted_refresh_token, is_main
-            FROM eve_character WHERE eve_character_id = 999
-            "#
+        let count = sqlx::query!(
+            "SELECT COUNT(*) AS \"c!\" FROM eve_character WHERE eve_character_id = 999"
         )
         .fetch_one(&pool)
         .await
+        .unwrap()
+        .c;
+        assert_eq!(count, 0, "search must not mint a row");
+    }
+
+    #[sqlx::test]
+    async fn search_is_write_free_across_a_mixed_result(pool: PgPool) {
+        // A search matching characters (known + unknown), a corp and an alliance
+        // must not insert or update any row. The account's own main is the only
+        // pre-existing row; the table count must be unchanged afterwards.
+        let account = account_with_main(&pool, 1).await;
+        char_db::create_orphan(&pool, 555, "Known", 1, "Corp", None, None)
+            .await
+            .unwrap();
+        let before = sqlx::query!("SELECT COUNT(*) AS \"c!\" FROM eve_character")
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+            .c;
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/characters/1/search/"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "character": [555, 999],
+                "corporation": [98000001],
+                "alliance": [99000001]
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/universe/names/"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                { "id": 555, "name": "Known", "category": "character" },
+                { "id": 999, "name": "Unknown", "category": "character" },
+                { "id": 98000001, "name": "Some Corp", "category": "corporation" },
+                { "id": 99000001, "name": "Some Alliance", "category": "alliance" }
+            ])))
+            .mount(&server)
+            .await;
+
+        let client = http();
+        search_entities(
+            &pool,
+            &ctx(&client, &test_jwks(), &server.uri()),
+            account,
+            "x",
+            &[
+                SearchCategory::Character,
+                SearchCategory::Corporation,
+                SearchCategory::Alliance,
+            ],
+        )
+        .await
         .unwrap();
-        assert_eq!(row.id, minted.id);
-        assert!(row.account_id.is_none());
-        assert_eq!(row.name, "New Pilot");
-        assert_eq!(row.corporation_id, 2000001);
-        assert_eq!(row.corporation_name, "New Corp");
-        assert!(row.encrypted_refresh_token.is_none());
-        assert!(!row.is_main);
+
+        let after = sqlx::query!("SELECT COUNT(*) AS \"c!\" FROM eve_character")
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+            .c;
+        assert_eq!(before, after, "search must not insert any row");
     }
 
     #[sqlx::test]
@@ -642,27 +597,15 @@ mod tests {
             })))
             .mount(&server)
             .await;
-        Mock::given(method("GET"))
-            .and(path("/characters/555/"))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_json(serde_json::json!({ "name": "Wasp 223" })),
-            )
-            .mount(&server)
-            .await;
-        Mock::given(method("GET"))
-            .and(path("/corporations/98000001/"))
-            .respond_with(
-                ResponseTemplate::new(200)
-                    .set_body_json(serde_json::json!({ "name": "Wasp Corp" })),
-            )
-            .mount(&server)
-            .await;
-        Mock::given(method("GET"))
-            .and(path("/alliances/99000001/"))
-            .respond_with(
-                ResponseTemplate::new(200)
-                    .set_body_json(serde_json::json!({ "name": "Wasp Alliance" })),
-            )
+        // One bulk call resolves all three categories.
+        Mock::given(method("POST"))
+            .and(path("/universe/names/"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                { "id": 555, "name": "Wasp 223", "category": "character" },
+                { "id": 98000001, "name": "Wasp Corp", "category": "corporation" },
+                { "id": 99000001, "name": "Wasp Alliance", "category": "alliance" }
+            ])))
+            .expect(1)
             .mount(&server)
             .await;
 

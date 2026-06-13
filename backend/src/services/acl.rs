@@ -1,3 +1,4 @@
+use reqwest_middleware::ClientWithMiddleware;
 use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
@@ -7,8 +8,10 @@ use crate::{
         DbError,
         acl::{self as db, Acl},
         acl_member::{self as member_db, AclMember, AclPermission, MemberType},
+        characters,
     },
     error::{AppError, ConflictKind},
+    esi::public_info,
 };
 
 /// Input for adding a member to an ACL. The service validates that the
@@ -16,13 +19,23 @@ use crate::{
 pub struct AddMemberInput {
     pub member_type: MemberType,
     /// The member's durable EVE id — the EVE character/corporation/alliance id,
-    /// uniform across all member types. Snapshotted into the audit event.
+    /// uniform across all member types. Snapshotted into the audit event, and the
+    /// mint key when a character member arrives without `character_id`.
     pub eve_entity_id: Option<i64>,
-    /// Internal FK link to `eve_character` for character members (cascade-delete);
-    /// `None` for corporation/alliance members.
+    /// Internal FK link to an existing `eve_character` row for character members
+    /// (cascade-delete). Optional: when absent for a character member, the add
+    /// mints the orphan keyed by `eve_entity_id`. `None` for corp/alliance.
     pub character_id: Option<Uuid>,
     pub name: String,
     pub permission: AclPermission,
+}
+
+/// What `add_member` needs to fetch a character's public-info affiliation snapshot
+/// when it must mint an orphan (character member with no `character_id`). The ESI
+/// fetch runs *before* the write transaction opens, so no outbound call is held
+/// under the member-insert lock.
+pub struct MintContext<'a> {
+    pub http: &'a ClientWithMiddleware,
 }
 
 /// Lists the ACLs the account can manage (owner or character manager).
@@ -146,24 +159,71 @@ pub async fn list_members(
 
 /// Adds a member to an ACL the account owns. Validates that the identifier
 /// columns match the member type before inserting.
+///
+/// For a character member with no `character_id`, the orphan `eve_character` row
+/// is find-or-minted from `eve_entity_id`: its public-info affiliation snapshot
+/// is fetched (best-effort, via `mint`) *before* the transaction opens, then the
+/// row is minted (or an existing row reused) inside the transaction and the
+/// member is inserted referencing its UUID.
 pub async fn add_member(
     pool: &PgPool,
+    mint: &MintContext<'_>,
     account_id: Uuid,
     acl_id: Uuid,
     input: AddMemberInput,
 ) -> Result<AclMember, AppError> {
     validate_member_shape(&input)?;
 
+    // A character member with no character_id needs an orphan minted from its
+    // EVE id. Fetch the public-info snapshot now, outside the tx, so no ESI call
+    // is held under the member-insert lock. `validate_member_shape` guarantees
+    // eve_entity_id is present here.
+    let pending_mint = match (input.member_type, input.character_id) {
+        (MemberType::Character, None) => {
+            let eve_character_id = input
+                .eve_entity_id
+                .ok_or_else(|| AppError::BadRequest("members require eve_entity_id".to_string()))?;
+            Some((
+                eve_character_id,
+                fetch_orphan_affiliations(mint.http, eve_character_id).await,
+            ))
+        }
+        _ => None,
+    };
+
     let mut tx = pool.begin().await?;
 
     load_owned_acl_in_tx(&mut tx, account_id, acl_id).await?;
+
+    // Resolve the character_id: the request's value if present, else the minted
+    // (or reused) orphan's UUID.
+    let character_id = match (input.character_id, &pending_mint) {
+        (Some(id), _) => Some(id),
+        (None, Some((eve_character_id, affiliations))) => {
+            let (corporation_id, corporation_name, alliance_id, alliance_name) = affiliations;
+            Some(
+                characters::find_or_mint_orphan_in_tx(
+                    &mut tx,
+                    *eve_character_id,
+                    &input.name,
+                    *corporation_id,
+                    corporation_name,
+                    *alliance_id,
+                    alliance_name.as_deref(),
+                )
+                .await?,
+            )
+        }
+        // Corp/alliance member — no character_id.
+        (None, None) => None,
+    };
 
     let member = member_db::add_member(
         &mut *tx,
         acl_id,
         input.member_type.as_str(),
         input.eve_entity_id,
-        input.character_id,
+        character_id,
         &input.name,
         input.permission.as_str(),
     )
@@ -291,11 +351,67 @@ async fn load_owned_acl_in_tx(
     Ok(acl)
 }
 
+/// Best-effort fetch of a character's corporation (and alliance) affiliation for
+/// a minted orphan's snapshot. Returns `(corporation_id, corporation_name,
+/// alliance_id, alliance_name)`; on any failure the corp falls back to `(0, "")`
+/// and the alliance to `None`, so the orphan's NOT NULL columns are always
+/// satisfiable and the add still succeeds when ESI is unavailable.
+async fn fetch_orphan_affiliations(
+    http: &ClientWithMiddleware,
+    eve_character_id: i64,
+) -> (i64, String, Option<i64>, Option<String>) {
+    #[derive(serde::Deserialize)]
+    struct CharacterAffiliation {
+        corporation_id: i64,
+        #[serde(default)]
+        alliance_id: Option<i64>,
+    }
+
+    let url = format!("{}/characters/{eve_character_id}/", public_info::ESI_BASE);
+    let affil: Option<CharacterAffiliation> = async {
+        http.get(&url)
+            .send()
+            .await
+            .ok()?
+            .error_for_status()
+            .ok()?
+            .json()
+            .await
+            .ok()
+    }
+    .await;
+
+    let Some(affil) = affil else {
+        return (0, String::new(), None, None);
+    };
+
+    let corporation_name = public_info::fetch_corporation_name(http, affil.corporation_id)
+        .await
+        .unwrap_or_default();
+
+    let (alliance_id, alliance_name) = match affil.alliance_id {
+        Some(aid) => (
+            Some(aid),
+            public_info::fetch_alliance_name(http, aid).await.ok(),
+        ),
+        None => (None, None),
+    };
+
+    (
+        affil.corporation_id,
+        corporation_name,
+        alliance_id,
+        alliance_name,
+    )
+}
+
 /// Validates that the identifier columns match the member type. Every member
 /// carries `eve_entity_id` — the durable EVE id (character/corporation/alliance)
-/// — so the audit snapshot is uniform. A `character` member additionally carries
-/// `character_id`, the internal FK link used for cascade-delete; corporation and
-/// alliance members carry no `character_id`.
+/// — so the audit snapshot is uniform and so an unknown character can be minted
+/// from it at add time. A `character` member MAY carry `character_id`, the
+/// internal FK link to an existing `eve_character` row; when absent the add mints
+/// the orphan keyed by `eve_entity_id`. Corporation and alliance members carry no
+/// `character_id`.
 pub fn validate_member_shape(input: &AddMemberInput) -> Result<(), AppError> {
     if input.eve_entity_id.is_none() {
         return Err(AppError::BadRequest(
@@ -303,13 +419,9 @@ pub fn validate_member_shape(input: &AddMemberInput) -> Result<(), AppError> {
         ));
     }
     match input.member_type {
-        MemberType::Character => {
-            if input.character_id.is_none() {
-                return Err(AppError::BadRequest(
-                    "character members require character_id".to_string(),
-                ));
-            }
-        }
+        // A character member may arrive with or without character_id: present →
+        // reference the existing row; absent → mint the orphan from eve_entity_id.
+        MemberType::Character => {}
         MemberType::Corporation | MemberType::Alliance => {
             if input.character_id.is_some() {
                 return Err(AppError::BadRequest(
@@ -380,10 +492,10 @@ mod tests {
     }
 
     #[test]
-    fn character_member_requires_character_id() {
-        // Has the EVE id but no internal FK link → rejected.
-        let err = validate_member_shape(&input(MemberType::Character, Some(5), None)).unwrap_err();
-        assert!(matches!(err, AppError::BadRequest(_)));
+    fn character_member_without_character_id_is_allowed() {
+        // Has the EVE id but no internal FK link → valid; the add will mint the
+        // orphan keyed by eve_entity_id.
+        validate_member_shape(&input(MemberType::Character, Some(5), None)).unwrap();
     }
 
     #[test]
@@ -458,6 +570,16 @@ mod tests {
     use crate::db::accounts;
     use sqlx::PgPool;
 
+    fn http() -> ClientWithMiddleware {
+        reqwest::Client::new().into()
+    }
+
+    /// A `MintContext` whose http client points nowhere usable — fine for the
+    /// existing-row / corp / alliance paths that never fetch affiliations.
+    fn mint(http: &ClientWithMiddleware) -> MintContext<'_> {
+        MintContext { http }
+    }
+
     async fn latest_details(pool: &PgPool, event_type: &str) -> serde_json::Value {
         sqlx::query_scalar!(
             "SELECT details FROM audit_log WHERE event_type = $1
@@ -476,6 +598,7 @@ mod tests {
 
         add_member(
             &pool,
+            &mint(&http()),
             owner,
             acl.id,
             AddMemberInput {
@@ -509,6 +632,7 @@ mod tests {
 
         add_member(
             &pool,
+            &mint(&http()),
             owner,
             acl.id,
             AddMemberInput {
@@ -535,6 +659,7 @@ mod tests {
 
         let member = add_member(
             &pool,
+            &mint(&http()),
             owner,
             acl.id,
             AddMemberInput {
@@ -579,9 +704,12 @@ mod tests {
         let owner = accounts::create_account(&pool).await.unwrap();
         let acl = db::insert_acl_for_test(&pool, owner, "Corp ACL").await;
 
+        let http = http();
+        let mint_ctx = mint(&http);
         let add = |perm: AclPermission| {
             add_member(
                 &pool,
+                &mint_ctx,
                 owner,
                 acl.id,
                 AddMemberInput {
@@ -615,9 +743,12 @@ mod tests {
         let acl = db::insert_acl_for_test(&pool, owner, "Corp ACL").await;
         let char_id = insert_character(&pool, owner, 95465500, "Tocoquadi").await;
 
+        let http = http();
+        let mint_ctx = mint(&http);
         let add = || {
             add_member(
                 &pool,
+                &mint_ctx,
                 owner,
                 acl.id,
                 AddMemberInput {
@@ -648,9 +779,11 @@ mod tests {
 
         // Same eve_entity_id N as both an alliance and a corporation member: the
         // identities differ by member type, so both are permitted.
+        let http = http();
         for mt in [MemberType::Alliance, MemberType::Corporation] {
             add_member(
                 &pool,
+                &mint(&http),
                 owner,
                 acl.id,
                 AddMemberInput {
@@ -679,6 +812,7 @@ mod tests {
         // It must surface as a 400 BadRequest, not a 409 or 500.
         let err = add_member(
             &pool,
+            &mint(&http()),
             owner,
             acl.id,
             AddMemberInput {
@@ -698,6 +832,219 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[sqlx::test]
+    async fn add_character_member_without_character_id_mints_orphan(pool: PgPool) {
+        let owner = accounts::create_account(&pool).await.unwrap();
+        let acl = db::insert_acl_for_test(&pool, owner, "Corp ACL").await;
+
+        // The affiliation fetch targets the hard-coded ESI base, unreachable in
+        // tests → the mint falls back to placeholder corp columns, and the add
+        // still succeeds. `name` comes from the request, not ESI.
+        let member = add_member(
+            &pool,
+            &mint(&http()),
+            owner,
+            acl.id,
+            AddMemberInput {
+                member_type: MemberType::Character,
+                eve_entity_id: Some(123456),
+                character_id: None,
+                name: "New Pilot".to_string(),
+                permission: AclPermission::Read,
+            },
+        )
+        .await
+        .unwrap();
+
+        // A character_id was resolved (the minted orphan's UUID).
+        let minted_id = member.character_id.expect("minted orphan UUID");
+
+        // Exactly one orphan row exists for the EVE id, holding no tokens.
+        let row = sqlx::query!(
+            r#"
+            SELECT id, account_id, name, encrypted_refresh_token, is_main, scopes
+            FROM eve_character WHERE eve_character_id = 123456
+            "#
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(row.id, minted_id);
+        assert!(row.account_id.is_none());
+        assert_eq!(row.name, "New Pilot");
+        assert!(row.encrypted_refresh_token.is_none());
+        assert!(!row.is_main);
+        assert!(row.scopes.is_empty());
+    }
+
+    #[sqlx::test]
+    async fn add_character_member_without_character_id_reuses_existing_row(pool: PgPool) {
+        use crate::db::characters as char_db;
+        let owner = accounts::create_account(&pool).await.unwrap();
+        let acl = db::insert_acl_for_test(&pool, owner, "Corp ACL").await;
+
+        // A row already exists for this character.
+        let existing = char_db::create_orphan(&pool, 222333, "Known Pilot", 1, "Corp", None, None)
+            .await
+            .unwrap();
+
+        let member = add_member(
+            &pool,
+            &mint(&http()),
+            owner,
+            acl.id,
+            AddMemberInput {
+                member_type: MemberType::Character,
+                eve_entity_id: Some(222333),
+                character_id: None,
+                name: "Known Pilot".to_string(),
+                permission: AclPermission::Read,
+            },
+        )
+        .await
+        .unwrap();
+
+        // No second row minted; the member references the existing UUID.
+        assert_eq!(member.character_id, Some(existing));
+        let count = sqlx::query!(
+            "SELECT COUNT(*) AS \"c!\" FROM eve_character WHERE eve_character_id = 222333"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+        .c;
+        assert_eq!(count, 1);
+    }
+
+    #[sqlx::test]
+    async fn add_character_member_without_eve_entity_id_is_rejected(pool: PgPool) {
+        let owner = accounts::create_account(&pool).await.unwrap();
+        let acl = db::insert_acl_for_test(&pool, owner, "Corp ACL").await;
+
+        let err = add_member(
+            &pool,
+            &mint(&http()),
+            owner,
+            acl.id,
+            AddMemberInput {
+                member_type: MemberType::Character,
+                eve_entity_id: None,
+                character_id: None,
+                name: "No Id".to_string(),
+                permission: AclPermission::Read,
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, AppError::BadRequest(_)));
+        assert!(
+            member_db::list_members(&pool, acl.id)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[sqlx::test]
+    async fn concurrent_mint_does_not_duplicate_orphan(pool: PgPool) {
+        // Two adds for the same unknown character (in two ACLs) race the mint; the
+        // unique eve_character_id index arbitrates and only one row results.
+        let owner = accounts::create_account(&pool).await.unwrap();
+        let acl_a = db::insert_acl_for_test(&pool, owner, "ACL A").await;
+        let acl_b = db::insert_acl_for_test(&pool, owner, "ACL B").await;
+
+        let http = http();
+        let mint_ctx = mint(&http);
+        let add = |acl_id: Uuid| {
+            add_member(
+                &pool,
+                &mint_ctx,
+                owner,
+                acl_id,
+                AddMemberInput {
+                    member_type: MemberType::Character,
+                    eve_entity_id: Some(444555),
+                    character_id: None,
+                    name: "Raced Pilot".to_string(),
+                    permission: AclPermission::Read,
+                },
+            )
+        };
+
+        let (ra, rb) = tokio::join!(add(acl_a.id), add(acl_b.id));
+        let ma = ra.unwrap();
+        let mb = rb.unwrap();
+        // Both members reference the same single orphan row.
+        assert_eq!(ma.character_id, mb.character_id);
+        let count = sqlx::query!(
+            "SELECT COUNT(*) AS \"c!\" FROM eve_character WHERE eve_character_id = 444555"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+        .c;
+        assert_eq!(count, 1);
+    }
+
+    #[sqlx::test]
+    async fn minted_orphan_is_claimable_after_member_add(pool: PgPool) {
+        use crate::db::characters as char_db;
+        // After a member-add mints an orphan, an SSO login for that pilot claims
+        // the same row (sets account_id, writes tokens) without a second row.
+        let owner = accounts::create_account(&pool).await.unwrap();
+        let acl = db::insert_acl_for_test(&pool, owner, "Corp ACL").await;
+
+        let member = add_member(
+            &pool,
+            &mint(&http()),
+            owner,
+            acl.id,
+            AddMemberInput {
+                member_type: MemberType::Character,
+                eve_entity_id: Some(666777),
+                character_id: None,
+                name: "Future Owner".to_string(),
+                permission: AclPermission::Read,
+            },
+        )
+        .await
+        .unwrap();
+        let minted_id = member.character_id.unwrap();
+
+        // Simulate the claim: upsert_tokens binds the account to the existing row.
+        let claimer = accounts::create_account(&pool).await.unwrap();
+        let mut tx = pool.begin().await.unwrap();
+        let claimed_id = char_db::upsert_tokens(
+            &mut tx,
+            claimer,
+            666777,
+            "Future Owner",
+            1,
+            "Corp",
+            None,
+            None,
+            "client",
+            "access",
+            "refresh",
+            chrono::Utc::now() + chrono::Duration::hours(1),
+            &[],
+            "owner-hash",
+            &[0u8; 32],
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+
+        // Same row UUID, now account-bound — the member reference stays valid.
+        assert_eq!(claimed_id, minted_id);
+        let row =
+            sqlx::query!("SELECT account_id FROM eve_character WHERE eve_character_id = 666777")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(row.account_id, Some(claimer));
     }
 
     #[sqlx::test]

@@ -10,6 +10,11 @@
 # call and is operator-run: depending on the account's token scope / ESI health
 # it returns 200 with either matches or `unavailable: true` — both are a 200, so
 # those assertions only check the envelope shape, not the match contents.
+#
+# Note: a character result's `id` (the eve_character.id UUID) is NULLABLE — it is
+# present only when a local row already exists; an unknown character carries
+# `id: null` and the search mints nothing. The mint happens at the ACL member add
+# (see acls.hurl). Name resolution is a single bulk POST /universe/names/ call.
 
 # ── 1. Unauthenticated → 401 ─────────────────────────────────────────────────
 

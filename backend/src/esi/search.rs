@@ -4,8 +4,8 @@
 //! `GET /characters/{character_id}/search/?categories=<list>&search=<q>&strict=false`
 //! on behalf of the searching character, using that character's access token and
 //! the required `esi-search.search_structures.v1` scope. ESI returns only arrays
-//! of EVE ids grouped by category; name resolution is a separate step (see
-//! [`resolve_character_names`] and [`resolve_entity_names`]).
+//! of EVE ids grouped by category; name resolution is a separate step done with a
+//! single bulk `POST /universe/names/` call (see [`resolve_names_bulk`]).
 
 use serde::Deserialize;
 
@@ -122,73 +122,84 @@ pub async fn entity_search(
     })
 }
 
-/// Resolves a batch of character IDs to `(eve_character_id, name)` pairs via ESI
-/// public-info, best-effort per id (an id that fails to resolve is dropped), and
-/// capped at `limit`. Used to turn the ID-only search response into displayable
-/// results.
-pub async fn resolve_character_names(
-    http: &reqwest_middleware::ClientWithMiddleware,
-    base_url: &str,
-    ids: &[i64],
-    limit: usize,
-) -> Vec<(i64, String)> {
-    resolve_named(http, base_url, "characters", ids, limit).await
+/// Names resolved by a single bulk [`resolve_names_bulk`] call, partitioned by
+/// the response's `category` field. Each field holds the `(eve_id, name)` pairs
+/// for that category; ids the endpoint could not resolve are simply absent.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct ResolvedNames {
+    pub characters: Vec<(i64, String)>,
+    pub corporations: Vec<(i64, String)>,
+    pub alliances: Vec<(i64, String)>,
 }
 
-/// Resolves a batch of corporation OR alliance ids to `(eve_entity_id, name)`
-/// pairs via the corresponding ESI public-info path (`corporations` or
-/// `alliances`), best-effort per id (an id that fails to resolve is dropped),
-/// capped at `limit`. The path segment is selected from `category`; passing
-/// [`SearchCategory::Character`] is a programmer error and yields no results.
-pub async fn resolve_entity_names(
-    http: &reqwest_middleware::ClientWithMiddleware,
-    base_url: &str,
-    category: SearchCategory,
-    ids: &[i64],
-    limit: usize,
-) -> Vec<(i64, String)> {
-    let path_segment = match category {
-        SearchCategory::Corporation => "corporations",
-        SearchCategory::Alliance => "alliances",
-        // Characters resolve via `resolve_character_names`; nothing to do here.
-        SearchCategory::Character => return Vec::new(),
-    };
-    resolve_named(http, base_url, path_segment, ids, limit).await
+/// One `{ id, name, category }` entry of the `POST /universe/names/` response.
+#[derive(Deserialize)]
+struct NameEntry {
+    id: i64,
+    name: String,
+    category: String,
 }
 
-/// Shared best-effort name resolver: for each id (capped at `limit`) GETs
-/// `{base_url}/{path_segment}/{id}/` and reads its `name`, dropping any id whose
-/// lookup fails so results are always displayable.
-async fn resolve_named(
+/// Resolves a mixed batch of EVE ids to names with a **single** bulk
+/// `POST /universe/names/` call, partitioning the response by its `category`
+/// field. `ids` may span characters, corporations, and alliances; ESI resolves
+/// up to 1 000 mixed ids per call. Ids the endpoint omits are dropped (so results
+/// are always displayable), and a 404 for a non-empty id set means "no ids
+/// resolved" (all dropped) rather than a failure — both yield an empty/partial
+/// [`ResolvedNames`] rather than an error.
+///
+/// Only the `character`, `corporation`, and `alliance` categories are retained;
+/// the endpoint also resolves other id types, but the entity search never sends
+/// them, and any unexpected category is ignored.
+pub async fn resolve_names_bulk(
     http: &reqwest_middleware::ClientWithMiddleware,
     base_url: &str,
-    path_segment: &str,
     ids: &[i64],
-    limit: usize,
-) -> Vec<(i64, String)> {
-    #[derive(Deserialize)]
-    struct NamedInfo {
-        name: String,
+) -> ResolvedNames {
+    if ids.is_empty() {
+        return ResolvedNames::default();
     }
 
-    let mut out = Vec::new();
-    for &id in ids.iter().take(limit) {
-        let url = format!("{base_url}/{path_segment}/{id}/");
-        let name: Option<String> = async {
-            http.get(&url)
-                .send()
-                .await
-                .ok()?
-                .error_for_status()
-                .ok()?
-                .json::<NamedInfo>()
-                .await
-                .ok()
-                .map(|c| c.name)
-        }
-        .await;
-        if let Some(name) = name {
-            out.push((id, name));
+    let url = format!("{base_url}/universe/names/");
+    // Serialize the id array as the JSON body. `reqwest-middleware`'s builder does
+    // not expose `.json()`, so set the body + content-type explicitly. Infallible
+    // (a slice of i64 always serialises); fall back to empty on the off chance.
+    let body = match serde_json::to_vec(ids) {
+        Ok(b) => b,
+        Err(_) => return ResolvedNames::default(),
+    };
+    let resp = match http
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .body(body)
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        // Transport failure → drop everything (graceful empty).
+        Err(_) => return ResolvedNames::default(),
+    };
+
+    // A 404 for a non-empty id set means ESI resolved none of them; treat it as
+    // "all dropped", not a failure. Any other non-2xx likewise yields empties.
+    let resp = match resp.error_for_status() {
+        Ok(r) => r,
+        Err(_) => return ResolvedNames::default(),
+    };
+
+    let entries: Vec<NameEntry> = match resp.json().await {
+        Ok(e) => e,
+        Err(_) => return ResolvedNames::default(),
+    };
+
+    let mut out = ResolvedNames::default();
+    for entry in entries {
+        match entry.category.as_str() {
+            "character" => out.characters.push((entry.id, entry.name)),
+            "corporation" => out.corporations.push((entry.id, entry.name)),
+            "alliance" => out.alliances.push((entry.id, entry.name)),
+            // An id type the search never requested — ignore it.
+            _ => {}
         }
     }
     out
@@ -330,92 +341,70 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn resolve_entity_names_resolves_corporations() {
+    async fn resolve_names_bulk_partitions_by_category_in_one_call() {
         let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/corporations/98000001/"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "name": "Wasp Corp" })))
+        // A single POST resolves ids across all three categories at once.
+        Mock::given(method("POST"))
+            .and(path("/universe/names/"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+                { "id": 555, "name": "Wasp 223", "category": "character" },
+                { "id": 98000001, "name": "Wasp Corp", "category": "corporation" },
+                { "id": 99000001, "name": "Wasp Alliance", "category": "alliance" }
+            ])))
+            // `expect(1)` asserts exactly one request is issued for the batch.
+            .expect(1)
             .mount(&server)
             .await;
 
-        let resolved = resolve_entity_names(
-            &client(),
-            &server.uri(),
-            SearchCategory::Corporation,
-            &[98000001],
-            10,
-        )
-        .await;
-        assert_eq!(resolved, vec![(98000001, "Wasp Corp".to_string())]);
+        let resolved =
+            resolve_names_bulk(&client(), &server.uri(), &[555, 98000001, 99000001]).await;
+        assert_eq!(resolved.characters, vec![(555, "Wasp 223".to_string())]);
+        assert_eq!(
+            resolved.corporations,
+            vec![(98000001, "Wasp Corp".to_string())]
+        );
+        assert_eq!(
+            resolved.alliances,
+            vec![(99000001, "Wasp Alliance".to_string())]
+        );
     }
 
     #[tokio::test]
-    async fn resolve_entity_names_resolves_alliances_and_drops_unresolvable() {
+    async fn resolve_names_bulk_drops_omitted_ids() {
         let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/alliances/99000001/"))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_json(json!({ "name": "Wasp Alliance" })),
-            )
+        // The response omits 222 → it is dropped rather than appearing nameless.
+        Mock::given(method("POST"))
+            .and(path("/universe/names/"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+                { "id": 111, "name": "Pilot One", "category": "character" }
+            ])))
             .mount(&server)
             .await;
-        // 99000002 fails → dropped from the results.
-        Mock::given(method("GET"))
-            .and(path("/alliances/99000002/"))
+
+        let resolved = resolve_names_bulk(&client(), &server.uri(), &[111, 222]).await;
+        assert_eq!(resolved.characters, vec![(111, "Pilot One".to_string())]);
+    }
+
+    #[tokio::test]
+    async fn resolve_names_bulk_404_is_all_dropped_not_failure() {
+        let server = MockServer::start().await;
+        // ESI 404s the whole batch when none of the ids resolve.
+        Mock::given(method("POST"))
+            .and(path("/universe/names/"))
             .respond_with(ResponseTemplate::new(404))
             .mount(&server)
             .await;
 
-        let resolved = resolve_entity_names(
-            &client(),
-            &server.uri(),
-            SearchCategory::Alliance,
-            &[99000001, 99000002],
-            10,
-        )
-        .await;
-        assert_eq!(resolved, vec![(99000001, "Wasp Alliance".to_string())]);
+        let resolved = resolve_names_bulk(&client(), &server.uri(), &[1, 2, 3]).await;
+        assert_eq!(resolved, ResolvedNames::default());
     }
 
     #[tokio::test]
-    async fn resolve_entity_names_character_category_is_empty() {
-        // Characters resolve via resolve_character_names; the entity path is a
-        // no-op for the character category.
-        let resolved = resolve_entity_names(
-            &client(),
-            "http://unused",
-            SearchCategory::Character,
-            &[1],
-            10,
-        )
-        .await;
-        assert!(resolved.is_empty());
-    }
-
-    #[tokio::test]
-    async fn resolve_character_names_resolves_and_drops_failures_and_caps() {
+    async fn resolve_names_bulk_empty_ids_makes_no_call() {
+        // No ids → no request, empty result. (No mock mounted, so any request
+        // would 404 from the mock server; an empty result proves none was sent.)
         let server = MockServer::start().await;
-        // id 1 resolves
-        Mock::given(method("GET"))
-            .and(path("/characters/1/"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "name": "Wasp 223" })))
-            .mount(&server)
-            .await;
-        // id 2 fails (404) → dropped
-        Mock::given(method("GET"))
-            .and(path("/characters/2/"))
-            .respond_with(ResponseTemplate::new(404))
-            .mount(&server)
-            .await;
-        // id 3 resolves but is beyond the cap of 2 ids requested below
-        Mock::given(method("GET"))
-            .and(path("/characters/3/"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "name": "Three" })))
-            .mount(&server)
-            .await;
-
-        // limit = 2 → only ids 1 and 2 are attempted; 2 fails and is dropped.
-        let resolved = resolve_character_names(&client(), &server.uri(), &[1, 2, 3], 2).await;
-        assert_eq!(resolved, vec![(1, "Wasp 223".to_string())]);
+        let resolved = resolve_names_bulk(&client(), &server.uri(), &[]).await;
+        assert_eq!(resolved, ResolvedNames::default());
     }
 }

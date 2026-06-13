@@ -121,6 +121,27 @@ HTTP 400
 [Asserts]
 jsonpath "$.error.code" isString
 
+# ── 7b. Add a character member with no character_id → 201 (mints the orphan) ──
+#
+# The picker can add a never-seen character by its EVE id alone; the add
+# find-or-mints the orphan eve_character row (public-info snapshot best-effort,
+# placeholder on ESI failure) and the member references its UUID. The response's
+# character_id is the resolved (minted) UUID, not the request's (which is absent).
+# Use a plausible EVE character id; re-running the suite reuses the same orphan.
+
+POST {{base_url}}/api/v1/acls/{{acl_id}}/members
+Content-Type: application/json
+Authorization: Bearer {{erb_api_key}}
+{"member_type": "character", "eve_entity_id": 2112625428, "name": "Smoke Pilot", "permission": "read"}
+
+HTTP 201
+[Asserts]
+jsonpath "$.data.member_type" == "character"
+jsonpath "$.data.eve_entity_id" == 2112625428
+jsonpath "$.data.character_id" isString
+jsonpath "$.data.permission" == "read"
+jsonpath "$.error" not exists
+
 # ── 8. List members → 200 ────────────────────────────────────────────────────
 
 GET {{base_url}}/api/v1/acls/{{acl_id}}/members

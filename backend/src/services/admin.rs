@@ -258,18 +258,21 @@ pub async fn search_characters(
     let limit = clamp_limit(limit);
     let matches = characters::search_by_name(pool, q, limit).await?;
 
-    let mut out = Vec::with_capacity(matches.len());
-    for m in matches {
-        let already_blocked = blocks::is_eve_character_blocked(pool, m.eve_character_id).await?;
-        out.push(AdminCharacterSearchResult {
+    // One query for the blocked subset, rather than one per result.
+    let ids: Vec<i64> = matches.iter().map(|m| m.eve_character_id).collect();
+    let blocked = blocks::blocked_set(pool, &ids).await?;
+
+    let out = matches
+        .into_iter()
+        .map(|m| AdminCharacterSearchResult {
             portrait_url: esi::portrait_url(m.eve_character_id),
+            already_blocked: blocked.contains(&m.eve_character_id),
             eve_character_id: m.eve_character_id,
             name: m.name,
             is_main: m.is_main,
             account_id: m.account_id,
-            already_blocked,
-        });
-    }
+        })
+        .collect();
     Ok(out)
 }
 
@@ -305,16 +308,24 @@ pub async fn esi_search_characters(
         EntitySearchOutcome::Unavailable => return Ok(EsiSearchOutcome::Unavailable),
     };
 
-    let mut out = Vec::with_capacity(results.characters.len());
-    for c in results.characters {
-        let already_blocked = blocks::is_eve_character_blocked(pool, c.eve_character_id).await?;
-        out.push(EsiCharacterSearchResult {
+    // One query for the blocked subset, rather than one per result.
+    let ids: Vec<i64> = results
+        .characters
+        .iter()
+        .map(|c| c.eve_character_id)
+        .collect();
+    let blocked = blocks::blocked_set(pool, &ids).await?;
+
+    let out = results
+        .characters
+        .into_iter()
+        .map(|c| EsiCharacterSearchResult {
             portrait_url: esi::portrait_url(c.eve_character_id),
+            already_blocked: blocked.contains(&c.eve_character_id),
             eve_character_id: c.eve_character_id,
             name: c.name,
-            already_blocked,
-        });
-    }
+        })
+        .collect();
 
     Ok(EsiSearchOutcome::Available(out))
 }
@@ -774,20 +785,12 @@ mod tests {
             })))
             .mount(&server)
             .await;
-        Mock::given(method("GET"))
-            .and(path("/characters/555/"))
-            .respond_with(
-                ResponseTemplate::new(200)
-                    .set_body_json(serde_json::json!({ "name": "Blocked Pilot" })),
-            )
-            .mount(&server)
-            .await;
-        Mock::given(method("GET"))
-            .and(path("/characters/777/"))
-            .respond_with(
-                ResponseTemplate::new(200)
-                    .set_body_json(serde_json::json!({ "name": "Free Pilot" })),
-            )
+        Mock::given(method("POST"))
+            .and(path("/universe/names/"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                { "id": 555, "name": "Blocked Pilot", "category": "character" },
+                { "id": 777, "name": "Free Pilot", "category": "character" }
+            ])))
             .mount(&server)
             .await;
 
@@ -907,11 +910,11 @@ mod tests {
             )
             .mount(&server)
             .await;
-        Mock::given(method("GET"))
-            .and(path("/characters/42/"))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_json(serde_json::json!({ "name": "Self" })),
-            )
+        Mock::given(method("POST"))
+            .and(path("/universe/names/"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                { "id": 42, "name": "Self", "category": "character" }
+            ])))
             .mount(&server)
             .await;
 

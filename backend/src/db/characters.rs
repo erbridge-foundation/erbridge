@@ -430,23 +430,82 @@ pub async fn search_by_name(
         .collect())
 }
 
-/// The internal `eve_character.id` UUID for an `eve_character_id`, or `None`
-/// when no row exists. Used by entity search to resolve a matched character to
-/// the referenceable UUID an `acl_member` stores — whether the existing row is
+/// Maps a batch of `eve_character_id`s to their internal `eve_character.id`
+/// UUIDs in a single query (`WHERE eve_character_id = ANY($1)`). Only ids with an
+/// existing row appear in the returned map; an id with no row is simply absent.
+/// Used by entity search to attach the referenceable UUID to matched characters
+/// without one query per result and without minting — whether a row is
 /// account-owned or an orphan is immaterial, both are valid identities.
-pub async fn find_id_by_eve_character_id(
+pub async fn find_ids_by_eve_character_ids(
     pool: &PgPool,
+    eve_character_ids: &[i64],
+) -> Result<std::collections::HashMap<i64, Uuid>> {
+    let rows = sqlx::query!(
+        "SELECT id, eve_character_id FROM eve_character WHERE eve_character_id = ANY($1)",
+        eve_character_ids
+    )
+    .fetch_all(pool)
+    .await
+    .context("failed to look up eve_character ids")?;
+
+    Ok(rows
+        .into_iter()
+        .map(|r| (r.eve_character_id, r.id))
+        .collect())
+}
+
+/// Find-or-mint an `eve_character` row keyed by `eve_character_id`, within the
+/// caller's transaction, returning its `id` UUID. When no row exists an orphan is
+/// minted (no account, no tokens) with the supplied public-info snapshot;
+/// `ON CONFLICT (eve_character_id) DO NOTHING` makes a concurrent mint or
+/// login-claim safe — the unique index arbitrates and the loser re-selects the
+/// winner's row. Backs the ACL member-add mint path; the public-info fetch
+/// happens before the transaction opens, so no ESI call is held under the lock.
+pub async fn find_or_mint_orphan_in_tx(
+    tx: &mut Transaction<'_, Postgres>,
     eve_character_id: i64,
-) -> Result<Option<Uuid>> {
+    name: &str,
+    corporation_id: i64,
+    corporation_name: &str,
+    alliance_id: Option<i64>,
+    alliance_name: Option<&str>,
+) -> Result<Uuid> {
+    // Insert the orphan, or do nothing if the unique index already holds a row.
+    let inserted = sqlx::query!(
+        r#"
+        INSERT INTO eve_character (
+            eve_character_id, name, corporation_id, corporation_name,
+            alliance_id, alliance_name
+        )
+        VALUES ($1, $2, $3, $4, $5, $6)
+        ON CONFLICT (eve_character_id) DO NOTHING
+        RETURNING id
+        "#,
+        eve_character_id,
+        name,
+        corporation_id,
+        corporation_name,
+        alliance_id,
+        alliance_name,
+    )
+    .fetch_optional(&mut **tx)
+    .await
+    .context("failed to insert orphan character")?;
+
+    if let Some(row) = inserted {
+        return Ok(row.id);
+    }
+
+    // A row already existed (we lost the race or it was there all along) —
+    // re-select it inside the same transaction.
     let row = sqlx::query!(
         "SELECT id FROM eve_character WHERE eve_character_id = $1",
         eve_character_id
     )
-    .fetch_optional(pool)
+    .fetch_one(&mut **tx)
     .await
-    .context("failed to look up eve_character id")?;
-
-    Ok(row.map(|r| r.id))
+    .context("failed to re-select existing character after conflict")?;
+    Ok(row.id)
 }
 
 /// The account that owns this `eve_character_id`, or `None` when the character
@@ -715,23 +774,21 @@ mod tests {
     }
 
     #[sqlx::test]
-    async fn find_id_by_eve_character_id_returns_none_when_absent(pool: PgPool) {
-        let found = find_id_by_eve_character_id(&pool, 4040).await.unwrap();
-        assert!(found.is_none());
+    async fn find_ids_by_eve_character_ids_returns_empty_when_none_match(pool: PgPool) {
+        let found = find_ids_by_eve_character_ids(&pool, &[4040, 4041])
+            .await
+            .unwrap();
+        assert!(found.is_empty());
     }
 
     #[sqlx::test]
-    async fn find_id_by_eve_character_id_finds_orphan_and_owned(pool: PgPool) {
-        // Orphan row → its id is returned without inserting a second row.
+    async fn find_ids_by_eve_character_ids_maps_orphan_and_owned_and_skips_absent(pool: PgPool) {
+        // Orphan row.
         let orphan_id = create_orphan(&pool, 5050, "Orphan", 1, "Corp", None, None)
             .await
             .unwrap();
-        assert_eq!(
-            find_id_by_eve_character_id(&pool, 5050).await.unwrap(),
-            Some(orphan_id)
-        );
 
-        // Account-owned row → likewise resolves to its id.
+        // Account-owned row.
         let account_id = accounts::create_account(&pool).await.unwrap();
         let mut tx = pool.begin().await.unwrap();
         let owned_id = upsert_tokens(
@@ -754,10 +811,94 @@ mod tests {
         .await
         .unwrap();
         tx.commit().await.unwrap();
-        assert_eq!(
-            find_id_by_eve_character_id(&pool, 6060).await.unwrap(),
-            Some(owned_id)
-        );
+
+        // One query maps both existing ids; the absent 9999 is simply not present.
+        let found = find_ids_by_eve_character_ids(&pool, &[5050, 6060, 9999])
+            .await
+            .unwrap();
+        assert_eq!(found.get(&5050), Some(&orphan_id));
+        assert_eq!(found.get(&6060), Some(&owned_id));
+        assert_eq!(found.get(&9999), None);
+        assert_eq!(found.len(), 2);
+    }
+
+    #[sqlx::test]
+    async fn find_or_mint_orphan_in_tx_mints_then_reuses(pool: PgPool) {
+        // First call mints a new orphan.
+        let mut tx = pool.begin().await.unwrap();
+        let minted = find_or_mint_orphan_in_tx(&mut tx, 7777, "Mint Me", 1, "Corp", None, None)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+
+        // Second call finds the same row (no second insert).
+        let mut tx = pool.begin().await.unwrap();
+        let reused = find_or_mint_orphan_in_tx(&mut tx, 7777, "Mint Me", 1, "Corp", None, None)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        assert_eq!(minted, reused);
+
+        let count = sqlx::query!(
+            "SELECT COUNT(*) AS \"c!\" FROM eve_character WHERE eve_character_id = 7777"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+        .c;
+        assert_eq!(count, 1);
+
+        // The minted row is an orphan with no tokens.
+        let row = sqlx::query!(
+            "SELECT account_id, encrypted_refresh_token, is_main, scopes
+             FROM eve_character WHERE eve_character_id = 7777"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(row.account_id.is_none());
+        assert!(row.encrypted_refresh_token.is_none());
+        assert!(!row.is_main);
+        assert!(row.scopes.is_empty());
+    }
+
+    #[sqlx::test]
+    async fn find_or_mint_orphan_in_tx_reuses_existing_owned_row(pool: PgPool) {
+        // An account-owned row already exists; the mint must reuse it, not mint a
+        // second row, and must not disturb its account binding.
+        let account_id = accounts::create_account(&pool).await.unwrap();
+        let mut tx = pool.begin().await.unwrap();
+        let owned_id = upsert_tokens(
+            &mut tx,
+            account_id,
+            8888,
+            "Owned",
+            1,
+            "Corp",
+            None,
+            None,
+            "c",
+            "a",
+            "r",
+            chrono::Utc::now() + chrono::Duration::hours(1),
+            &[],
+            "owner-hash",
+            &test_key(),
+        )
+        .await
+        .unwrap();
+        let resolved = find_or_mint_orphan_in_tx(&mut tx, 8888, "Owned", 1, "Corp", None, None)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        assert_eq!(resolved, owned_id);
+
+        let row =
+            sqlx::query!("SELECT account_id FROM eve_character WHERE eve_character_id = 8888")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(row.account_id, Some(account_id));
     }
 
     #[sqlx::test]

@@ -6,7 +6,11 @@
 	and grouped results, and each result row is itself an inline add form carrying
 	the already-resolved identifier the add-member action needs:
 
-	  character          → character_id (the eve_character.id UUID)
+	  character            → eve_entity_id (the EVE character id) always, plus
+	                         character_id (the eve_character.id UUID) ONLY when a
+	                         local row already exists (c.id != null). When unknown,
+	                         the add omits character_id and the backend mints the
+	                         orphan from eve_entity_id.
 	  corporation/alliance → eve_entity_id
 
 	Each result has its own permission `<select>` gated to the member type
@@ -93,7 +97,8 @@
 	// current result ids; when it changes, the result set changed.
 	let resultsKey = $derived(
 		[
-			...characters.map((c) => `char-${c.id}`),
+			// Key on the always-present eve_character_id, not the now-nullable c.id.
+			...characters.map((c) => `char-${c.eve_character_id}`),
 			...corporations.map((o) => `corp-${o.eve_entity_id}`),
 			...alliances.map((o) => `ally-${o.eve_entity_id}`)
 		].join('|')
@@ -187,8 +192,8 @@
 				<div class="group">
 					<h3 class="group-heading">{m.picker_group_characters()}</h3>
 					<ul class="results">
-						{#each characters as c (c.id)}
-							{@const key = `char-${c.id}`}
+						{#each characters as c (c.eve_character_id)}
+							{@const key = `char-${c.eve_character_id}`}
 							<li>
 								<img
 									class="portrait"
@@ -200,8 +205,12 @@
 								/>
 								<span class="result-name">{c.name}</span>
 								{@render addForm('character', key, c.name, [
-									['character_id', c.id],
-									['eve_entity_id', String(c.eve_character_id)]
+									// Always submit the durable EVE id; submit the internal UUID
+									// only when a local row already exists. Unknown → backend mints.
+									['eve_entity_id', String(c.eve_character_id)],
+									...(c.id != null
+										? ([['character_id', c.id]] as [string, string][])
+										: [])
 								])}
 							</li>
 						{/each}

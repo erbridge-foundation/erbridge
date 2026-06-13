@@ -341,8 +341,11 @@ function mapDto(map: MockMap) {
 
 // A tiny entity-search corpus so the member picker has something to resolve. The
 // e2e drives this — NOT real ESI.
-const entityCharacters = [
-	{ id: 'ent-char-1', eve_character_id: 4001, name: 'Search Pilot' }
+const entityCharacters: { id: string | null; eve_character_id: number; name: string }[] = [
+	{ id: 'ent-char-1', eve_character_id: 4001, name: 'Search Pilot' },
+	// An unknown character — no local row, so the search returns a null UUID. The
+	// member add for this one sends no character_id and the backend mints.
+	{ id: null, eve_character_id: 4002, name: 'Unknown Pilot' }
 ];
 const entityCorporations = [{ eve_entity_id: 5001, name: 'Search Corp' }];
 const entityAlliances = [{ eve_entity_id: 6001, name: 'Search Alliance' }];
@@ -744,12 +747,19 @@ const server = http.createServer(async (req, res) => {
 			}
 			if (method === 'POST') {
 				const body = JSON.parse((await readBody(req)) || '{}');
+				// A character member with no character_id is the mint path: the
+				// backend mints an orphan from eve_entity_id and the member
+				// references its fresh UUID. Mirror that here.
+				const mintedCharacterId =
+					body.member_type === 'character' && (body.character_id ?? null) === null
+						? `minted-${memberSeq}`
+						: (body.character_id ?? null);
 				const member: MockMember = {
 					id: `mem-${memberSeq++}`,
 					acl_id: aclId,
 					member_type: body.member_type,
 					eve_entity_id: body.eve_entity_id ?? null,
-					character_id: body.character_id ?? null,
+					character_id: mintedCharacterId,
 					name: body.name || 'Member',
 					permission: body.permission,
 					created_at: NOW(),
