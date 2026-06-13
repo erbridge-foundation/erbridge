@@ -597,9 +597,48 @@ const server = http.createServer(async (req, res) => {
 		// POST /api/v1/maps
 		if (method === 'POST' && url === '/api/v1/maps') {
 			const body = JSON.parse((await readBody(req)) || '{}');
-			if (maps.some((m) => m.slug === body.slug)) {
-				json(res, 409, { error: { code: 'slug_taken', message: 'Slug already in use' } });
+			// acl_id and default_acl are mutually exclusive (matches the backend).
+			if (body.acl_id && body.default_acl) {
+				json(res, 400, {
+					error: { code: 'bad_request', message: 'acl_id and default_acl are mutually exclusive' }
+				});
 				return;
+			}
+			if (maps.some((m) => m.slug === body.slug)) {
+				// Slug conflict: nothing is created — no orphan ACL leaks even when
+				// default_acl was requested (the backend rolls the whole tx back).
+				json(res, 409, {
+					error: { code: 'map_slug_already_exists', message: 'Slug already in use' }
+				});
+				return;
+			}
+			// default_acl: mint a fresh ACL named after the map, seed the session's
+			// main as an admin member, attach it — all server-side (atomic).
+			let aclIds: string[] = body.acl_id ? [body.acl_id] : [];
+			if (body.default_acl) {
+				const acl: MockAcl = {
+					id: `acl-${aclSeq++}`,
+					name: body.name,
+					owner_account_id: 'acc1',
+					created_at: NOW(),
+					updated_at: NOW()
+				};
+				acls.push(acl);
+				const main = ME_RESPONSE.data.characters.find((c) => c.is_main);
+				if (main) {
+					members.push({
+						id: `mem-${memberSeq++}`,
+						acl_id: acl.id,
+						member_type: 'character',
+						eve_entity_id: main.eve_character_id,
+						character_id: main.id,
+						name: main.name,
+						permission: 'admin',
+						created_at: NOW(),
+						updated_at: NOW()
+					});
+				}
+				aclIds = [acl.id];
 			}
 			const map: MockMap = {
 				id: `map-${mapSeq++}`,
@@ -607,12 +646,24 @@ const server = http.createServer(async (req, res) => {
 				slug: body.slug,
 				owner_account_id: 'acc1',
 				description: body.description ?? null,
-				acl_ids: body.acl_id ? [body.acl_id] : [],
+				acl_ids: aclIds,
 				created_at: NOW(),
 				updated_at: NOW()
 			};
 			maps.push(map);
 			json(res, 201, { data: mapDto(map) });
+			return;
+		}
+		// GET /api/v1/maps/by-slug/{slug}
+		const bySlugMatch = url.match(/^\/api\/v1\/maps\/by-slug\/([^/?]+)$/);
+		if (method === 'GET' && bySlugMatch) {
+			const slug = decodeURIComponent(bySlugMatch[1]);
+			const map = maps.find((m) => m.slug === slug);
+			if (!map) {
+				notFound(res);
+				return;
+			}
+			json(res, 200, { data: mapDto(map) });
 			return;
 		}
 		// POST /api/v1/maps/{id}/acls — attach
@@ -736,6 +787,10 @@ const server = http.createServer(async (req, res) => {
 			const acl = acls.find((a) => a.id === aclIdMatch[1]);
 			if (!acl) {
 				notFound(res);
+				return;
+			}
+			if (method === 'GET') {
+				json(res, 200, { data: acl });
 				return;
 			}
 			if (method === 'PATCH') {

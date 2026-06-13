@@ -705,7 +705,7 @@ pub async fn record_in_tx(
 
     let (actor_character_id, actor_character_name) = if let Some(account_id) = actor_account_id {
         match characters::get_main_for_account_tx(tx, account_id).await? {
-            Some((eve_id, name)) => (Some(eve_id), Some(name)),
+            Some((_, eve_id, name)) => (Some(eve_id), Some(name)),
             None => {
                 tracing::error!(
                     account_id = %account_id,
@@ -735,7 +735,7 @@ pub async fn record_in_tx(
                         actor_character_name.clone()
                     } else {
                         match characters::get_main_for_account_tx(tx, target_account_id).await? {
-                            Some((_, name)) => Some(name),
+                            Some((_, _, name)) => Some(name),
                             None => {
                                 tracing::error!(
                                     target_account_id = %target_account_id,

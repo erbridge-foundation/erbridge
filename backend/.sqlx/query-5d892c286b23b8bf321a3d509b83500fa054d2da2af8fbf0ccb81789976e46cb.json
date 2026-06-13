@@ -1,15 +1,20 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT eve_character_id, name FROM eve_character\n         WHERE account_id = $1 AND is_main = TRUE\n         LIMIT 1",
+  "query": "SELECT id, eve_character_id, name FROM eve_character\n         WHERE account_id = $1 AND is_main = TRUE\n         LIMIT 1",
   "describe": {
     "columns": [
       {
         "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
         "name": "eve_character_id",
         "type_info": "Int8"
       },
       {
-        "ordinal": 1,
+        "ordinal": 2,
         "name": "name",
         "type_info": "Text"
       }
@@ -21,8 +26,9 @@
     },
     "nullable": [
       false,
+      false,
       false
     ]
   },
-  "hash": "2c1c46baca4e52f972a23a2297a3e142ce680f57c68eb212845585bfaaa4d16f"
+  "hash": "5d892c286b23b8bf321a3d509b83500fa054d2da2af8fbf0ccb81789976e46cb"
 }

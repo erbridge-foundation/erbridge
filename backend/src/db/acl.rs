@@ -92,14 +92,46 @@ pub async fn delete_acl(tx: &mut Transaction<'_, Postgres>, id: Uuid) -> Result<
 /// Returns the ACLs an account can manage: those it owns, plus those on which it
 /// holds `manage` or `admin` via a direct `character` member entry whose
 /// character belongs to the account. Ordered by name.
+///
+/// The manageable predicate is expressed once here and reused for the single-ACL
+/// read ([`find_manageable_acl_by_id`]) via the optional `$2` id filter: when
+/// `None` the filter is inert and every manageable ACL is returned; when `Some`
+/// the result is the single matching manageable ACL (or empty).
 pub async fn find_acls_manageable_by_account(pool: &PgPool, account_id: Uuid) -> Result<Vec<Acl>> {
+    query_manageable_acls(pool, account_id, None).await
+}
+
+/// Returns the single ACL with `acl_id` if the account can manage it under the
+/// same predicate as [`find_acls_manageable_by_account`], else `None`. The
+/// caller cannot distinguish "absent" from "not manageable" — both yield `None`.
+pub async fn find_manageable_acl_by_id(
+    pool: &PgPool,
+    account_id: Uuid,
+    acl_id: Uuid,
+) -> Result<Option<Acl>> {
+    Ok(query_manageable_acls(pool, account_id, Some(acl_id))
+        .await?
+        .into_iter()
+        .next())
+}
+
+/// Shared manageable-ACL query. `id_filter` is `NULL` for the full list and a
+/// concrete id for the single-resource read; the `($3::uuid IS NULL OR id = $3)`
+/// clause keeps the manageable predicate written exactly once.
+async fn query_manageable_acls(
+    pool: &PgPool,
+    account_id: Uuid,
+    id_filter: Option<Uuid>,
+) -> Result<Vec<Acl>> {
     sqlx::query_as!(
         Acl,
         r#"
         SELECT id, name, owner_account_id, created_at, updated_at
         FROM acl
-        WHERE owner_account_id = $1
-           OR EXISTS (
+        WHERE ($2::uuid IS NULL OR id = $2)
+          AND (
+               owner_account_id = $1
+            OR EXISTS (
                SELECT 1
                FROM acl_member am
                JOIN eve_character ec ON ec.id = am.character_id
@@ -108,9 +140,11 @@ pub async fn find_acls_manageable_by_account(pool: &PgPool, account_id: Uuid) ->
                  AND am.permission IN ('manage', 'admin')
                  AND ec.account_id = $1
            )
+          )
         ORDER BY name
         "#,
         account_id,
+        id_filter,
     )
     .fetch_all(pool)
     .await
@@ -232,6 +266,70 @@ mod tests {
             .unwrap();
         assert_eq!(acls.len(), 1);
         assert_eq!(acls[0].id, a.id);
+    }
+
+    #[sqlx::test]
+    async fn single_manageable_by_id_returns_owned(pool: PgPool) {
+        let owner = accounts::create_account(&pool).await.unwrap();
+        let mine = insert_acl_for_test(&pool, owner, "Mine").await;
+
+        let found = find_manageable_acl_by_id(&pool, owner, mine.id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(found.id, mine.id);
+    }
+
+    #[sqlx::test]
+    async fn single_manageable_by_id_hides_unmanageable(pool: PgPool) {
+        let owner = accounts::create_account(&pool).await.unwrap();
+        let other = accounts::create_account(&pool).await.unwrap();
+        let theirs = insert_acl_for_test(&pool, other, "Theirs").await;
+
+        // Owner of nothing here: the ACL exists but is not manageable → None.
+        assert!(
+            find_manageable_acl_by_id(&pool, owner, theirs.id)
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[sqlx::test]
+    async fn single_manageable_by_id_unknown_is_none(pool: PgPool) {
+        let owner = accounts::create_account(&pool).await.unwrap();
+        assert!(
+            find_manageable_acl_by_id(&pool, owner, Uuid::new_v4())
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[sqlx::test]
+    async fn single_manageable_by_id_returns_managed(pool: PgPool) {
+        let owner = accounts::create_account(&pool).await.unwrap();
+        let manager = accounts::create_account(&pool).await.unwrap();
+        let manager_char = insert_character(&pool, manager, 21, "Manager").await;
+
+        let a = insert_acl_for_test(&pool, owner, "Managed").await;
+        acl_member::add_member(
+            &pool,
+            a.id,
+            "character",
+            None,
+            Some(manager_char),
+            "Manager",
+            "manage",
+        )
+        .await
+        .unwrap();
+
+        let found = find_manageable_acl_by_id(&pool, manager, a.id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(found.id, a.id);
     }
 
     #[sqlx::test]

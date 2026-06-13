@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO eve_character (account_id, eve_character_id, name, corporation_id, corporation_name, is_main)\n           VALUES ($1, 9200, 'Boss', 8000, 'Test Corp', TRUE) RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "a015edfa6761d234a9ae759ea9d918a7950b77984b7197b97dad9d293650d59d"
+}

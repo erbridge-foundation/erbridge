@@ -33,6 +33,19 @@ pub async fn list_manageable_for_account(
     Ok(db::find_acls_manageable_by_account(pool, account_id).await?)
 }
 
+/// Returns a single ACL the account can manage. `NotFound` when the ACL does not
+/// exist *or* the account cannot manage it — existence is not revealed, matching
+/// the manageable-list visibility.
+pub async fn get_manageable(
+    pool: &PgPool,
+    account_id: Uuid,
+    acl_id: Uuid,
+) -> Result<Acl, AppError> {
+    db::find_manageable_acl_by_id(pool, account_id, acl_id)
+        .await?
+        .ok_or(AppError::NotFound)
+}
+
 /// Creates an ACL owned by `account_id` and records an audit event.
 pub async fn create_acl(pool: &PgPool, account_id: Uuid, name: &str) -> Result<Acl, AppError> {
     let mut tx = pool.begin().await?;

@@ -52,6 +52,26 @@ HTTP 200
 jsonpath "$.data" isCollection
 jsonpath "$.error" not exists
 
+# ── 4b. Get the ACL by id → 200 ──────────────────────────────────────────────
+
+GET {{base_url}}/api/v1/acls/{{acl_id}}
+Authorization: Bearer {{erb_api_key}}
+
+HTTP 200
+[Asserts]
+jsonpath "$.data.id" == "{{acl_id}}"
+jsonpath "$.data.name" == "Smoke ACL"
+jsonpath "$.error" not exists
+
+# ── 4c. Get an unknown ACL by id → 404 ───────────────────────────────────────
+
+GET {{base_url}}/api/v1/acls/00000000-0000-0000-0000-000000000000
+Authorization: Bearer {{erb_api_key}}
+
+HTTP 404
+[Asserts]
+jsonpath "$.error.code" == "not_found"
+
 # ── 5. Rename ACL → 200 ──────────────────────────────────────────────────────
 
 PATCH {{base_url}}/api/v1/acls/{{acl_id}}

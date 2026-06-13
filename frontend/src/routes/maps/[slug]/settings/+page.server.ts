@@ -1,6 +1,6 @@
 import { error, fail } from '@sveltejs/kit';
 import { backend_internal_url } from '$lib/server/env';
-import { listMaps, listAcls, updateMap, attachAcl, detachAcl } from '$lib/api';
+import { getMapBySlug, listAcls, updateMap, attachAcl, detachAcl, ApiError } from '$lib/api';
 import { failFrom } from '$lib/form-errors';
 import type { PageServerLoad, Actions } from './$types';
 
@@ -8,10 +8,15 @@ export const load: PageServerLoad = async ({ fetch, request, params }) => {
 	const cookie = request.headers.get('cookie') ?? '';
 	const backend = backend_internal_url();
 
-	const maps = await listMaps(fetch, backend, cookie);
-	const map = maps.find((m) => m.slug === params.slug);
-	if (!map) {
-		error(404, 'Map not found');
+	// Resolve the map by slug directly (404 on unknown/soft-deleted/unreadable).
+	let map;
+	try {
+		map = await getMapBySlug(fetch, backend, params.slug, cookie);
+	} catch (e) {
+		if (e instanceof ApiError && e.status === 404) {
+			error(404, 'Map not found');
+		}
+		throw e;
 	}
 
 	// The account's manageable ACLs feed the attach control; only those not

@@ -4,7 +4,7 @@ vi.mock('$lib/api', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('$lib/api')>();
 	return {
 		...actual,
-		listMaps: vi.fn(),
+		getMapBySlug: vi.fn(),
 		listAcls: vi.fn(),
 		updateMap: vi.fn(),
 		attachAcl: vi.fn(),
@@ -16,7 +16,8 @@ vi.mock('$lib/server/env', () => ({
 	backend_internal_url: () => 'http://backend:3000'
 }));
 
-const { listMaps, listAcls, updateMap, attachAcl, detachAcl, ApiError } = await import('$lib/api');
+const { getMapBySlug, listAcls, updateMap, attachAcl, detachAcl, ApiError } =
+	await import('$lib/api');
 const { load, actions } = await import('./+page.server');
 
 type LoadEvent = Parameters<typeof load>[0];
@@ -60,7 +61,7 @@ const anAcl = (id: string, name: string) => ({
 });
 
 beforeEach(() => {
-	vi.mocked(listMaps).mockReset();
+	vi.mocked(getMapBySlug).mockReset();
 	vi.mocked(listAcls).mockReset();
 	vi.mocked(updateMap).mockReset();
 	vi.mocked(attachAcl).mockReset();
@@ -69,7 +70,7 @@ beforeEach(() => {
 
 describe('maps/[slug]/settings load', () => {
 	it('resolves the slug and offers only un-attached ACLs', async () => {
-		vi.mocked(listMaps).mockResolvedValue([aMap]);
+		vi.mocked(getMapBySlug).mockResolvedValue(aMap);
 		vi.mocked(listAcls).mockResolvedValue([anAcl('acl1', 'Friends'), anAcl('acl2', 'Foes')]);
 		const result = (await load(makeLoadEvent('delve'))) as {
 			map: { id: string };
@@ -79,8 +80,8 @@ describe('maps/[slug]/settings load', () => {
 		expect(result.attachable.map((a) => a.id)).toEqual(['acl2']);
 	});
 
-	it('throws 404 for an unknown slug', async () => {
-		vi.mocked(listMaps).mockResolvedValue([aMap]);
+	it('throws 404 when the backend 404s the slug', async () => {
+		vi.mocked(getMapBySlug).mockRejectedValue(new ApiError('not_found', 'Map not found', 404));
 		await expect(load(makeLoadEvent('nope'))).rejects.toMatchObject({ status: 404 });
 		expect(listAcls).not.toHaveBeenCalled();
 	});

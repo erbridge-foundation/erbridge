@@ -164,6 +164,9 @@ export interface CreateMapRequest {
 	slug: string;
 	description: string | null;
 	acl_id?: string | null;
+	// When true, the backend mints + seeds + attaches a default ACL atomically.
+	// Mutually exclusive with acl_id.
+	default_acl?: boolean;
 }
 
 export interface UpdateMapRequest {
@@ -528,6 +531,17 @@ export function getMap(
 	return request<MapDto>(fetch, `${backendUrl}/api/v1/maps/${mapId}`, { headers: { cookie } });
 }
 
+export function getMapBySlug(
+	fetch: typeof globalThis.fetch,
+	backendUrl: string,
+	slug: string,
+	cookie: string
+): Promise<MapDto> {
+	return request<MapDto>(fetch, `${backendUrl}/api/v1/maps/by-slug/${encodeURIComponent(slug)}`, {
+		headers: { cookie }
+	});
+}
+
 export function updateMap(
 	fetch: typeof globalThis.fetch,
 	backendUrl: string,
@@ -602,6 +616,15 @@ export function createAcl(
 		headers: { cookie, 'content-type': 'application/json' },
 		body: JSON.stringify({ name })
 	});
+}
+
+export function getAcl(
+	fetch: typeof globalThis.fetch,
+	backendUrl: string,
+	aclId: string,
+	cookie: string
+): Promise<AclDto> {
+	return request<AclDto>(fetch, `${backendUrl}/api/v1/acls/${aclId}`, { headers: { cookie } });
 }
 
 export function renameAcl(

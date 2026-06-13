@@ -83,6 +83,26 @@ HTTP 200
 [Asserts]
 jsonpath "$.data.slug" == "smoke-chain-2"
 
+# ── 7b. Resolve the map by slug → 200 ────────────────────────────────────────
+
+GET {{base_url}}/api/v1/maps/by-slug/smoke-chain-2
+Authorization: Bearer {{erb_api_key}}
+
+HTTP 200
+[Asserts]
+jsonpath "$.data.id" == "{{map_id}}"
+jsonpath "$.data.acls" isCollection
+jsonpath "$.error" not exists
+
+# ── 7c. Resolve an unknown slug → 404 ────────────────────────────────────────
+
+GET {{base_url}}/api/v1/maps/by-slug/no-such-slug
+Authorization: Bearer {{erb_api_key}}
+
+HTTP 404
+[Asserts]
+jsonpath "$.error.code" == "not_found"
+
 # ── 8. Create an ACL to attach → 201 ─────────────────────────────────────────
 
 POST {{base_url}}/api/v1/acls
@@ -152,3 +172,35 @@ Authorization: Bearer {{erb_api_key}}
 HTTP 404
 [Asserts]
 jsonpath "$.error.code" == "not_found"
+
+# ── 16. Create a map with a default ACL → 201 ────────────────────────────────
+
+POST {{base_url}}/api/v1/maps
+Content-Type: application/json
+Authorization: Bearer {{erb_api_key}}
+{"name": "Default ACL Smoke", "slug": "default-acl-smoke", "default_acl": true}
+
+HTTP 201
+[Captures]
+default_acl_map_id: jsonpath "$.data.id"
+[Asserts]
+jsonpath "$.data.acls" count == 1
+jsonpath "$.error" not exists
+
+# ── 17. default_acl + acl_id together → 400 ──────────────────────────────────
+
+POST {{base_url}}/api/v1/maps
+Content-Type: application/json
+Authorization: Bearer {{erb_api_key}}
+{"name": "Conflicting", "slug": "conflicting", "acl_id": "00000000-0000-0000-0000-000000000000", "default_acl": true}
+
+HTTP 400
+[Asserts]
+jsonpath "$.error.code" isString
+
+# ── 18. Clean up the default-ACL map → 204 ───────────────────────────────────
+
+DELETE {{base_url}}/api/v1/maps/{{default_acl_map_id}}
+Authorization: Bearer {{erb_api_key}}
+
+HTTP 204

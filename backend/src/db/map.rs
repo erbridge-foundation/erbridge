@@ -83,6 +83,24 @@ pub async fn find_map_by_id(pool: &PgPool, id: Uuid) -> Result<Option<Map>> {
     .context("failed to fetch map by id")
 }
 
+/// Looks up an active map by slug. Soft-deleted maps are excluded (a soft-deleted
+/// slug is indistinguishable from an unknown one — both yield `None`).
+pub async fn find_active_map_by_slug(pool: &PgPool, slug: &str) -> Result<Option<Map>> {
+    sqlx::query_as!(
+        Map,
+        r#"
+        SELECT id, name, slug, owner_account_id, description,
+               status, delete_requested_at, created_at, updated_at
+        FROM map
+        WHERE slug = $1 AND status = 'active'
+        "#,
+        slug,
+    )
+    .fetch_optional(pool)
+    .await
+    .context("failed to fetch active map by slug")
+}
+
 /// Updates a map's name, slug, and description. A slug collision surfaces as
 /// `DbError::UniqueViolation`. Returns `None` if no active map with that id
 /// exists.
@@ -212,6 +230,37 @@ mod tests {
         assert_eq!(found.owner_account_id, Some(owner));
         assert_eq!(found.status, "active");
         assert!(found.delete_requested_at.is_none());
+    }
+
+    #[sqlx::test]
+    async fn find_by_slug_returns_active_and_excludes_deleted(pool: PgPool) {
+        let owner = accounts::create_account(&pool).await.unwrap();
+        let m = insert_active_map(&pool, owner, "by-slug").await;
+
+        let found = find_active_map_by_slug(&pool, "by-slug")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(found.id, m.id);
+
+        // Unknown slug is None.
+        assert!(
+            find_active_map_by_slug(&pool, "nope")
+                .await
+                .unwrap()
+                .is_none()
+        );
+
+        // Soft-deleted slug is None.
+        let mut tx = pool.begin().await.unwrap();
+        soft_delete_map(&mut tx, m.id).await.unwrap();
+        tx.commit().await.unwrap();
+        assert!(
+            find_active_map_by_slug(&pool, "by-slug")
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[sqlx::test]

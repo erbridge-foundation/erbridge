@@ -4,7 +4,7 @@ use uuid::Uuid;
 use crate::{
     audit::{self, AuditEvent},
     db::{
-        DbError, acl as acl_db,
+        DbError, acl as acl_db, acl_member as member_db, characters as character_db,
         map::{self as db, Map, MapWithAcls},
         map_acl,
     },
@@ -27,25 +27,52 @@ pub async fn list_maps(pool: &PgPool, account_id: Uuid) -> Result<Vec<MapWithAcl
     Ok(maps
         .into_iter()
         .map(|m| {
-            let acls = manageable
-                .iter()
-                .filter(|a| attached.get(&m.id).is_some_and(|ids| ids.contains(&a.id)))
-                .map(|a| (a.id, a.name.clone()))
-                .collect();
-            MapWithAcls {
-                id: m.id,
-                name: m.name,
-                slug: m.slug,
-                owner_account_id: m.owner_account_id,
-                description: m.description,
-                status: m.status,
-                delete_requested_at: m.delete_requested_at,
-                created_at: m.created_at,
-                updated_at: m.updated_at,
-                acls,
-            }
+            let acls = manageable_summaries(&manageable, attached.get(&m.id));
+            into_map_with_acls(m, acls)
         })
         .collect())
+}
+
+/// Annotates a single map with the ACLs attached to it that `account_id` can
+/// manage — the same summary shape [`list_maps`] produces per row.
+async fn annotate_with_manageable_acls(
+    pool: &PgPool,
+    account_id: Uuid,
+    map: Map,
+) -> Result<MapWithAcls, AppError> {
+    let manageable = acl_db::find_acls_manageable_by_account(pool, account_id).await?;
+    let attached = map_acl::find_acl_ids_for_maps(pool, &[map.id]).await?;
+    let acls = manageable_summaries(&manageable, attached.get(&map.id));
+    Ok(into_map_with_acls(map, acls))
+}
+
+/// Picks the `(id, name)` summaries of the manageable ACLs that are attached to a
+/// map (given the map's attached acl-id list, or `None` if it has none).
+fn manageable_summaries(
+    manageable: &[crate::db::acl::Acl],
+    attached_ids: Option<&Vec<Uuid>>,
+) -> Vec<(Uuid, String)> {
+    manageable
+        .iter()
+        .filter(|a| attached_ids.is_some_and(|ids| ids.contains(&a.id)))
+        .map(|a| (a.id, a.name.clone()))
+        .collect()
+}
+
+/// Combines a `Map` with its computed ACL summaries into a `MapWithAcls`.
+fn into_map_with_acls(m: Map, acls: Vec<(Uuid, String)>) -> MapWithAcls {
+    MapWithAcls {
+        id: m.id,
+        name: m.name,
+        slug: m.slug,
+        owner_account_id: m.owner_account_id,
+        description: m.description,
+        status: m.status,
+        delete_requested_at: m.delete_requested_at,
+        created_at: m.created_at,
+        updated_at: m.updated_at,
+        acls,
+    }
 }
 
 /// Returns a single map the account can read.
@@ -58,8 +85,36 @@ pub async fn get_map(pool: &PgPool, account_id: Uuid, map_id: Uuid) -> Result<Ma
     Ok(map)
 }
 
-/// Creates a map owned by `account_id`. If `acl_id` is supplied the map is
-/// attached to that ACL in the same transaction; the caller must own the ACL.
+/// Returns a single active map resolved by slug, annotated with the attached
+/// ACLs the caller can manage — the same shape as [`list_maps`]. An unknown or
+/// soft-deleted slug, and a map the caller cannot read, all yield `NotFound`
+/// (the read-permission failure is folded into 404 so existence is not leaked).
+pub async fn get_map_by_slug(
+    pool: &PgPool,
+    account_id: Uuid,
+    slug: &str,
+) -> Result<MapWithAcls, AppError> {
+    let map = db::find_active_map_by_slug(pool, slug)
+        .await?
+        .ok_or(AppError::NotFound)?;
+
+    let effective = effective_permission(pool, account_id, map.id).await?;
+    if !matches!(effective, Some(p) if p >= Permission::Read) {
+        return Err(AppError::NotFound);
+    }
+
+    annotate_with_manageable_acls(pool, account_id, map).await
+}
+
+/// Creates a map owned by `account_id`. The map may be attached to an ACL at
+/// creation time via exactly one of:
+///
+/// - `acl_id` — attach an existing ACL the caller owns; or
+/// - `default_acl` — mint a fresh ACL named after the map, seed the caller's main
+///   character as an `admin` member (when a main exists), and attach it.
+///
+/// Both supplied together is a 400. The whole operation runs in one transaction:
+/// either the map (and any ACL/member/attachment) all exist, or none do.
 pub async fn create_map(
     pool: &PgPool,
     account_id: Uuid,
@@ -67,7 +122,14 @@ pub async fn create_map(
     slug: &str,
     description: Option<&str>,
     acl_id: Option<Uuid>,
+    default_acl: bool,
 ) -> Result<Map, AppError> {
+    if acl_id.is_some() && default_acl {
+        return Err(AppError::BadRequest(
+            "acl_id and default_acl are mutually exclusive".to_string(),
+        ));
+    }
+
     // Validate ACL ownership up front, before opening the write transaction.
     if let Some(acl_id) = acl_id {
         let acl = acl_db::find_acl_by_id(pool, acl_id)
@@ -80,12 +142,86 @@ pub async fn create_map(
 
     let mut tx = pool.begin().await?;
 
+    // When requested, mint + seed the default ACL inside this transaction so a
+    // later map-insert failure (e.g. slug conflict) rolls the ACL back too — no
+    // orphan ACL can survive a failed map creation.
+    let default_acl_id = if default_acl {
+        let acl = acl_db::insert_acl(&mut tx, account_id, name).await?;
+        audit::record_in_tx(
+            &mut tx,
+            Some(account_id),
+            None,
+            AuditEvent::AclCreated {
+                account_id,
+                acl_id: acl.id,
+                name: name.to_string(),
+            },
+        )
+        .await?;
+
+        // Seed the caller's main as an explicit admin member, when one exists.
+        if let Some((main_id, eve_character_id, char_name)) =
+            character_db::get_main_for_account_tx(&mut tx, account_id).await?
+        {
+            // The ACL was just minted and is empty, so the member insert cannot
+            // conflict and `character`+`admin` is a valid combination — any
+            // DbError here is genuinely unexpected, hence Internal.
+            member_db::add_member(
+                &mut *tx,
+                acl.id,
+                "character",
+                Some(eve_character_id),
+                Some(main_id),
+                &char_name,
+                "admin",
+            )
+            .await
+            .map_err(|e| {
+                AppError::Internal(anyhow::anyhow!("failed to seed default-acl member: {e}"))
+            })?;
+            audit::record_in_tx(
+                &mut tx,
+                Some(account_id),
+                None,
+                AuditEvent::AclMemberAdded {
+                    account_id,
+                    acl_id: acl.id,
+                    member_name: char_name,
+                    eve_entity_id: Some(eve_character_id),
+                    member_type: "character".to_string(),
+                    permission: "admin".to_string(),
+                },
+            )
+            .await?;
+        }
+        Some(acl.id)
+    } else {
+        None
+    };
+
     let map = db::insert_map(&mut tx, account_id, name, slug, description)
         .await
         .map_err(map_slug_err)?;
 
-    if let Some(acl_id) = acl_id {
+    if let Some(acl_id) = acl_id.or(default_acl_id) {
         map_acl::attach_acl(&mut tx, map.id, acl_id).await?;
+    }
+
+    // The default-ACL path additionally records the attach event, naming both the
+    // map and the ACL (its own target) for the audit trail.
+    if let Some(acl_id) = default_acl_id {
+        audit::record_in_tx(
+            &mut tx,
+            Some(account_id),
+            None,
+            AuditEvent::AclAttachedToMap {
+                account_id,
+                map_id: map.id,
+                map_name: name.to_string(),
+                acl_id,
+            },
+        )
+        .await?;
     }
 
     audit::record_in_tx(
@@ -343,5 +479,100 @@ mod tests {
         assert!(validate_description(Some(&"x".repeat(501))).is_err());
         assert_eq!(validate_description(Some("ok")).unwrap(), Some("ok"));
         assert_eq!(validate_description(None).unwrap(), None);
+    }
+
+    // ---- default-ACL creation (real DB) ----
+
+    use crate::db::accounts;
+    use sqlx::PgPool;
+
+    async fn count(pool: &PgPool, table: &str) -> i64 {
+        // table is a hard-coded literal in each callsite, never user input.
+        let q = format!("SELECT COUNT(*) AS n FROM {table}");
+        sqlx::query_scalar::<_, i64>(&q)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    async fn event_count(pool: &PgPool, event_type: &str) -> i64 {
+        sqlx::query_scalar!(
+            "SELECT COUNT(*) AS \"n!\" FROM audit_log WHERE event_type = $1",
+            event_type
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap()
+    }
+
+    #[sqlx::test]
+    async fn create_map_rejects_acl_id_and_default_acl_together(pool: PgPool) {
+        let account = accounts::create_account(&pool).await.unwrap();
+        let acl = acl_db::insert_acl_for_test(&pool, account, "X").await;
+
+        let err = create_map(&pool, account, "Both", "both", None, Some(acl.id), true)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AppError::BadRequest(_)));
+        // Nothing minted beyond the pre-existing ACL; no map.
+        assert_eq!(count(&pool, "map").await, 0);
+    }
+
+    #[sqlx::test]
+    async fn create_map_default_acl_emits_all_events_in_one_tx(pool: PgPool) {
+        let account = accounts::create_account(&pool).await.unwrap();
+        sqlx::query!(
+            r#"INSERT INTO eve_character (account_id, eve_character_id, name, corporation_id, corporation_name, is_main)
+               VALUES ($1, 4242, 'Main', 8000, 'Corp', TRUE)"#,
+            account,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        create_map(&pool, account, "Home", "home", None, None, true)
+            .await
+            .unwrap();
+
+        assert_eq!(count(&pool, "acl").await, 1);
+        assert_eq!(count(&pool, "acl_member").await, 1);
+        assert_eq!(count(&pool, "map_acl").await, 1);
+        assert_eq!(event_count(&pool, "acl_created").await, 1);
+        assert_eq!(event_count(&pool, "acl_member_added").await, 1);
+        assert_eq!(event_count(&pool, "acl_attached_to_map").await, 1);
+        assert_eq!(event_count(&pool, "map_created").await, 1);
+    }
+
+    #[sqlx::test]
+    async fn create_map_default_acl_without_main_emits_no_member_event(pool: PgPool) {
+        let account = accounts::create_account(&pool).await.unwrap();
+
+        create_map(&pool, account, "Solo", "solo", None, None, true)
+            .await
+            .unwrap();
+
+        assert_eq!(count(&pool, "acl").await, 1);
+        assert_eq!(count(&pool, "acl_member").await, 0);
+        assert_eq!(event_count(&pool, "acl_member_added").await, 0);
+        assert_eq!(event_count(&pool, "acl_attached_to_map").await, 1);
+    }
+
+    #[sqlx::test]
+    async fn create_map_default_acl_rolls_back_on_slug_conflict(pool: PgPool) {
+        let account = accounts::create_account(&pool).await.unwrap();
+        create_map(&pool, account, "First", "taken", None, None, false)
+            .await
+            .unwrap();
+
+        let err = create_map(&pool, account, "Second", "taken", None, None, true)
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            AppError::Conflict(ConflictKind::MapSlugAlreadyExists)
+        ));
+        // No orphan ACL survives the failed map creation.
+        assert_eq!(count(&pool, "acl").await, 0);
+        assert_eq!(event_count(&pool, "acl_created").await, 0);
     }
 }

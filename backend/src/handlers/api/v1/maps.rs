@@ -55,7 +55,16 @@ pub async fn create_map(
     let name = svc::validate_map_name(&body.name)?;
     let slug = svc::validate_slug(&body.slug)?;
     let description = svc::validate_description(body.description.as_deref())?;
-    let map = svc::create_map(&state.db, account_id, name, slug, description, body.acl_id).await?;
+    let map = svc::create_map(
+        &state.db,
+        account_id,
+        name,
+        slug,
+        description,
+        body.acl_id,
+        body.default_acl.unwrap_or(false),
+    )
+    .await?;
     Ok((
         StatusCode::CREATED,
         Json(ApiResponse::data(MapDto::from(map))),
@@ -81,6 +90,27 @@ pub async fn get_map(
     Path(map_id): Path<Uuid>,
 ) -> Result<Json<ApiResponse<MapDto>>, AppError> {
     let map = svc::get_map(&state.db, account_id, map_id).await?;
+    Ok(Json(ApiResponse::data(MapDto::from(map))))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/maps/by-slug/{slug}",
+    params(("slug" = String, Path, description = "Map slug")),
+    responses(
+        (status = 200, description = "Map detail (with attached-ACL summaries)", body = MapResponse),
+        (status = 401, description = "Unauthenticated", body = ErrorEnvelope),
+        (status = 404, description = "Map not found or no read access", body = ErrorEnvelope),
+    ),
+    security(("session_cookie" = []), ("bearer_token" = [])),
+    tag = "maps",
+)]
+pub async fn get_map_by_slug(
+    State(state): State<AppState>,
+    AuthenticatedAccount(account_id): AuthenticatedAccount,
+    Path(slug): Path<String>,
+) -> Result<Json<ApiResponse<MapDto>>, AppError> {
+    let map = svc::get_map_by_slug(&state.db, account_id, &slug).await?;
     Ok(Json(ApiResponse::data(MapDto::from(map))))
 }
 

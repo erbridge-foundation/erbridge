@@ -97,6 +97,7 @@ pub fn build_router(state: AppState) -> Router {
         // ACLs
         .route("/acls", get(handlers::api::v1::acls::list_acls))
         .route("/acls", post(handlers::api::v1::acls::create_acl))
+        .route("/acls/{acl_id}", get(handlers::api::v1::acls::get_acl))
         .route("/acls/{acl_id}", patch(handlers::api::v1::acls::rename_acl))
         .route(
             "/acls/{acl_id}",
@@ -121,6 +122,10 @@ pub fn build_router(state: AppState) -> Router {
         // Maps
         .route("/maps", get(handlers::api::v1::maps::list_maps))
         .route("/maps", post(handlers::api::v1::maps::create_map))
+        .route(
+            "/maps/by-slug/{slug}",
+            get(handlers::api::v1::maps::get_map_by_slug),
+        )
         .route("/maps/{map_id}", get(handlers::api::v1::maps::get_map))
         .route("/maps/{map_id}", patch(handlers::api::v1::maps::update_map))
         .route(
@@ -312,6 +317,7 @@ pub fn registered_api_v1_routes() -> Vec<(String, String)> {
         ("/api/v1/account".to_string(), "delete".to_string()),
         ("/api/v1/acls".to_string(), "get".to_string()),
         ("/api/v1/acls".to_string(), "post".to_string()),
+        ("/api/v1/acls/{acl_id}".to_string(), "get".to_string()),
         ("/api/v1/acls/{acl_id}".to_string(), "patch".to_string()),
         ("/api/v1/acls/{acl_id}".to_string(), "delete".to_string()),
         (
@@ -332,6 +338,7 @@ pub fn registered_api_v1_routes() -> Vec<(String, String)> {
         ),
         ("/api/v1/maps".to_string(), "get".to_string()),
         ("/api/v1/maps".to_string(), "post".to_string()),
+        ("/api/v1/maps/by-slug/{slug}".to_string(), "get".to_string()),
         ("/api/v1/maps/{map_id}".to_string(), "get".to_string()),
         ("/api/v1/maps/{map_id}".to_string(), "patch".to_string()),
         ("/api/v1/maps/{map_id}".to_string(), "delete".to_string()),

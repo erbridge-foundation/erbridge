@@ -704,6 +704,405 @@ async fn cannot_attach_acl_you_do_not_own(pool: PgPool) {
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
 
+// ── single-resource reads: GET /acls/{id} ───────────────────────────────────────
+
+#[sqlx::test]
+async fn get_acl_by_id_visibility(pool: PgPool) {
+    let state = build_state(pool.clone());
+    let (_owner, owner_cookie) = create_session(&state).await;
+    let (_other, other_cookie) = create_session(&state).await;
+    let router = backend::build_router(state);
+
+    // Owner creates an ACL.
+    let resp = send(
+        &router,
+        req(
+            Method::POST,
+            "/api/v1/acls",
+            &owner_cookie,
+            Some(json!({"name": "Mine"})),
+        ),
+    )
+    .await;
+    let acl_id = json_body(resp).await["data"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // Owner reads it: 200.
+    let resp = send(
+        &router,
+        req(
+            Method::GET,
+            &format!("/api/v1/acls/{acl_id}"),
+            &owner_cookie,
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(json_body(resp).await["data"]["name"], "Mine");
+
+    // Unrelated caller gets 404 (not 403) — existence is hidden.
+    let resp = send(
+        &router,
+        req(
+            Method::GET,
+            &format!("/api/v1/acls/{acl_id}"),
+            &other_cookie,
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+    // Unknown id is 404.
+    let resp = send(
+        &router,
+        req(
+            Method::GET,
+            &format!("/api/v1/acls/{}", Uuid::new_v4()),
+            &owner_cookie,
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+// ── single-resource reads: GET /maps/by-slug/{slug} ─────────────────────────────
+
+#[sqlx::test]
+async fn get_map_by_slug_visibility(pool: PgPool) {
+    let state = build_state(pool.clone());
+    let (_owner, owner_cookie) = create_session(&state).await;
+    let (member_account, member_cookie) = create_session(&state).await;
+    let (_stranger, stranger_cookie) = create_session(&state).await;
+    insert_character(&pool, member_account, 9100, 7000).await;
+    let router = backend::build_router(state);
+
+    // Owner creates a map, an ACL granting corp 7000 read, attaches.
+    let resp = send(
+        &router,
+        req(
+            Method::POST,
+            "/api/v1/maps",
+            &owner_cookie,
+            Some(json!({"name": "Slugged", "slug": "slugged"})),
+        ),
+    )
+    .await;
+    let map_id = json_body(resp).await["data"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let resp = send(
+        &router,
+        req(
+            Method::POST,
+            "/api/v1/acls",
+            &owner_cookie,
+            Some(json!({"name": "Readers"})),
+        ),
+    )
+    .await;
+    let acl_id = json_body(resp).await["data"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    send(
+        &router,
+        req(
+            Method::POST,
+            &format!("/api/v1/acls/{acl_id}/members"),
+            &owner_cookie,
+            Some(
+                json!({"member_type": "corporation", "eve_entity_id": 7000, "permission": "read"}),
+            ),
+        ),
+    )
+    .await;
+    send(
+        &router,
+        req(
+            Method::POST,
+            &format!("/api/v1/maps/{map_id}/acls"),
+            &owner_cookie,
+            Some(json!({"acl_id": acl_id})),
+        ),
+    )
+    .await;
+
+    // Reader (corp grant) resolves it by slug: 200, and the owner sees the ACL
+    // summary (the reader does not manage it, so their summary list is empty).
+    let resp = send(
+        &router,
+        req(
+            Method::GET,
+            "/api/v1/maps/by-slug/slugged",
+            &owner_cookie,
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = json_body(resp).await;
+    assert_eq!(body["data"]["id"], map_id);
+    assert_eq!(body["data"]["acls"].as_array().unwrap().len(), 1);
+
+    let resp = send(
+        &router,
+        req(
+            Method::GET,
+            "/api/v1/maps/by-slug/slugged",
+            &member_cookie,
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    // The reader cannot manage the ACL, so no summary is surfaced to them.
+    assert!(
+        json_body(resp).await["data"]["acls"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+
+    // A stranger with no permission gets 404.
+    let resp = send(
+        &router,
+        req(
+            Method::GET,
+            "/api/v1/maps/by-slug/slugged",
+            &stranger_cookie,
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+    // Unknown slug is 404.
+    let resp = send(
+        &router,
+        req(
+            Method::GET,
+            "/api/v1/maps/by-slug/nope",
+            &owner_cookie,
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+    // Soft-deleted slug is 404.
+    send(
+        &router,
+        req(
+            Method::DELETE,
+            &format!("/api/v1/maps/{map_id}"),
+            &owner_cookie,
+            None,
+        ),
+    )
+    .await;
+    let resp = send(
+        &router,
+        req(
+            Method::GET,
+            "/api/v1/maps/by-slug/slugged",
+            &owner_cookie,
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+// ── atomic default-ACL creation ─────────────────────────────────────────────────
+
+#[sqlx::test]
+async fn default_acl_creation_seeds_main_and_attaches(pool: PgPool) {
+    let state = build_state(pool.clone());
+    let (account, cookie) = create_session(&state).await;
+    // Give the account a main character.
+    let main_char = sqlx::query!(
+        r#"INSERT INTO eve_character (account_id, eve_character_id, name, corporation_id, corporation_name, is_main)
+           VALUES ($1, 9200, 'Boss', 8000, 'Test Corp', TRUE) RETURNING id"#,
+        account,
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let router = backend::build_router(state);
+
+    let resp = send(
+        &router,
+        req(
+            Method::POST,
+            "/api/v1/maps",
+            &cookie,
+            Some(json!({"name": "Home", "slug": "home", "default_acl": true})),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    // Exactly one ACL exists, named after the map, owned by the caller.
+    let acls = send(&router, req(Method::GET, "/api/v1/acls", &cookie, None)).await;
+    let body = json_body(acls).await;
+    let arr = body["data"].as_array().unwrap();
+    assert_eq!(arr.len(), 1);
+    assert_eq!(arr[0]["name"], "Home");
+    let acl_id = arr[0]["id"].as_str().unwrap().to_string();
+
+    // The main is seeded as an admin character member.
+    let members = send(
+        &router,
+        req(
+            Method::GET,
+            &format!("/api/v1/acls/{acl_id}/members"),
+            &cookie,
+            None,
+        ),
+    )
+    .await;
+    let body = json_body(members).await;
+    let arr = body["data"].as_array().unwrap();
+    assert_eq!(arr.len(), 1);
+    assert_eq!(arr[0]["member_type"], "character");
+    assert_eq!(arr[0]["permission"], "admin");
+    assert_eq!(arr[0]["eve_entity_id"], 9200);
+    assert_eq!(arr[0]["character_id"], main_char.id.to_string());
+
+    // The ACL is attached to the map (visible in the map's summaries).
+    let map = send(
+        &router,
+        req(Method::GET, "/api/v1/maps/by-slug/home", &cookie, None),
+    )
+    .await;
+    let body = json_body(map).await;
+    assert_eq!(body["data"]["acls"].as_array().unwrap().len(), 1);
+    assert_eq!(body["data"]["acls"][0]["id"], acl_id);
+}
+
+#[sqlx::test]
+async fn default_acl_without_main_creates_empty_acl(pool: PgPool) {
+    let state = build_state(pool.clone());
+    let (_account, cookie) = create_session(&state).await;
+    let router = backend::build_router(state);
+
+    let resp = send(
+        &router,
+        req(
+            Method::POST,
+            "/api/v1/maps",
+            &cookie,
+            Some(json!({"name": "Solo", "slug": "solo", "default_acl": true})),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    let acls = send(&router, req(Method::GET, "/api/v1/acls", &cookie, None)).await;
+    let body = json_body(acls).await;
+    let acl_id = body["data"][0]["id"].as_str().unwrap().to_string();
+
+    let members = send(
+        &router,
+        req(
+            Method::GET,
+            &format!("/api/v1/acls/{acl_id}/members"),
+            &cookie,
+            None,
+        ),
+    )
+    .await;
+    assert!(
+        json_body(members).await["data"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[sqlx::test]
+async fn default_acl_rolls_back_on_slug_conflict(pool: PgPool) {
+    let state = build_state(pool.clone());
+    let (_account, cookie) = create_session(&state).await;
+    let router = backend::build_router(state);
+
+    // First map takes the slug.
+    let resp = send(
+        &router,
+        req(
+            Method::POST,
+            "/api/v1/maps",
+            &cookie,
+            Some(json!({"name": "First", "slug": "taken"})),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    // Second create with default_acl hits the slug conflict.
+    let resp = send(
+        &router,
+        req(
+            Method::POST,
+            "/api/v1/maps",
+            &cookie,
+            Some(json!({"name": "Second", "slug": "taken", "default_acl": true})),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+
+    // No stray ACL was minted — the transaction rolled back.
+    let acls = send(&router, req(Method::GET, "/api/v1/acls", &cookie, None)).await;
+    assert!(json_body(acls).await["data"].as_array().unwrap().is_empty());
+}
+
+#[sqlx::test]
+async fn default_acl_and_acl_id_together_is_bad_request(pool: PgPool) {
+    let state = build_state(pool.clone());
+    let (_account, cookie) = create_session(&state).await;
+    let router = backend::build_router(state);
+
+    // An ACL to reference.
+    let resp = send(
+        &router,
+        req(
+            Method::POST,
+            "/api/v1/acls",
+            &cookie,
+            Some(json!({"name": "X"})),
+        ),
+    )
+    .await;
+    let acl_id = json_body(resp).await["data"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let resp = send(
+        &router,
+        req(
+            Method::POST,
+            "/api/v1/maps",
+            &cookie,
+            Some(json!({"name": "Both", "slug": "both", "acl_id": acl_id, "default_acl": true})),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    // Nothing was created — the map does not exist.
+    let maps = send(&router, req(Method::GET, "/api/v1/maps", &cookie, None)).await;
+    assert!(json_body(maps).await["data"].as_array().unwrap().is_empty());
+}
+
 #[sqlx::test]
 async fn unauthenticated_requests_are_rejected(pool: PgPool) {
     let state = build_state(pool.clone());

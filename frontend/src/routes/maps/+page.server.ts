@@ -1,6 +1,6 @@
 import { fail } from '@sveltejs/kit';
 import { backend_internal_url } from '$lib/server/env';
-import { listMaps, createMap, deleteMap, createAcl, addAclMember, getMe } from '$lib/api';
+import { listMaps, createMap, deleteMap } from '$lib/api';
 import { failFrom } from '$lib/form-errors';
 import type { PageServerLoad, Actions } from './$types';
 
@@ -33,44 +33,20 @@ export const actions: Actions = {
 		}
 
 		try {
-			let aclId: string | undefined;
-
-			if (withDefaultAcl) {
-				// Create a reusable ACL named after the map, then seed it with the
-				// account's main character as an explicit admin. If the account has
-				// no main, the ACL is created empty (the owner still has implicit
-				// admin via the resolver). The map is then attached to this ACL.
-				const acl = await createAcl(fetch, backend, name, cookie);
-				aclId = acl.id;
-
-				try {
-					const me = await getMe(fetch, backend, cookie);
-					const main = me.characters.find((c) => c.is_main);
-					if (main) {
-						await addAclMember(
-							fetch,
-							backend,
-							acl.id,
-							{
-								member_type: 'character',
-								character_id: main.id,
-								name: main.name,
-								permission: 'admin'
-							},
-							cookie
-						);
-					}
-				} catch {
-					// Seeding the owner member is best-effort: a failure here leaves
-					// the ACL empty (owner keeps implicit admin) rather than aborting
-					// the whole map creation.
-				}
-			}
-
+			// `default_acl` asks the backend to mint a fresh ACL named after the map,
+			// seed the account's main as an explicit admin (when a main exists; the
+			// owner keeps implicit admin otherwise), attach it, and create the map —
+			// all in one transaction. A failed map create (e.g. slug conflict) rolls
+			// the ACL back too, so no orphan ACL can leak.
 			await createMap(
 				fetch,
 				backend,
-				{ name, slug, description: optional(data, 'description'), acl_id: aclId },
+				{
+					name,
+					slug,
+					description: optional(data, 'description'),
+					default_acl: withDefaultAcl
+				},
 				cookie
 			);
 		} catch (e) {

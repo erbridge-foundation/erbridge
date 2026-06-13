@@ -61,6 +61,27 @@ pub async fn create_acl(
 }
 
 #[utoipa::path(
+    get,
+    path = "/api/v1/acls/{acl_id}",
+    params(("acl_id" = Uuid, Path, description = "ACL ID")),
+    responses(
+        (status = 200, description = "ACL the caller can manage", body = AclResponse),
+        (status = 401, description = "Unauthenticated", body = ErrorEnvelope),
+        (status = 404, description = "ACL not found or not manageable", body = ErrorEnvelope),
+    ),
+    security(("session_cookie" = []), ("bearer_token" = [])),
+    tag = "acls",
+)]
+pub async fn get_acl(
+    State(state): State<AppState>,
+    AuthenticatedAccount(account_id): AuthenticatedAccount,
+    Path(acl_id): Path<Uuid>,
+) -> Result<Json<ApiResponse<AclDto>>, AppError> {
+    let acl = svc::get_manageable(&state.db, account_id, acl_id).await?;
+    Ok(Json(ApiResponse::data(AclDto::from(acl))))
+}
+
+#[utoipa::path(
     patch,
     path = "/api/v1/acls/{acl_id}",
     params(("acl_id" = Uuid, Path, description = "ACL ID")),

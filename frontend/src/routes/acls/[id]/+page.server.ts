@@ -1,12 +1,13 @@
 import { error, fail } from '@sveltejs/kit';
 import { backend_internal_url } from '$lib/server/env';
 import {
-	listAcls,
+	getAcl,
 	listAclMembers,
 	addAclMember,
 	updateAclMember,
 	removeAclMember,
 	searchEntities,
+	ApiError,
 	type AddMemberRequest
 } from '$lib/api';
 import { failFrom } from '$lib/form-errors';
@@ -18,12 +19,16 @@ export const load: PageServerLoad = async ({ fetch, request, params }) => {
 	const cookie = request.headers.get('cookie') ?? '';
 	const backend = backend_internal_url();
 
-	// No single GET /acls/{id}; resolve the ACL from the manageable list so the
-	// detail can show its name and 404 on an ACL the account can't manage.
-	const acls = await listAcls(fetch, backend, cookie);
-	const acl = acls.find((a) => a.id === params.id);
-	if (!acl) {
-		error(404, 'ACL not found');
+	// The single-ACL read 404s when the ACL is absent or not manageable, so the
+	// detail page can never show a name the manageable list would hide.
+	let acl;
+	try {
+		acl = await getAcl(fetch, backend, params.id, cookie);
+	} catch (e) {
+		if (e instanceof ApiError && e.status === 404) {
+			error(404, 'ACL not found');
+		}
+		throw e;
 	}
 
 	const members = await listAclMembers(fetch, backend, params.id, cookie);

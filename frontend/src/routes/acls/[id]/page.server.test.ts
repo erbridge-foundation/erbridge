@@ -4,7 +4,7 @@ vi.mock('$lib/api', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('$lib/api')>();
 	return {
 		...actual,
-		listAcls: vi.fn(),
+		getAcl: vi.fn(),
 		listAclMembers: vi.fn(),
 		addAclMember: vi.fn(),
 		updateAclMember: vi.fn(),
@@ -18,7 +18,7 @@ vi.mock('$lib/server/env', () => ({
 }));
 
 const {
-	listAcls,
+	getAcl,
 	listAclMembers,
 	addAclMember,
 	updateAclMember,
@@ -64,7 +64,7 @@ const anAcl = {
 };
 
 beforeEach(() => {
-	vi.mocked(listAcls).mockReset();
+	vi.mocked(getAcl).mockReset();
 	vi.mocked(listAclMembers).mockReset();
 	vi.mocked(addAclMember).mockReset();
 	vi.mocked(updateAclMember).mockReset();
@@ -74,7 +74,7 @@ beforeEach(() => {
 
 describe('acls/[id] load', () => {
 	it('resolves the ACL and returns its members', async () => {
-		vi.mocked(listAcls).mockResolvedValue([anAcl]);
+		vi.mocked(getAcl).mockResolvedValue(anAcl);
 		vi.mocked(listAclMembers).mockResolvedValue([]);
 		const result = (await load(makeLoadEvent('acl1'))) as {
 			acl: { name: string };
@@ -84,8 +84,8 @@ describe('acls/[id] load', () => {
 		expect(result.members).toEqual([]);
 	});
 
-	it('throws 404 for an ACL the account cannot manage', async () => {
-		vi.mocked(listAcls).mockResolvedValue([anAcl]);
+	it('throws 404 for an ACL the account cannot manage (backend 404)', async () => {
+		vi.mocked(getAcl).mockRejectedValue(new ApiError('not_found', 'ACL not found', 404));
 		await expect(load(makeLoadEvent('acl-other'))).rejects.toMatchObject({ status: 404 });
 		expect(listAclMembers).not.toHaveBeenCalled();
 	});

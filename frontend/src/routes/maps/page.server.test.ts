@@ -6,10 +6,7 @@ vi.mock('$lib/api', async (importOriginal) => {
 		...actual,
 		listMaps: vi.fn(),
 		createMap: vi.fn(),
-		deleteMap: vi.fn(),
-		createAcl: vi.fn(),
-		addAclMember: vi.fn(),
-		getMe: vi.fn()
+		deleteMap: vi.fn()
 	};
 });
 
@@ -17,8 +14,7 @@ vi.mock('$lib/server/env', () => ({
 	backend_internal_url: () => 'http://backend:3000'
 }));
 
-const { listMaps, createMap, deleteMap, createAcl, addAclMember, getMe, ApiError } =
-	await import('$lib/api');
+const { listMaps, createMap, deleteMap, ApiError } = await import('$lib/api');
 const { load, actions } = await import('./+page.server');
 
 type LoadEvent = Parameters<typeof load>[0];
@@ -52,21 +48,10 @@ const aMap = {
 	created_at: 'now',
 	updated_at: 'now'
 };
-const anAcl = {
-	id: 'acl-new',
-	name: 'Delve',
-	owner_account_id: 'acc1',
-	created_at: 'now',
-	updated_at: 'now'
-};
-
 beforeEach(() => {
 	vi.mocked(listMaps).mockReset();
 	vi.mocked(createMap).mockReset();
 	vi.mocked(deleteMap).mockReset();
-	vi.mocked(createAcl).mockReset();
-	vi.mocked(addAclMember).mockReset();
-	vi.mocked(getMe).mockReset();
 });
 
 describe('maps load', () => {
@@ -78,17 +63,16 @@ describe('maps load', () => {
 });
 
 describe('maps create action (plain)', () => {
-	it('creates with trimmed name/slug and optional description, no ACL', async () => {
+	it('creates with trimmed name/slug and optional description, no default ACL', async () => {
 		vi.mocked(createMap).mockResolvedValue(aMap);
 		const result = await actions.create(
 			makeActionEvent({ name: '  Delve ', slug: ' delve ', description: ' big ' })
 		);
 		expect(result).toBeUndefined();
-		expect(createAcl).not.toHaveBeenCalled();
 		expect(createMap).toHaveBeenCalledWith(
 			expect.anything(),
 			'http://backend:3000',
-			{ name: 'Delve', slug: 'delve', description: 'big', acl_id: undefined },
+			{ name: 'Delve', slug: 'delve', description: 'big', default_acl: false },
 			'session=jwt'
 		);
 	});
@@ -107,111 +91,33 @@ describe('maps create action (plain)', () => {
 });
 
 describe('maps create action (default ACL)', () => {
-	it('creates an ACL named after the map, seeds the main char as admin, attaches it', async () => {
-		vi.mocked(createAcl).mockResolvedValue(anAcl);
-		vi.mocked(getMe).mockResolvedValue({
-			account: { id: 'acc1', status: 'active', is_server_admin: false, created_at: 'now' },
-			characters: [
-				{
-					id: 'char-main-uuid',
-					eve_character_id: 1001,
-					name: 'Main Pilot',
-					corporation_id: 1,
-					corporation_name: 'Corp',
-					alliance_id: null,
-					alliance_name: null,
-					is_main: true,
-					portrait_url: 'https://x',
-					token_status: 'active'
-				}
-			]
-		});
-		vi.mocked(addAclMember).mockResolvedValue({} as never);
+	it('sends a single createMap with default_acl: true — no client-side orchestration', async () => {
 		vi.mocked(createMap).mockResolvedValue(aMap);
 
 		const result = await actions.create(
 			makeActionEvent({ name: 'Delve', slug: 'delve', default_acl: 'on' })
 		);
 		expect(result).toBeUndefined();
-		expect(createAcl).toHaveBeenCalledWith(expect.anything(), 'http://backend:3000', 'Delve', 'session=jwt');
-		expect(addAclMember).toHaveBeenCalledWith(
-			expect.anything(),
-			'http://backend:3000',
-			'acl-new',
-			{ member_type: 'character', character_id: 'char-main-uuid', name: 'Main Pilot', permission: 'admin' },
-			'session=jwt'
-		);
+		// The backend mints + seeds + attaches the ACL atomically; the frontend
+		// makes exactly one call and never touches createAcl/getMe/addAclMember.
+		expect(createMap).toHaveBeenCalledTimes(1);
 		expect(createMap).toHaveBeenCalledWith(
 			expect.anything(),
 			'http://backend:3000',
-			{ name: 'Delve', slug: 'delve', description: null, acl_id: 'acl-new' },
+			{ name: 'Delve', slug: 'delve', description: null, default_acl: true },
 			'session=jwt'
 		);
 	});
 
-	it('still creates + attaches the ACL when the account has no main (empty ACL)', async () => {
-		vi.mocked(createAcl).mockResolvedValue(anAcl);
-		vi.mocked(getMe).mockResolvedValue({
-			account: { id: 'acc1', status: 'active', is_server_admin: false, created_at: 'now' },
-			characters: []
+	it('surfaces a slug conflict from the default-ACL create as fail (no orphan ACL leaks)', async () => {
+		vi.mocked(createMap).mockRejectedValue(new ApiError('map_slug_already_exists', 'taken', 409));
+		const result = await actions.create(
+			makeActionEvent({ name: 'Delve', slug: 'delve', default_acl: 'on' })
+		);
+		expect(result).toMatchObject({
+			status: 409,
+			data: { action: 'create', code: 'map_slug_already_exists' }
 		});
-		vi.mocked(createMap).mockResolvedValue(aMap);
-
-		const result = await actions.create(
-			makeActionEvent({ name: 'Delve', slug: 'delve', default_acl: 'on' })
-		);
-		expect(result).toBeUndefined();
-		expect(createAcl).toHaveBeenCalled();
-		expect(addAclMember).not.toHaveBeenCalled();
-		expect(createMap).toHaveBeenCalledWith(
-			expect.anything(),
-			'http://backend:3000',
-			{ name: 'Delve', slug: 'delve', description: null, acl_id: 'acl-new' },
-			'session=jwt'
-		);
-	});
-
-	it('seeding the owner member is best-effort: addAclMember failure still creates the map', async () => {
-		vi.mocked(createAcl).mockResolvedValue(anAcl);
-		vi.mocked(getMe).mockResolvedValue({
-			account: { id: 'acc1', status: 'active', is_server_admin: false, created_at: 'now' },
-			characters: [
-				{
-					id: 'char-main-uuid',
-					eve_character_id: 1001,
-					name: 'Main Pilot',
-					corporation_id: 1,
-					corporation_name: 'Corp',
-					alliance_id: null,
-					alliance_name: null,
-					is_main: true,
-					portrait_url: 'https://x',
-					token_status: 'active'
-				}
-			]
-		});
-		vi.mocked(addAclMember).mockRejectedValue(new ApiError('boom', 'no', 500));
-		vi.mocked(createMap).mockResolvedValue(aMap);
-
-		const result = await actions.create(
-			makeActionEvent({ name: 'Delve', slug: 'delve', default_acl: 'on' })
-		);
-		expect(result).toBeUndefined();
-		expect(createMap).toHaveBeenCalledWith(
-			expect.anything(),
-			'http://backend:3000',
-			{ name: 'Delve', slug: 'delve', description: null, acl_id: 'acl-new' },
-			'session=jwt'
-		);
-	});
-
-	it('surfaces a createAcl failure as fail before creating the map', async () => {
-		vi.mocked(createAcl).mockRejectedValue(new ApiError('conflict', 'dup', 409));
-		const result = await actions.create(
-			makeActionEvent({ name: 'Delve', slug: 'delve', default_acl: 'on' })
-		);
-		expect(result).toMatchObject({ status: 409, data: { action: 'create', code: 'conflict' } });
-		expect(createMap).not.toHaveBeenCalled();
 	});
 });
 

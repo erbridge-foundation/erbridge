@@ -72,7 +72,14 @@ pub struct CreateMapRequest {
     pub slug: String,
     pub description: Option<String>,
     /// Optionally attach the map to an ACL the caller owns at creation time.
+    /// Mutually exclusive with `default_acl`.
     pub acl_id: Option<Uuid>,
+    /// When true, the backend mints a fresh ACL named after the map, seeds the
+    /// caller's main character as an `admin` member (when a main exists),
+    /// attaches it, and creates the map — all atomically. Mutually exclusive with
+    /// `acl_id`.
+    #[serde(default)]
+    pub default_acl: Option<bool>,
 }
 
 #[derive(Deserialize, ToSchema)]

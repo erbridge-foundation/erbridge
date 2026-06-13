@@ -469,15 +469,17 @@ pub async fn find_account_for_eve_character(
     Ok(row.and_then(|r| r.account_id))
 }
 
-/// Returns the `(eve_character_id, name)` of the main character for `account_id`,
-/// or `None` if the account has no characters yet. Used by the audit module to
-/// snapshot the actor character at write time.
+/// Returns the `(id, eve_character_id, name)` of the main character for
+/// `account_id`, or `None` if the account has no main yet. `id` is the internal
+/// `eve_character` UUID (the FK link); `eve_character_id` is the durable ESI id.
+/// The audit module uses the latter two to snapshot the actor at write time; the
+/// map service additionally needs `id` to seed the default-ACL admin member.
 pub async fn get_main_for_account_tx(
     tx: &mut Transaction<'_, Postgres>,
     account_id: Uuid,
-) -> Result<Option<(i64, String)>> {
+) -> Result<Option<(Uuid, i64, String)>> {
     let row = sqlx::query!(
-        "SELECT eve_character_id, name FROM eve_character
+        "SELECT id, eve_character_id, name FROM eve_character
          WHERE account_id = $1 AND is_main = TRUE
          LIMIT 1",
         account_id
@@ -486,7 +488,7 @@ pub async fn get_main_for_account_tx(
     .await
     .context("failed to fetch main character for account")?;
 
-    Ok(row.map(|r| (r.eve_character_id, r.name)))
+    Ok(row.map(|r| (r.id, r.eve_character_id, r.name)))
 }
 
 /// The stored EVE-token material for a character, needed to perform an
@@ -1280,7 +1282,10 @@ mod tests {
         let main = get_main_for_account_tx(&mut tx, account_id).await.unwrap();
         tx.commit().await.unwrap();
 
-        assert_eq!(main, Some((42_000_i64, "Main Pilot".to_string())));
+        assert_eq!(
+            main,
+            Some((main_char, 42_000_i64, "Main Pilot".to_string()))
+        );
     }
 
     #[sqlx::test]
