@@ -4,6 +4,14 @@
 @import url("https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&display=swap");
 
 :root {
+	/* The app is dark-only by design (an EVE tool — see accessibility-preferences).
+	   `color-scheme: dark` is a UA rendering hint, NOT a light theme: it tells the
+	   browser to paint native controls (scrollbars, <select> dropdowns, date/number
+	   pickers, spinners) in their dark variant so they match our dark surfaces.
+	   `accent-color` themes native checkboxes/radios/range to our --sky accent. */
+	color-scheme: dark;
+	accent-color: var(--sky);
+
 	--space-950: #05080f;
 	--space-900: #080d1a;
 	--space-800: #0d1526;
@@ -176,4 +184,54 @@ html[data-large-targets="on"] [role="menuitem"] {
    from --font-ui. */
 html[data-dyslexia-font="on"] {
 	--font-ui: var(--font-dyslexic);
+}
+
+/* 4.6 — Forced colors (Windows High Contrast / Contrast Themes).
+   CONTRIBUTOR NOTE: under `forced-colors: active` the OS REPLACES our palette
+   with the user's chosen system colours and ignores author colours entirely.
+   Our custom-property colours (--sky, --space-*, etc.) are overridden; only
+   structural CSS and explicit system-colour keywords survive. This is an OS
+   mode the user has already chosen — it is NOT a preference toggle, so there
+   is no auto/on/off here (cf. high-contrast above). Two rules for new code:
+     1. Anything that must stay visible (focus rings, structural borders) must
+        be drawn with a system-colour keyword (Canvas, CanvasText, ButtonText,
+        ButtonBorder, Highlight, LinkText…), not a --token colour.
+     2. Any NEW element that encodes meaning BY COLOUR ALONE (a status dot or
+        chip whose state is only its colour) must be opted out of the OS flatten
+        with `forced-color-adjust: none` in the block below — add it there. */
+@media (forced-colors: active) {
+	/* 4.6.1 — Restore a visible keyboard-focus indicator. Across the app focus is
+	   shown with `outline: none; border-color: var(--sky)`; forced-colors forces
+	   border colours toward system keywords, collapsing that focus cue into the
+	   resting border. Draw a real outline on :focus-visible (keyboard-scoped,
+	   matching the rest of the app's focus styling) using a system colour.
+	   `!important` because the component-scoped `outline: none` rules out-specify
+	   this global one — same approach as the reduce-motion block above. */
+	:focus-visible {
+		outline: 2px solid Highlight !important;
+		outline-offset: 2px !important;
+	}
+
+	/* 4.6.2 — Keep structural borders visible. Borders drawn with subtle
+	   --space-* colours would otherwise flatten into the background. */
+	input,
+	select,
+	textarea,
+	button {
+		border-color: ButtonBorder;
+	}
+
+	/* 4.6.3 — Preserve meaning-by-colour status signals. These elements encode
+	   state (connected/active=emerald, error/expired=red, warning/transferred=
+	   amber) purely in colour; opt them out so the semantic colour survives the
+	   OS flatten. Scoped to the signal elements ONLY — everything else honours
+	   the user's forced palette. (.dot = connected dot in the nav + token-status
+	   dots; .token-status/.badge-expired/.blocked-badge = status/token chips in
+	   /characters, /account, and the admin character/blocks grids.) */
+	.dot,
+	.token-status,
+	.badge-expired,
+	.blocked-badge {
+		forced-color-adjust: none;
+	}
 }
