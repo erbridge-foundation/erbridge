@@ -1,5 +1,41 @@
 <script lang="ts">
 	import { m } from '$lib/paraglide/messages';
+	import { preferences } from '$lib/preferences/store.svelte';
+	import {
+		DEFAULT_PREFERENCES,
+		MAX_PREFERENCES,
+		type Locale
+	} from '$lib/preferences/schema';
+
+	// The preset is "on" iff every one of its five keys currently matches MAX_PREFERENCES.
+	const presetKeys = Object.keys(MAX_PREFERENCES) as (keyof typeof MAX_PREFERENCES)[];
+	const presetActive = $derived(
+		presetKeys.every((k) => preferences.current[k] === MAX_PREFERENCES[k])
+	);
+
+	function toggleMaxAccessibility() {
+		if (presetActive) {
+			// Revert just the five preset keys to their defaults (leave locale alone).
+			const revert = Object.fromEntries(
+				presetKeys.map((k) => [k, DEFAULT_PREFERENCES[k]])
+			);
+			preferences.commit(revert);
+		} else {
+			preferences.commit({ ...MAX_PREFERENCES });
+		}
+	}
+
+	const localeOptions: ReadonlyArray<{ value: Locale; label: string }> = [
+		{ value: 'en', label: m.prefs_locale_en() },
+		{ value: 'de', label: m.prefs_locale_de() },
+		{ value: 'fr', label: m.prefs_locale_fr() }
+	];
+
+	function onLocaleChange(event: Event) {
+		const locale = (event.currentTarget as HTMLSelectElement).value as Locale;
+		if (locale === preferences.current.locale) return;
+		preferences.commit({ locale });
+	}
 </script>
 
 <svelte:head>
@@ -39,6 +75,36 @@
 		{m.login_disclaimer_line1()}<br />
 		{m.login_disclaimer_line2()}
 	</p>
+
+	<hr class="divider" />
+
+	<div class="controls">
+		<label class="a11y-toggle" class:active={presetActive}>
+			<input
+				type="checkbox"
+				checked={presetActive}
+				aria-label={m.login_a11y_aria()}
+				onchange={toggleMaxAccessibility}
+			/>
+			<span>{m.login_a11y_label()}</span>
+		</label>
+		{#if presetActive}
+			<p class="a11y-active" role="status">{m.login_a11y_active()}</p>
+		{/if}
+
+		<div class="lang">
+			<label class="lang-label" for="login-locale">{m.login_lang_label()}</label>
+			<select id="login-locale" class="lang-select" onchange={onLocaleChange}>
+				{#each localeOptions as opt (opt.value)}
+					<option value={opt.value} selected={preferences.current.locale === opt.value}>
+						{opt.label}
+					</option>
+				{/each}
+			</select>
+		</div>
+
+		<p class="prefs-hint">{m.login_prefs_hint()}</p>
+	</div>
 </div>
 
 <style>
@@ -96,5 +162,87 @@
 		color: var(--slate-500);
 		text-align: center;
 		line-height: 1.6;
+	}
+
+	/* Secondary controls, kept compact and below the SSO button so the primary
+	   login action stays dominant. */
+	.controls {
+		width: 100%;
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
+	}
+
+	/* Prominent by design: someone reaching for "maximize accessibility" likely
+	   struggles to read small text, so the toggle is large, full-width and high
+	   contrast before the preset is even on. */
+	.a11y-toggle {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		width: 100%;
+		padding: 12px 14px;
+		font-size: 1rem;
+		font-weight: 600;
+		color: var(--slate-100);
+		background: var(--space-800);
+		border: 1px solid var(--space-700);
+		border-radius: 8px;
+		cursor: pointer;
+	}
+	.a11y-toggle.active {
+		border-color: var(--sky);
+	}
+	.a11y-toggle input {
+		width: 22px;
+		height: 22px;
+		flex-shrink: 0;
+		cursor: pointer;
+	}
+	/* accent-color themes the box but gives no focus ring on this dark theme —
+	   highlight the enclosing control so the indicator is unmistakable. */
+	.a11y-toggle:focus-within {
+		outline: 2px solid var(--sky);
+		outline-offset: 2px;
+	}
+
+	.a11y-active {
+		margin: 0;
+		font-size: 0.8125rem;
+		line-height: 1.5;
+		color: var(--slate-300);
+	}
+
+	.lang {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+	}
+	.lang-label {
+		font-size: 0.875rem;
+		font-weight: 600;
+		color: var(--slate-200);
+	}
+	.lang-select {
+		width: 100%;
+		padding: 10px 12px;
+		font: inherit;
+		font-size: 0.9375rem;
+		color: var(--slate-100);
+		background: var(--space-800);
+		border: 1px solid var(--space-700);
+		border-radius: 8px;
+		cursor: pointer;
+	}
+	.lang-select:focus-visible {
+		outline: 2px solid var(--sky);
+		outline-offset: 2px;
+	}
+
+	.prefs-hint {
+		margin: 0;
+		font-size: 0.8125rem;
+		line-height: 1.5;
+		color: var(--slate-400);
 	}
 </style>

@@ -52,6 +52,23 @@ export const DEFAULT_PREFERENCES: Preferences = {
 	locale: 'en'
 };
 
+/**
+ * The high-accessibility preset applied by the login page's "Maximize
+ * accessibility" control: every accessibility key turned up to its strongest
+ * setting. `locale` is deliberately excluded — language is its own control, so
+ * the preset and the language picker stay independent. The login control derives
+ * its on/off state by comparing these five keys against the current set and
+ * reverts them to DEFAULT_PREFERENCES when deactivated. Single source of truth:
+ * if an accessibility key is added later, update this preset (and its test).
+ */
+export const MAX_PREFERENCES: Omit<Preferences, 'locale'> = {
+	text_size: 'large',
+	high_contrast: 'on',
+	reduce_motion: 'on',
+	large_targets: 'on',
+	dyslexia_font: 'on'
+};
+
 /** localStorage key under which the preference bag is persisted. */
 export const STORAGE_KEY = 'erbridge:preferences';
 
