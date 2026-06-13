@@ -222,9 +222,20 @@ async fn callback_inner(state: &AppState, query: &CallbackQuery) -> Result<Respo
 
     // A blocked character gets no session and no cookie — just an informational
     // redirect. This covers both the login and add-character flows.
+    //
+    // A bound-elsewhere character (add-character flow only) keeps the caller's
+    // existing session — the conflict concerns the character, not the caller —
+    // and redirects to the return destination carrying an `add_conflict` flag
+    // the characters page renders as a dismissible notice.
     let account_id = match outcome {
         SsoOutcome::Authenticated(id) => id,
         SsoOutcome::Blocked => return Ok(Redirect::to("/blocked").into_response()),
+        SsoOutcome::BoundElsewhere => {
+            let base = inflight.return_to.as_deref().unwrap_or("/characters");
+            let separator = if base.contains('?') { '&' } else { '?' };
+            let target = format!("{base}{separator}add_conflict=bound_elsewhere");
+            return Ok(Redirect::to(&target).into_response());
+        }
     };
 
     // Create the persistent session row. The session ID is a fresh UUID; the

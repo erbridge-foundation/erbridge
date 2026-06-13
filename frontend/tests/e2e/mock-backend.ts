@@ -537,6 +537,22 @@ const server = http.createServer(async (req, res) => {
 		return;
 	}
 
+	// GET /auth/characters/add — stand-in for the backend's add-character SSO
+	// callback. The real flow goes out to EVE SSO and back; here we shortcut to
+	// the *outcome* the backend produces when the presented character is already
+	// bound to another account: a 303 redirect to the return destination carrying
+	// the `add_conflict=bound_elsewhere` flag the /characters page renders as a
+	// dismissible notice. (Traefik routes /auth/* to the backend in production;
+	// in e2e there is no such proxy, so the spec navigates this mock route
+	// directly to follow the redirect.)
+	if (method === 'GET' && url.startsWith('/auth/characters/add')) {
+		const returnTo = new URL(url, 'http://x').searchParams.get('return_to') ?? '/characters';
+		const sep = returnTo.includes('?') ? '&' : '?';
+		res.writeHead(303, { Location: `${returnTo}${sep}add_conflict=bound_elsewhere` });
+		res.end();
+		return;
+	}
+
 	// DELETE /api/v1/characters/:id
 	const charDeleteMatch = url.match(/^\/api\/v1\/characters\/([^/]+)$/);
 	if (method === 'DELETE' && charDeleteMatch) {

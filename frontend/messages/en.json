@@ -53,6 +53,8 @@
 	"characters_remove_title": "Remove {name}?",
 	"characters_remove_body": "This character will be removed from your account. You can add them again at any time via add character and performing an EVE login.",
 	"characters_remove_confirm": "remove character",
+	"characters_add_conflict_bound_elsewhere": "That character is already linked to another account, so it wasn't added. A character can only belong to one account at a time.",
+	"characters_add_conflict_dismiss_aria": "Dismiss notice",
 	"account_title": "E-R Bridge — Account",
 	"account_heading": "ACCOUNT",
 	"account_tab_api_keys": "API keys",

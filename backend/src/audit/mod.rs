@@ -188,6 +188,17 @@ pub enum AuditEvent {
         eve_character_id: i64,
         character_name: Option<String>,
     },
+    /// Emitted by the SSO callback's add-character path when the presented
+    /// character is already bound to a *different* account. Like
+    /// `BlockedLoginRejected` this records a rejected *attempt*, not a committed
+    /// change — but here an authenticated session exists, so `actor_account_id`
+    /// is the session account that attempted the add. The owning account is
+    /// deliberately NOT recorded (no `details` leak of account linkage into the
+    /// admin audit browser); the rejected character is the subject.
+    CharacterAddRejectedBoundElsewhere {
+        account_id: Uuid,
+        eve_character_id: i64,
+    },
     /// Emitted by the daily token-refresh sweep when a character's owner hash
     /// changed on a successful refresh — i.e. the character was transferred to a
     /// different EVE account. The durable record of a detected transfer.
@@ -303,6 +314,9 @@ impl AuditEvent {
             Self::EveCharacterBlocked { .. } => "eve_character_blocked",
             Self::EveCharacterUnblocked { .. } => "eve_character_unblocked",
             Self::BlockedLoginRejected { .. } => "blocked_login_rejected",
+            Self::CharacterAddRejectedBoundElsewhere { .. } => {
+                "character_add_rejected_bound_elsewhere"
+            }
             Self::CharacterOwnerMismatch { .. } => "character_owner_mismatch",
             Self::MapCreated { .. } => "map_created",
             Self::MapDeleted { .. } => "map_deleted",
@@ -422,6 +436,14 @@ impl AuditEvent {
             } => json!({
                 "eve_character_id": eve_character_id,
                 "character_name": character_name,
+            }),
+            // actor == the session account (actor column); only the subject
+            // character is carried. The owning account is deliberately omitted
+            // so the admin audit browser never casually leaks account linkage.
+            Self::CharacterAddRejectedBoundElsewhere {
+                eve_character_id, ..
+            } => json!({
+                "eve_character_id": eve_character_id,
             }),
             Self::CharacterOwnerMismatch {
                 account_id,
@@ -600,6 +622,13 @@ impl AuditEvent {
                 eve_character_id,
                 character_name,
             } => AuditTarget::character(*eve_character_id, character_name.as_deref()),
+
+            // Bound-elsewhere rejection: the character is the target; no name is
+            // carried (the emit site has it, but the spec keeps target_name NULL
+            // and the subject id is the durable join key).
+            Self::CharacterAddRejectedBoundElsewhere {
+                eve_character_id, ..
+            } => AuditTarget::character(*eve_character_id, None),
 
             // Map targets carrying a name.
             Self::MapCreated { map_id, name, .. }
@@ -1097,6 +1126,20 @@ mod tests {
     }
 
     #[test]
+    fn character_add_rejected_bound_elsewhere_serialises_correctly() {
+        let event = AuditEvent::CharacterAddRejectedBoundElsewhere {
+            account_id: test_uuid(),
+            eve_character_id: 424242,
+        };
+        assert_eq!(event.event_type(), "character_add_rejected_bound_elsewhere");
+        let d = event.details();
+        // Only the subject character — the owning account is deliberately NOT
+        // leaked, and the session account is carried by the actor column.
+        assert_eq!(d["eve_character_id"], 424242i64);
+        assert!(d.get("account_id").is_none());
+    }
+
+    #[test]
     fn map_created_serialises_correctly() {
         let account_id = test_uuid();
         let map_id = other_uuid();
@@ -1543,6 +1586,15 @@ mod tests {
             },
             "character",
             "98765",
+        );
+        // Bound-elsewhere always leaves target_name NULL (no name carried).
+        assert_nameless_target(
+            &AuditEvent::CharacterAddRejectedBoundElsewhere {
+                account_id: test_uuid(),
+                eve_character_id: 424242,
+            },
+            "character",
+            "424242",
         );
     }
 

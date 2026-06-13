@@ -83,6 +83,7 @@ The per-variant target mapping SHALL be:
 - `ApiKeyCreated`, `ApiKeyRevoked` → target_type `"account"`, target_id the `account_id`, name resolved from the account's main.
 - `ServerAdminGranted`, `ServerAdminRevoked` → target_type `"account"`, target_id the affected `account_id`, name resolved from the account's main.
 - `EveCharacterBlocked`, `EveCharacterUnblocked`, `BlockedLoginRejected` → target_type `"character"`, target_id the `eve_character_id`, name the carried `character_name` (or NULL where the subject character name is genuinely unavailable at the SSO emit site).
+- `CharacterAddRejectedBoundElsewhere` → target_type `"character"`, target_id the `eve_character_id`, name NULL (the rejected character is the subject; its name is not carried into `target_name`).
 - `MapCreated`, `MapDeleted`, `AdminMapHardDeleted` → target_type `"map"`, target_id the `map_id`, name the carried map `name`.
 - `AdminMapOwnershipChanged` → target_type `"map"`, target_id the `map_id`, name the carried map `name`.
 - `AclCreated`, `AclRenamed`, `AclDeleted`, `AdminAclHardDeleted` → target_type `"acl"`, target_id the `acl_id`, name the carried acl `name` (for `AclRenamed`, the `new_name`).
@@ -98,6 +99,7 @@ The `details()` payloads SHALL be:
 - `AdminAclOwnershipChanged` → `{ old_owner_name, old_owner, new_owner_name, new_owner }`.
 - `ApiKeyRevoked` → `{ key_name }` (key label snapshotted; `key_id` retained for correlation is OPTIONAL).
 - `CharacterRemoved`, `CharacterSetMain`, `EveCharacterBlocked`, `EveCharacterUnblocked`, `BlockedLoginRejected`, `CharacterOwnerMismatch` → carry the character name (in `target_name` and/or `details.character_name`) wherever the emit site can supply it.
+- `CharacterAddRejectedBoundElsewhere` → `{ eve_character_id }` only. Like `BlockedLoginRejected` it records a rejected *attempt* rather than a committed state change, but here an authenticated session exists, so `actor_account_id` SHALL be the session account that attempted the add. The owning account SHALL NOT be recorded in `details` — an audit reader with DB access can resolve it, but the event must not casually leak account linkage into the admin audit browser.
 
 All other variants retain their shipped `details()` shapes.
 
@@ -118,6 +120,16 @@ All other variants retain their shipped `details()` shapes.
 - **GIVEN** an `AuditEvent::CharacterRemoved` whose emit site holds the character name
 - **WHEN** `target()` is called and the row is written
 - **THEN** `target_type = "character"`, `target_id = eve_character_id.to_string()`, and `target_name` is the character's name (not NULL)
+
+#### Scenario: Rejected add is recorded with the session actor
+
+- **WHEN** the add-character flow is refused because the character is bound to another account
+- **THEN** an audit row exists with `event_type = "character_add_rejected_bound_elsewhere"`, `actor_account_id` = the session account, `target_type = "character"`, and `target_id` = the character's EVE id
+
+#### Scenario: The owning account is not leaked in details
+
+- **WHEN** the `character_add_rejected_bound_elsewhere` row is inspected via the admin audit browser
+- **THEN** `details` contains the `eve_character_id` but not the other account's id
 
 #### Scenario: Ownership-change events snapshot old and new owner names
 

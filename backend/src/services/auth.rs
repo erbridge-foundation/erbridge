@@ -19,14 +19,22 @@ pub enum SsoOutcome {
     /// The resolved character is in the block list. No account/character/token
     /// was written; a `blocked_login_rejected` audit row was recorded.
     Blocked,
+    /// The add-character flow presented a character already bound to a
+    /// *different* account. No write occurred to the existing row (no token
+    /// overwrite, no `owner_hash`/public-info refresh); a
+    /// `character_add_rejected_bound_elsewhere` audit row was recorded. The
+    /// session is preserved — the conflict concerns the character, not the
+    /// caller — so the handler keeps the existing session and redirects with a
+    /// conflict flag.
+    BoundElsewhere,
 }
 
 impl SsoOutcome {
-    /// The authenticated account id, or `None` for a blocked outcome.
+    /// The authenticated account id, or `None` for a non-happy-path outcome.
     pub fn account_id(&self) -> Option<Uuid> {
         match self {
             SsoOutcome::Authenticated(id) => Some(*id),
-            SsoOutcome::Blocked => None,
+            SsoOutcome::Blocked | SsoOutcome::BoundElsewhere => None,
         }
     }
 }
@@ -90,15 +98,48 @@ pub async fn complete_sso_callback(
     )
     .await?;
 
-    // For add-character mode the orphan-vs-fresh distinction is invisible to
+    // For add-character mode the pre-upsert binding is invisible to
     // `resolve_or_create` (it short-circuits on the session's account_id), so
-    // look up the pre-upsert state here. Other outcomes carry the answer in
-    // the enum variant.
-    let add_character_is_orphan_claim = matches!(outcome, ResolutionOutcome::AddCharacterMode)
-        && characters::find_account_id_for_eve_character(&mut tx, input.eve_character_id)
-            .await?
-            .map(|account| account.is_none())
-            .unwrap_or(false);
+    // look up the existing row here once, before any write. The single result
+    // drives two decisions: refuse the add when the character is bound to a
+    // *different* account, and distinguish an orphan claim from a fresh add for
+    // the audit event. Other outcomes carry their answer in the enum variant.
+    let mut add_character_is_orphan_claim = false;
+    if matches!(outcome, ResolutionOutcome::AddCharacterMode) {
+        let existing_binding =
+            characters::find_account_id_for_eve_character(&mut tx, input.eve_character_id).await?;
+
+        // Bound to a different account → conflict. Roll back the main tx (no
+        // token overwrite, no public-info/owner_hash refresh on the other
+        // account's row) and record the rejected attempt in its own short tx,
+        // mirroring the blocked flow.
+        if let Some(Some(other_account)) = existing_binding
+            && other_account != account_id
+        {
+            tx.rollback().await.map_err(anyhow::Error::from)?;
+
+            let mut audit_tx = pool.begin().await.map_err(anyhow::Error::from)?;
+            audit::record_in_tx(
+                &mut audit_tx,
+                Some(account_id),
+                None,
+                AuditEvent::CharacterAddRejectedBoundElsewhere {
+                    account_id,
+                    eve_character_id: input.eve_character_id,
+                },
+            )
+            .await?;
+            audit_tx.commit().await.map_err(anyhow::Error::from)?;
+
+            return Ok(SsoOutcome::BoundElsewhere);
+        }
+
+        // An orphan claim is an add-character flow over an existing row whose
+        // `account_id` is NULL. (A bound-to-self row — re-adding one's own
+        // character — is neither orphan nor conflict; it falls through to a
+        // plain token refresh.)
+        add_character_is_orphan_claim = matches!(existing_binding, Some(None));
+    }
 
     let reactivated = accounts::reactivate_if_soft_deleted(&mut tx, account_id).await?;
 

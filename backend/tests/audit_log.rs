@@ -23,7 +23,7 @@ use backend::{
     crypto,
     db::{accounts, characters},
     esi::EsiMetadata,
-    services::auth::{SsoCompletionInput, complete_sso_callback},
+    services::auth::{SsoCompletionInput, SsoOutcome, complete_sso_callback},
     session::{InflightStore, SessionStore},
 };
 
@@ -351,6 +351,147 @@ async fn test_add_character_claiming_orphan_writes_orphan_claim_with_main_actor(
     assert_eq!(claimed.actor_character_id, Some(55550)); // main's EVE id
     assert_eq!(claimed.actor_character_name.as_deref(), Some("Main Pilot"));
     assert_eq!(claimed.details["eve_character_id"], 55551i64);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_add_character_bound_elsewhere_is_refused(pool: PgPool) {
+    // Account A owns the character; account B then tries to add it.
+    let account_a = complete_sso_callback(&pool, sso_input(None, 30000, "A Main"))
+        .await
+        .unwrap()
+        .account_id()
+        .unwrap();
+    complete_sso_callback(&pool, sso_input(Some(account_a), 30001, "A Alt"))
+        .await
+        .unwrap();
+    let account_b = complete_sso_callback(&pool, sso_input(None, 31000, "B Main"))
+        .await
+        .unwrap()
+        .account_id()
+        .unwrap();
+
+    // Snapshot account A's bound character row before the conflicting add.
+    let before = sqlx::query!(
+        "SELECT account_id, name, corporation_id, corporation_name,
+                encrypted_access_token, encrypted_refresh_token,
+                access_token_expires_at, owner_hash
+         FROM eve_character WHERE eve_character_id = 30001"
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query!("DELETE FROM audit_log")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Account B presents A's already-bound character. With a DIFFERENT owner
+    // hash and tokens, so any errant write to A's row would show up below.
+    let mut conflicting = sso_input(Some(account_b), 30001, "A Alt Renamed");
+    conflicting.owner_hash = "different-owner-hash";
+    conflicting.access_token = "intruder.access.token";
+    conflicting.refresh_token = "intruder.refresh.token";
+    let outcome = complete_sso_callback(&pool, conflicting).await.unwrap();
+    assert_eq!(outcome, SsoOutcome::BoundElsewhere);
+
+    // Account A's row is byte-identical — no token overwrite, no rename, no
+    // owner_hash/public-info refresh, still bound to A.
+    let after = sqlx::query!(
+        "SELECT account_id, name, corporation_id, corporation_name,
+                encrypted_access_token, encrypted_refresh_token,
+                access_token_expires_at, owner_hash
+         FROM eve_character WHERE eve_character_id = 30001"
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(after.account_id, Some(account_a));
+    assert_eq!(after.account_id, before.account_id);
+    assert_eq!(after.name, before.name);
+    assert_eq!(after.corporation_id, before.corporation_id);
+    assert_eq!(after.corporation_name, before.corporation_name);
+    assert_eq!(after.encrypted_access_token, before.encrypted_access_token);
+    assert_eq!(
+        after.encrypted_refresh_token,
+        before.encrypted_refresh_token
+    );
+    assert_eq!(
+        after.access_token_expires_at,
+        before.access_token_expires_at
+    );
+    assert_eq!(after.owner_hash, before.owner_hash);
+
+    // Nothing was added to account B — it still has only its own main.
+    let b_chars = sqlx::query!(
+        "SELECT eve_character_id FROM eve_character WHERE account_id = $1 ORDER BY eve_character_id",
+        account_b
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(b_chars.len(), 1);
+    assert_eq!(b_chars[0].eve_character_id, 31000);
+
+    // Exactly one audit row: the truthful rejection, actor = B, target = the
+    // character, and the owning account (A) is NOT leaked into details.
+    let rows = fetch_audit(&pool).await;
+    assert_no_unexpected_event_types(&rows, &["character_add_rejected_bound_elsewhere"]);
+    assert_eq!(rows.len(), 1);
+    let rejected = &rows[0];
+    assert_eq!(rejected.actor_account_id, Some(account_b));
+    assert_eq!(rejected.actor_character_id, Some(31000)); // B's main EVE id
+    assert_eq!(rejected.actor_character_name.as_deref(), Some("B Main"));
+    assert_eq!(rejected.target_type.as_deref(), Some("character"));
+    assert_eq!(rejected.target_id.as_deref(), Some("30001"));
+    assert!(rejected.target_name.is_none());
+    assert_eq!(rejected.details["eve_character_id"], 30001i64);
+    assert!(
+        !rejected
+            .details
+            .as_object()
+            .unwrap()
+            .contains_key("account_id"),
+        "owning account must not leak into details: {:?}",
+        rejected.details
+    );
+    // And no character_added row exists for the attempt.
+    assert!(rows.iter().all(|r| r.event_type != "character_added"));
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_re_adding_own_character_is_not_a_conflict(pool: PgPool) {
+    // Re-presenting one's OWN already-bound character is a plain token refresh,
+    // not a bound-elsewhere conflict and not an orphan claim.
+    let account_id = complete_sso_callback(&pool, sso_input(None, 32000, "Self Main"))
+        .await
+        .unwrap()
+        .account_id()
+        .unwrap();
+    complete_sso_callback(&pool, sso_input(Some(account_id), 32001, "Self Alt"))
+        .await
+        .unwrap();
+
+    sqlx::query!("DELETE FROM audit_log")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let outcome = complete_sso_callback(&pool, sso_input(Some(account_id), 32001, "Self Alt"))
+        .await
+        .unwrap();
+    // Re-adding one's OWN character is the authenticated happy path (a plain
+    // token refresh that re-emits character_added), NOT a bound-elsewhere
+    // conflict — the binding check only fires for a *different* account.
+    assert_eq!(outcome, SsoOutcome::Authenticated(account_id));
+
+    let rows = fetch_audit(&pool).await;
+    assert_no_unexpected_event_types(&rows, &["character_added"]);
+    assert!(
+        rows.iter()
+            .all(|r| r.event_type != "character_add_rejected_bound_elsewhere"),
+        "re-adding own character must not be rejected as bound-elsewhere: {rows:?}"
+    );
 }
 
 #[sqlx::test(migrations = "./migrations")]

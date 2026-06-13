@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT eve_character_id FROM eve_character WHERE account_id = $1 ORDER BY eve_character_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "eve_character_id",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "7cb6e601775c74218ad19c64ecff076f1c5ae34823a62bf699093bd5e26fbc7e"
+}

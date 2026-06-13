@@ -53,6 +53,8 @@
 	"characters_remove_title": "Supprimer {name}?",
 	"characters_remove_body": "Ce personnage sera supprimé de votre compte. Vous pourrez l'ajouter à nouveau à tout moment en utilisant « Ajouter un personnage » puis en vous connectant via EVE Online.",
 	"characters_remove_confirm": "Supprimer personnage",
+	"characters_add_conflict_bound_elsewhere": "Ce personnage est déjà lié à un autre compte ; il n'a donc pas été ajouté. Un personnage ne peut appartenir qu'à un seul compte à la fois.",
+	"characters_add_conflict_dismiss_aria": "Fermer la notification",
 	"account_title": "E-R Bridge — Compte",
 	"account_heading": "COMPTE",
 	"account_tab_api_keys": "Clés API",

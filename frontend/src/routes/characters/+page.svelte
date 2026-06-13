@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import { page } from '$app/state';
+	import { replaceState } from '$app/navigation';
 	import { m } from '$lib/paraglide/messages';
 	import type { PageData, ActionData } from './$types';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
@@ -7,6 +9,21 @@
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
 	let query = $state('');
+
+	// The add-character SSO callback redirects here with
+	// `?add_conflict=bound_elsewhere` when the presented character is already
+	// linked to another account. Show a dismissible notice, then strip the flag
+	// from the URL (replaceState — no navigation) so a reload doesn't re-show it.
+	let conflictNotice = $state(
+		page.url.searchParams.get('add_conflict') === 'bound_elsewhere'
+	);
+	$effect(() => {
+		if (page.url.searchParams.get('add_conflict') !== null) {
+			const url = new URL(page.url);
+			url.searchParams.delete('add_conflict');
+			replaceState(url, page.state);
+		}
+	});
 
 	// Main first, then alphabetical by name.
 	let sorted = $derived(
@@ -45,6 +62,31 @@
 
 <main class="body">
 	<div class="content">
+		{#if conflictNotice}
+			<div class="conflict-notice" role="alert">
+				<span class="message">{m.characters_add_conflict_bound_elsewhere()}</span>
+				<button
+					type="button"
+					class="dismiss"
+					aria-label={m.characters_add_conflict_dismiss_aria()}
+					onclick={() => (conflictNotice = false)}
+				>
+					<svg
+						width="12"
+						height="12"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2.5"
+						aria-hidden="true"
+					>
+						<line x1="6" y1="6" x2="18" y2="18"></line>
+						<line x1="18" y1="6" x2="6" y2="18"></line>
+					</svg>
+				</button>
+			</div>
+		{/if}
+
 		<div class="page-header">
 			<h1>{m.characters_heading()}</h1>
 			<div class="header-actions">
@@ -229,6 +271,44 @@
 	.content {
 		width: 100%;
 		max-width: 960px;
+	}
+
+	.conflict-notice {
+		display: flex;
+		align-items: flex-start;
+		gap: 12px;
+		padding: 10px 12px;
+		margin-bottom: 16px;
+		background: rgba(245, 158, 11, 0.08);
+		border: 1px solid var(--amber);
+		border-radius: 4px;
+		color: var(--amber);
+		font-size: 0.75rem;
+	}
+	.conflict-notice .message {
+		flex: 1;
+		line-height: 1.4;
+	}
+	.conflict-notice .dismiss {
+		flex-shrink: 0;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 20px;
+		height: 20px;
+		padding: 0;
+		background: transparent;
+		border: 0;
+		border-radius: 3px;
+		color: var(--amber);
+		cursor: pointer;
+	}
+	.conflict-notice .dismiss:hover {
+		background: rgba(245, 158, 11, 0.16);
+	}
+	.conflict-notice .dismiss:focus-visible {
+		outline: 2px solid var(--amber);
+		outline-offset: 2px;
 	}
 
 	.page-header {
