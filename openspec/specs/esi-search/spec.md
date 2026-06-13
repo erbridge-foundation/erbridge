@@ -10,7 +10,7 @@ The system SHALL provide a function that searches EVE entities by name fragment 
 
 ESI requires the `search` fragment to be at least 3 characters; the function SHALL NOT issue a request for a shorter fragment.
 
-The ESI response is an object whose keys are the requested categories, each mapping to an array of EVE ids. The function SHALL resolve each returned id to its name via public-info — characters via the character public-info path, corporations via the corporation public-info path, alliances via the alliance public-info path — yielding `(eve_id, name)` pairs partitioned by category. An id whose name cannot be resolved SHALL be dropped so results are always displayable. The number of resolved results SHALL be capped at a sensible maximum per category.
+The ESI response is an object whose keys are the requested categories, each mapping to an array of EVE ids. The function SHALL resolve the returned ids to names with a **single** bulk call to `POST /universe/names/` covering all matched ids across all requested categories (capped at a sensible maximum per category before resolution), partitioning the response by its `category` field into `(eve_id, name)` pairs per requested category. The function SHALL NOT issue one name-resolution request per id. An id the bulk endpoint does not resolve SHALL be dropped so results are always displayable; a 404 from the bulk endpoint for a non-empty id set SHALL be treated as "no ids resolved" (all dropped), not as a search failure.
 
 This is the first authenticated outbound ESI call in the backend. The function SHALL accept the caller's already-decrypted access token; token storage, decryption, and refresh are the caller's responsibility (see the token-availability requirement).
 
@@ -20,7 +20,11 @@ This is the first authenticated outbound ESI call in the backend. The function S
 
 #### Scenario: Corporation and alliance categories resolve to names
 - **WHEN** the function is called for the `corporation` and `alliance` categories with a matching fragment
-- **THEN** it returns the matched corporations and alliances as `(eve_entity_id, name)` pairs partitioned by category, each id resolved to its current name via public-info
+- **THEN** it returns the matched corporations and alliances as `(eve_entity_id, name)` pairs partitioned by category, each id resolved to its current name
+
+#### Scenario: All matched ids resolve in one bulk call
+- **WHEN** a search across `character,corporation,alliance` matches ids in every category
+- **THEN** exactly one `POST /universe/names/` request is issued carrying all (capped) matched ids, and the results are partitioned by the response's `category` field
 
 #### Scenario: Multiple categories in one call
 - **WHEN** the function is called with `categories` of `character,corporation,alliance` and a matching fragment
@@ -35,8 +39,12 @@ This is the first authenticated outbound ESI call in the backend. The function S
 - **THEN** "Wasp 223" is among the resolved results (`strict=false` yields a substring match)
 
 #### Scenario: Unresolvable id is dropped
-- **WHEN** ESI returns an id whose public-info name lookup fails
+- **WHEN** the bulk names response omits an id that was requested
 - **THEN** that id is omitted from the results rather than appearing without a name
+
+#### Scenario: Bulk endpoint 404 means all ids dropped, not failure
+- **WHEN** `POST /universe/names/` responds 404 for a non-empty id set
+- **THEN** the search completes with those ids dropped (an empty-but-available result if nothing else resolved), not an unavailable outcome
 
 ### Requirement: ESI search degrades gracefully when the token or ESI is unavailable
 

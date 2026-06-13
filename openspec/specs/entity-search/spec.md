@@ -42,26 +42,24 @@ The response SHALL group matched entities by category, and each result SHALL car
 - **WHEN** an authenticated non-admin account uses the endpoint
 - **THEN** the search proceeds (the endpoint does not require server-admin privileges)
 
-### Requirement: Character results resolve to a referenceable character UUID, minting an orphan when absent
+### Requirement: Character results carry the known character UUID and never mint rows
 
-For every character matched by the search, the endpoint SHALL return the `eve_character.id` UUID, not merely the numeric `eve_character_id`. If an `eve_character` row already exists for the matched `eve_character_id` (whether account-owned or an existing orphan), the endpoint SHALL return that row's `id`. If no row exists, the endpoint SHALL mint an **orphan** `eve_character` row — `account_id = NULL`, no ESI tokens, `is_main = false`, populated from ESI public info (name, corporation id and name, alliance id and name when present) — and return the new row's `id`.
-
-The returned UUID SHALL be immediately usable as an `acl_member.character_id` and matchable by the map permission resolver.
+For every character matched by the search, the endpoint SHALL return the numeric `eve_character_id` and `name`, plus the `eve_character.id` UUID **when a row already exists** for that character (account-owned or orphan); when no row exists the UUID field SHALL be null. The search SHALL NOT write to the database: no orphan rows are minted at search time. Existing-row lookups SHALL be batched (a single query for all matched character ids), not one query per result.
 
 #### Scenario: Existing character resolves to its UUID
 
 - **WHEN** a matched character already has an `eve_character` row
 - **THEN** the result carries that row's `id` UUID and no new row is created
 
-#### Scenario: Unknown character is minted as an orphan
+#### Scenario: Unknown character carries no UUID and mints nothing
 
 - **WHEN** a matched character has no `eve_character` row
-- **THEN** a new `eve_character` row is inserted with `account_id = NULL`, NULL token columns, `is_main = false`, and public-info columns populated from ESI, and the result carries the new row's `id`
+- **THEN** the result carries `id = null` alongside its `eve_character_id` and `name`, and the database is unchanged by the search
 
-#### Scenario: Minted orphan is referenceable as an ACL member
+#### Scenario: Search is write-free
 
-- **WHEN** a character UUID returned by the search is used as an `acl_member.character_id`
-- **THEN** the member is created successfully and the map permission resolver matches the owning account's characters against it
+- **WHEN** any entity search completes, across any categories and any result mix
+- **THEN** no rows were inserted or updated by the search request
 
 ### Requirement: Entity search degrades gracefully when search cannot be performed
 

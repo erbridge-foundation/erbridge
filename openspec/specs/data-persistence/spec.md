@@ -241,22 +241,24 @@ Both ESI access tokens and refresh tokens SHALL be encrypted with AES-256-GCM us
 - **WHEN** an `eve_character` row is created via an orphan flow (no associated session)
 - **THEN** `encrypted_access_token`, `encrypted_refresh_token`, `access_token_expires_at`, `esi_client_id`, and `account_id` are all NULL (and `scopes` is the empty array `'{}'`, the column default)
 
-### Requirement: Orphan characters may be minted from entity search
+### Requirement: Orphan characters may be minted when adding an ACL member
 
-Entity search SHALL be a flow that mints an **orphan** `eve_character` row (in addition to the existing map-ACL pre-claim flow). When an entity search matches a character that has no `eve_character` row, the system SHALL insert an orphan row — `account_id = NULL`, NULL token columns (`encrypted_access_token`, `encrypted_refresh_token`, `access_token_expires_at`, `esi_client_id`), `scopes = '{}'`, `is_main = false` — with `name`, `corporation_id`, `corporation_name`, `alliance_id`, and `alliance_name` populated from ESI public info at mint time.
+Adding an ACL `character` member by its `eve_entity_id` (the EVE character id) with no `character_id` SHALL be a flow that mints an **orphan** `eve_character` row (in addition to the existing map-ACL pre-claim flow). When the referenced character has no `eve_character` row, the system SHALL insert an orphan row — `account_id = NULL`, NULL token columns (`encrypted_access_token`, `encrypted_refresh_token`, `access_token_expires_at`, `esi_client_id`), `scopes = '{}'`, `is_main = false` — with `name` taken from the add request's snapshot and `corporation_id`, `corporation_name`, `alliance_id`, `alliance_name` populated from ESI public info at mint time (falling back to placeholder values when public-info is unavailable, so the add still succeeds).
 
 Such an orphan row SHALL be a valid, referenceable identity despite belonging to no account: its `id` UUID MAY be referenced by an `acl_member.character_id`, and it SHALL be claimable by the existing orphan-claim flow on that pilot's next SSO login (which sets `account_id` and writes tokens without creating a second row).
 
-#### Scenario: Entity search mints an orphan for an unknown character
-- **WHEN** entity search matches a character with no existing `eve_character` row
-- **THEN** an orphan row is inserted with `account_id = NULL`, NULL token columns, empty `scopes`, `is_main = false`, and public-info columns populated from ESI
+Entity search SHALL NOT mint orphan rows.
+
+#### Scenario: Member add mints an orphan for an unknown character
+- **WHEN** an ACL member add carries an `eve_entity_id` and no `character_id`, for a character with no existing `eve_character` row
+- **THEN** an orphan row is inserted with `account_id = NULL`, NULL token columns, empty `scopes`, `is_main = false`, and public-info columns populated (or placeholders on public-info failure)
 
 #### Scenario: Minted orphan is referenceable and claimable
-- **WHEN** an orphan minted by entity search is later referenced as an `acl_member.character_id`, and that pilot subsequently completes an SSO login
+- **WHEN** an orphan minted by a member add is later referenced as an `acl_member.character_id`, and that pilot subsequently completes an SSO login
 - **THEN** the ACL member reference remains valid and the orphan-claim flow sets the row's `account_id` and tokens without creating a second row
 
-#### Scenario: Entity-search orphan holds no token material
-- **WHEN** an orphan row minted by entity search is inspected
+#### Scenario: Member-add orphan holds no token material
+- **WHEN** an orphan row minted by a member add is inspected
 - **THEN** `encrypted_access_token`, `encrypted_refresh_token`, `access_token_expires_at`, `esi_client_id`, and `account_id` are all NULL and `scopes` is the empty array `'{}'`
 
 ### Requirement: Postgres runs as a Compose service
