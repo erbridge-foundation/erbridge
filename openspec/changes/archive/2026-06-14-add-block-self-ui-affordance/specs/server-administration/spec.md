@@ -19,3 +19,16 @@ A result SHALL be treated as belonging to the current admin when either:
 #### Scenario: A result on another account remains selectable
 - **WHEN** a search returns a character that belongs to neither the admin's account nor the block list
 - **THEN** the picker renders the normal "Select" control for that result
+
+### Requirement: The revoke confirmation warns when an admin revokes their own rights
+
+The admin revoke flow (`/admin/admins`) SHALL display a prominent warning in the revoke confirmation dialog when the account being revoked is the currently authenticated admin's own account. Self-revoke remains permitted — the backend deliberately allows an admin to revoke their own rights as long as the last-admin guard holds — so this is a footgun warning, not a block: the confirm control still revokes.
+
+#### Scenario: Revoking your own account shows a warning
+- **WHEN** an admin opens the revoke confirmation for the account that equals their own account id
+- **THEN** the dialog shows a warning that they are about to lose their own admin access
+- **AND** the confirm control still performs the revoke (the action is not prevented)
+
+#### Scenario: Revoking another account shows no self-warning
+- **WHEN** an admin opens the revoke confirmation for an account that is not their own
+- **THEN** the dialog shows no self-revoke warning

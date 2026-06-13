@@ -30,6 +30,21 @@
 	};
 	let f = $derived(form as FormShape | null);
 
+	// The logged-in admin, from the root layout load. Used to mark the admin's own
+	// characters as non-selectable in the picker (the backend rejects self-blocks
+	// with 409 cannot_block_self; this surfaces that before submission).
+	let me = $derived(data.me);
+
+	function isSelf(result: CharacterSearchResultDto | EsiCharacterSearchResultDto): boolean {
+		if (!me) return false;
+		// Local result: account-level match catches every alt on the admin's account
+		// (mirrors the backend's account-keyed guard). ESI result: char-level match.
+		if ('account_id' in result) {
+			return result.account_id !== null && result.account_id === me.account.id;
+		}
+		return me.characters.some((c) => c.eve_character_id === result.eve_character_id);
+	}
+
 	// The current search box value (mirrors the last submitted query so the input
 	// keeps its text across the enhance round-trip).
 	let query = $state('');
@@ -211,6 +226,10 @@
 				<span class="result-name">{result.name}</span>
 				{#if result.already_blocked}
 					<span class="blocked-badge">{m.admin_blocks_already_blocked()}</span>
+				{:else if isSelf(result)}
+					<span class="self-badge" title={m.admin_blocks_self_title()}
+						>{m.admin_blocks_self_badge()}</span
+					>
 				{:else}
 					<!-- Selecting a result looks up its corp, then opens the confirm. -->
 					<form method="POST" action="?/corpLookup" use:enhance class="select-form">
@@ -397,6 +416,13 @@
 		font-size: 0.625rem;
 		color: var(--red);
 		border: 1px solid var(--red);
+		border-radius: 4px;
+		padding: 1px 6px;
+	}
+	.self-badge {
+		font-size: 0.625rem;
+		color: var(--slate-400);
+		border: 1px solid var(--slate-500);
 		border-radius: 4px;
 		padding: 1px 6px;
 	}

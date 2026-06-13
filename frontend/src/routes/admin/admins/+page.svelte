@@ -10,6 +10,14 @@
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
+	// The logged-in admin, from the root layout load. Self-revoke is permitted by
+	// the backend (guarded only by the last-admin rule), so we don't block it —
+	// we warn when the row being revoked is the admin's own account.
+	let me = $derived(data.me);
+	function isSelf(account: AdminAccountDto | null): boolean {
+		return !!me && !!account && account.id === me.account.id;
+	}
+
 	// The main character's name identifies an account; fall back to the first
 	// character, or a generic label for an account with no characters.
 	function accountLabel(account: AdminAccountDto): string {
@@ -171,7 +179,10 @@
 	{#snippet title()}{m.admin_admins_revoke_title({
 			name: revokeState.account ? accountLabel(revokeState.account) : ''
 		})}{/snippet}
-	{#snippet body()}{m.admin_admins_revoke_body()}{/snippet}
+	{#snippet body()}{m.admin_admins_revoke_body()}{#if isSelf(revokeState.account)}<span
+				class="self-revoke-warning"
+				role="alert">{m.admin_admins_revoke_self_warning()}</span
+			>{/if}{/snippet}
 	{#snippet confirmLabel()}{m.admin_admins_revoke_confirm()}{/snippet}
 </ConfirmDialog>
 
@@ -348,5 +359,17 @@
 		margin: 8px 0 0;
 		color: var(--red);
 		font-size: 0.75rem;
+	}
+
+	/* Self-revoke warning inside the confirm dialog body. display:block keeps it a
+	   valid inline child of the body <p> while reading as its own banner. */
+	.self-revoke-warning {
+		display: block;
+		margin-top: 12px;
+		padding: 8px 12px;
+		background: rgba(245, 158, 11, 0.08);
+		border: 1px solid var(--amber);
+		border-radius: 4px;
+		color: var(--amber);
 	}
 </style>
