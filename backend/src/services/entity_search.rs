@@ -176,10 +176,7 @@ async fn find_or_mint_character(
     eve_character_id: i64,
     name: &str,
 ) -> Result<Uuid, AppError> {
-    if let Some(id) = characters::find_id_by_eve_character_id(pool, eve_character_id)
-        .await
-        .map_err(AppError::Internal)?
-    {
+    if let Some(id) = characters::find_id_by_eve_character_id(pool, eve_character_id).await? {
         return Ok(id);
     }
 
@@ -199,8 +196,7 @@ async fn find_or_mint_character(
         alliance_id,
         alliance_name.as_deref(),
     )
-    .await
-    .map_err(AppError::Internal)?;
+    .await?;
     Ok(id)
 }
 
@@ -295,10 +291,7 @@ pub(crate) async fn get_usable_main_access_token(
     ctx: &EsiSearchContext<'_>,
     account_id: Uuid,
 ) -> Result<Option<UsableToken>, AppError> {
-    let material = match characters::get_main_token_material(pool, account_id)
-        .await
-        .map_err(AppError::Internal)?
-    {
+    let material = match characters::get_main_token_material(pool, account_id).await? {
         Some(m) => m,
         None => return Ok(None),
     };

@@ -39,6 +39,7 @@ fn build_state(pool: PgPool) -> AppState {
             esi_client_id: "test_client_id".into(),
             esi_client_secret: "test_client_secret".into(),
             database_url: String::new(),
+            bind_addr: "0.0.0.0:3000".to_string(),
             rate_limit: Default::default(),
         }),
         db: pool.clone(),
@@ -311,7 +312,7 @@ async fn cookie_request_for_non_blocked_account_is_served(pool: PgPool) {
     let session_id = Uuid::new_v4().to_string();
     state
         .session_store
-        .add(&session_id, account_id, None, false)
+        .add(&session_id, account_id)
         .await
         .unwrap();
     let key_bytes = crypto::jwt_signing_key(&state.config.encryption_secret).unwrap();

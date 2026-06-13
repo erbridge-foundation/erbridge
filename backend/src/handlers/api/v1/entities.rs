@@ -86,8 +86,7 @@ pub async fn search_entities(
 
     let categories = parse_categories(query.categories.as_deref());
 
-    let encryption_key = crate::crypto::token_encryption_key(&state.config.encryption_secret)
-        .map_err(AppError::Internal)?;
+    let encryption_key = crate::crypto::token_encryption_key(&state.config.encryption_secret)?;
 
     let ctx = EsiSearchContext {
         http: &state.http_client,

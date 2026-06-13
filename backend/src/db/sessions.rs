@@ -6,27 +6,17 @@ use uuid::Uuid;
 pub struct SessionRow {
     pub session_id: String,
     pub account_id: Uuid,
-    pub csrf_state: Option<String>,
-    pub add_character_mode: bool,
     pub created_at: DateTime<Utc>,
     pub last_seen_at: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
 }
 
-pub async fn insert(
-    pool: &PgPool,
-    session_id: &str,
-    account_id: Uuid,
-    csrf_state: Option<&str>,
-    add_character_mode: bool,
-) -> Result<()> {
+pub async fn insert(pool: &PgPool, session_id: &str, account_id: Uuid) -> Result<()> {
     sqlx::query!(
-        "INSERT INTO session (session_id, account_id, csrf_state, add_character_mode, expires_at)
-         VALUES ($1, $2, $3, $4, now() + interval '7 days')",
+        "INSERT INTO session (session_id, account_id, expires_at)
+         VALUES ($1, $2, now() + interval '7 days')",
         session_id,
         account_id,
-        csrf_state,
-        add_character_mode,
     )
     .execute(pool)
     .await
@@ -42,7 +32,7 @@ pub async fn refresh_and_get(pool: &PgPool, session_id: &str) -> Result<Option<S
          SET last_seen_at = now(),
              expires_at = now() + interval '7 days'
          WHERE session_id = $1 AND expires_at > now()
-         RETURNING session_id, account_id, csrf_state, add_character_mode,
+         RETURNING session_id, account_id,
                    created_at, last_seen_at, expires_at",
         session_id,
     )
@@ -53,8 +43,6 @@ pub async fn refresh_and_get(pool: &PgPool, session_id: &str) -> Result<Option<S
     Ok(row.map(|r| SessionRow {
         session_id: r.session_id,
         account_id: r.account_id,
-        csrf_state: r.csrf_state,
-        add_character_mode: r.add_character_mode,
         created_at: r.created_at,
         last_seen_at: r.last_seen_at,
         expires_at: r.expires_at,
@@ -117,23 +105,17 @@ mod tests {
     #[sqlx::test]
     async fn insert_then_refresh_returns_row(pool: PgPool) {
         let account_id = make_account(&pool).await;
-        insert(&pool, "sess1", account_id, Some("csrf"), false)
-            .await
-            .unwrap();
+        insert(&pool, "sess1", account_id).await.unwrap();
 
         let row = refresh_and_get(&pool, "sess1").await.unwrap().unwrap();
         assert_eq!(row.session_id, "sess1");
         assert_eq!(row.account_id, account_id);
-        assert_eq!(row.csrf_state.as_deref(), Some("csrf"));
-        assert!(!row.add_character_mode);
     }
 
     #[sqlx::test]
     async fn refresh_advances_last_seen_and_expires_at(pool: PgPool) {
         let account_id = make_account(&pool).await;
-        insert(&pool, "sess1", account_id, None, false)
-            .await
-            .unwrap();
+        insert(&pool, "sess1", account_id).await.unwrap();
 
         // Manually rewind both timestamps so the refresh has somewhere to advance to.
         sqlx::query!(
@@ -164,9 +146,7 @@ mod tests {
     #[sqlx::test]
     async fn refresh_of_expired_row_returns_none_and_leaves_row_untouched(pool: PgPool) {
         let account_id = make_account(&pool).await;
-        insert(&pool, "sess1", account_id, None, false)
-            .await
-            .unwrap();
+        insert(&pool, "sess1", account_id).await.unwrap();
 
         sqlx::query!(
             "UPDATE session SET expires_at = now() - interval '1 second' WHERE session_id = $1",
@@ -208,9 +188,7 @@ mod tests {
     #[sqlx::test]
     async fn delete_removes_row(pool: PgPool) {
         let account_id = make_account(&pool).await;
-        insert(&pool, "sess1", account_id, None, false)
-            .await
-            .unwrap();
+        insert(&pool, "sess1", account_id).await.unwrap();
         delete(&pool, "sess1").await.unwrap();
         assert!(refresh_and_get(&pool, "sess1").await.unwrap().is_none());
     }
@@ -218,12 +196,8 @@ mod tests {
     #[sqlx::test]
     async fn list_ids_for_account_excludes_expired(pool: PgPool) {
         let account_id = make_account(&pool).await;
-        insert(&pool, "active", account_id, None, false)
-            .await
-            .unwrap();
-        insert(&pool, "expired", account_id, None, false)
-            .await
-            .unwrap();
+        insert(&pool, "active", account_id).await.unwrap();
+        insert(&pool, "expired", account_id).await.unwrap();
         sqlx::query!(
             "UPDATE session SET expires_at = now() - interval '1 second' WHERE session_id = $1",
             "expired",
@@ -240,9 +214,9 @@ mod tests {
     async fn delete_for_account_in_tx_removes_only_target_account(pool: PgPool) {
         let a = make_account(&pool).await;
         let b = make_account(&pool).await;
-        insert(&pool, "a1", a, None, false).await.unwrap();
-        insert(&pool, "a2", a, None, false).await.unwrap();
-        insert(&pool, "b1", b, None, false).await.unwrap();
+        insert(&pool, "a1", a).await.unwrap();
+        insert(&pool, "a2", a).await.unwrap();
+        insert(&pool, "b1", b).await.unwrap();
 
         let mut tx = pool.begin().await.unwrap();
         let removed = delete_for_account_in_tx(&mut tx, a).await.unwrap();
@@ -259,8 +233,8 @@ mod tests {
     #[sqlx::test]
     async fn delete_for_account_in_tx_removes_rows_and_rolls_back(pool: PgPool) {
         let a = make_account(&pool).await;
-        insert(&pool, "a1", a, None, false).await.unwrap();
-        insert(&pool, "a2", a, None, false).await.unwrap();
+        insert(&pool, "a1", a).await.unwrap();
+        insert(&pool, "a2", a).await.unwrap();
 
         // Rollback leaves the rows intact (proves it participates in the tx).
         let mut tx = pool.begin().await.unwrap();
@@ -279,12 +253,8 @@ mod tests {
     #[sqlx::test]
     async fn delete_expired_removes_only_expired(pool: PgPool) {
         let account_id = make_account(&pool).await;
-        insert(&pool, "active", account_id, None, false)
-            .await
-            .unwrap();
-        insert(&pool, "expired", account_id, None, false)
-            .await
-            .unwrap();
+        insert(&pool, "active", account_id).await.unwrap();
+        insert(&pool, "expired", account_id).await.unwrap();
         sqlx::query!(
             "UPDATE session SET expires_at = now() - interval '1 second' WHERE session_id = $1",
             "expired",

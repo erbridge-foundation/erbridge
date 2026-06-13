@@ -15,20 +15,14 @@ use crate::{
 /// Lists the maps the account can read, each annotated with the attached ACLs
 /// the account can manage.
 pub async fn list_maps(pool: &PgPool, account_id: Uuid) -> Result<Vec<MapWithAcls>, AppError> {
-    let maps = db::find_maps_for_account(pool, account_id)
-        .await
-        .map_err(AppError::Internal)?;
+    let maps = db::find_maps_for_account(pool, account_id).await?;
     if maps.is_empty() {
         return Ok(vec![]);
     }
 
-    let manageable = acl_db::find_acls_manageable_by_account(pool, account_id)
-        .await
-        .map_err(AppError::Internal)?;
+    let manageable = acl_db::find_acls_manageable_by_account(pool, account_id).await?;
     let map_ids: Vec<Uuid> = maps.iter().map(|m| m.id).collect();
-    let attached = map_acl::find_acl_ids_for_maps(pool, &map_ids)
-        .await
-        .map_err(AppError::Internal)?;
+    let attached = map_acl::find_acl_ids_for_maps(pool, &map_ids).await?;
 
     Ok(maps
         .into_iter()
@@ -57,8 +51,7 @@ pub async fn list_maps(pool: &PgPool, account_id: Uuid) -> Result<Vec<MapWithAcl
 /// Returns a single map the account can read.
 pub async fn get_map(pool: &PgPool, account_id: Uuid, map_id: Uuid) -> Result<Map, AppError> {
     let map = db::find_map_by_id(pool, map_id)
-        .await
-        .map_err(AppError::Internal)?
+        .await?
         .filter(|m| m.status == "active")
         .ok_or(AppError::NotFound)?;
     require_map_permission(pool, map_id, account_id, Permission::Read).await?;
@@ -78,27 +71,21 @@ pub async fn create_map(
     // Validate ACL ownership up front, before opening the write transaction.
     if let Some(acl_id) = acl_id {
         let acl = acl_db::find_acl_by_id(pool, acl_id)
-            .await
-            .map_err(AppError::Internal)?
+            .await?
             .ok_or(AppError::NotFound)?;
         if acl.owner_account_id != Some(account_id) {
             return Err(AppError::Forbidden);
         }
     }
 
-    let mut tx = pool
-        .begin()
-        .await
-        .map_err(|e| AppError::Internal(e.into()))?;
+    let mut tx = pool.begin().await?;
 
     let map = db::insert_map(&mut tx, account_id, name, slug, description)
         .await
         .map_err(map_slug_err)?;
 
     if let Some(acl_id) = acl_id {
-        map_acl::attach_acl(&mut tx, map.id, acl_id)
-            .await
-            .map_err(AppError::Internal)?;
+        map_acl::attach_acl(&mut tx, map.id, acl_id).await?;
     }
 
     audit::record_in_tx(
@@ -111,12 +98,9 @@ pub async fn create_map(
             name: name.to_string(),
         },
     )
-    .await
-    .map_err(AppError::Internal)?;
+    .await?;
 
-    tx.commit()
-        .await
-        .map_err(|e| AppError::Internal(e.into()))?;
+    tx.commit().await?;
 
     Ok(map)
 }
@@ -143,15 +127,11 @@ pub async fn delete_map(pool: &PgPool, account_id: Uuid, map_id: Uuid) -> Result
     require_map_permission(pool, map_id, account_id, Permission::Admin).await?;
 
     let map = db::find_map_by_id(pool, map_id)
-        .await
-        .map_err(AppError::Internal)?
+        .await?
         .filter(|m| m.status == "active")
         .ok_or(AppError::NotFound)?;
 
-    let mut tx = pool
-        .begin()
-        .await
-        .map_err(|e| AppError::Internal(e.into()))?;
+    let mut tx = pool.begin().await?;
 
     audit::record_in_tx(
         &mut tx,
@@ -163,19 +143,14 @@ pub async fn delete_map(pool: &PgPool, account_id: Uuid, map_id: Uuid) -> Result
             name: map.name,
         },
     )
-    .await
-    .map_err(AppError::Internal)?;
+    .await?;
 
-    let deleted = db::soft_delete_map(&mut tx, map_id)
-        .await
-        .map_err(AppError::Internal)?;
+    let deleted = db::soft_delete_map(&mut tx, map_id).await?;
     if !deleted {
         return Err(AppError::NotFound);
     }
 
-    tx.commit()
-        .await
-        .map_err(|e| AppError::Internal(e.into()))?;
+    tx.commit().await?;
 
     Ok(())
 }
@@ -190,8 +165,7 @@ pub async fn attach_acl_to_map(
     require_map_permission(pool, map_id, account_id, Permission::Admin).await?;
 
     let acl = acl_db::find_acl_by_id(pool, acl_id)
-        .await
-        .map_err(AppError::Internal)?
+        .await?
         .ok_or(AppError::NotFound)?;
     if acl.owner_account_id != Some(account_id) {
         return Err(AppError::Forbidden);
@@ -200,18 +174,12 @@ pub async fn attach_acl_to_map(
     // Snapshot the map name into the audit event so the row names both the ACL
     // (the target) and the map (the secondary entity) after either is deleted.
     let map = db::find_map_by_id(pool, map_id)
-        .await
-        .map_err(AppError::Internal)?
+        .await?
         .ok_or(AppError::NotFound)?;
 
-    let mut tx = pool
-        .begin()
-        .await
-        .map_err(|e| AppError::Internal(e.into()))?;
+    let mut tx = pool.begin().await?;
 
-    map_acl::attach_acl(&mut tx, map_id, acl_id)
-        .await
-        .map_err(AppError::Internal)?;
+    map_acl::attach_acl(&mut tx, map_id, acl_id).await?;
 
     audit::record_in_tx(
         &mut tx,
@@ -224,12 +192,9 @@ pub async fn attach_acl_to_map(
             acl_id,
         },
     )
-    .await
-    .map_err(AppError::Internal)?;
+    .await?;
 
-    tx.commit()
-        .await
-        .map_err(|e| AppError::Internal(e.into()))?;
+    tx.commit().await?;
 
     Ok(())
 }
@@ -246,18 +211,12 @@ pub async fn detach_acl_from_map(
     // Snapshot the map name into the audit event (the map is the secondary
     // entity; the ACL is the target).
     let map = db::find_map_by_id(pool, map_id)
-        .await
-        .map_err(AppError::Internal)?
+        .await?
         .ok_or(AppError::NotFound)?;
 
-    let mut tx = pool
-        .begin()
-        .await
-        .map_err(|e| AppError::Internal(e.into()))?;
+    let mut tx = pool.begin().await?;
 
-    let removed = map_acl::detach_acl(&mut tx, map_id, acl_id)
-        .await
-        .map_err(AppError::Internal)?;
+    let removed = map_acl::detach_acl(&mut tx, map_id, acl_id).await?;
     if !removed {
         return Err(AppError::NotFound);
     }
@@ -273,12 +232,9 @@ pub async fn detach_acl_from_map(
             acl_id,
         },
     )
-    .await
-    .map_err(AppError::Internal)?;
+    .await?;
 
-    tx.commit()
-        .await
-        .map_err(|e| AppError::Internal(e.into()))?;
+    tx.commit().await?;
 
     Ok(())
 }
@@ -295,9 +251,7 @@ async fn require_map_permission(
     account_id: Uuid,
     required: Permission,
 ) -> Result<(), AppError> {
-    let effective = effective_permission(pool, account_id, map_id)
-        .await
-        .map_err(AppError::Internal)?;
+    let effective = effective_permission(pool, account_id, map_id).await?;
 
     match effective {
         Some(p) if p >= required => Ok(()),

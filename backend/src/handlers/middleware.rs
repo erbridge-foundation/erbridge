@@ -10,11 +10,7 @@ use axum::{
 use uuid::Uuid;
 
 use crate::{
-    app_state::AppState,
-    crypto,
-    db::{accounts, blocks},
-    error::AppError,
-    handlers::cookie,
+    app_state::AppState, crypto, db::accounts, error::AppError, handlers::cookie,
     services::api_keys as svc,
 };
 
@@ -70,29 +66,19 @@ where
         {
             let row = svc::lookup_by_plaintext(&state.db, &bearer_value).await?;
 
+            // The lookup joins the owning account's status and block state, so
+            // every check below resolves from the single row — no follow-up
+            // queries. Bearer is the one auth route that survives block teardown
+            // (API keys are not deleted on block), so it carries the explicit
+            // block check; the session-cookie path needs none — block deletes
+            // the sessions, identical to soft-delete enforcement.
             return match row {
                 Some(r) if r.scope == "account" => {
                     let account_id = r.account_id.ok_or(AppError::Unauthorized)?;
-                    // Reject if the account has been soft-deleted.
-                    let account = accounts::get_account(&state.db, account_id)
-                        .await
-                        .map_err(AppError::Internal)?;
-                    match account {
-                        Some(a) if a.status == "soft_deleted" => Err(AppError::AccountSoftDeleted),
-                        Some(_) => {
-                            // Bearer is the one auth route that survives block
-                            // teardown (API keys are not deleted on block), so
-                            // it carries the explicit block check. The session
-                            // cookie path needs none — block deletes the
-                            // sessions, identical to soft-delete enforcement.
-                            if blocks::account_has_blocked_character(&state.db, account_id)
-                                .await
-                                .map_err(AppError::Internal)?
-                            {
-                                return Err(AppError::AccountBlocked);
-                            }
-                            Ok(AuthenticatedAccount(account_id))
-                        }
+                    match r.account_status.as_deref() {
+                        Some("soft_deleted") => Err(AppError::AccountSoftDeleted),
+                        Some(_) if r.account_blocked => Err(AppError::AccountBlocked),
+                        Some(_) => Ok(AuthenticatedAccount(account_id)),
                         None => Err(AppError::Unauthorized),
                     }
                 }
@@ -104,15 +90,13 @@ where
 
         // 2. Try session cookie.
         let jwt = cookie::extract_session_jwt(&parts.headers).ok_or(AppError::Unauthorized)?;
-        let key_bytes =
-            crypto::jwt_signing_key(&state.config.encryption_secret).map_err(AppError::Internal)?;
+        let key_bytes = crypto::jwt_signing_key(&state.config.encryption_secret)?;
         let session_id =
             crypto::verify_session_jwt(&jwt, &key_bytes).map_err(|_| AppError::Unauthorized)?;
         let session = state
             .session_store
             .get(&session_id)
-            .await
-            .map_err(AppError::Internal)?
+            .await?
             .ok_or(AppError::Unauthorized)?;
 
         // Mint a fresh session JWT (exp = now + 7d) so the cookie's lifetime
@@ -120,8 +104,7 @@ where
         // slot installed by `refresh_session_cookie`. If the slot is absent
         // (e.g. unit test with no wrapping middleware) the refresh is
         // silently a no-op — the auth itself still succeeds.
-        let fresh_jwt =
-            crypto::sign_session_jwt(&session_id, &key_bytes).map_err(AppError::Internal)?;
+        let fresh_jwt = crypto::sign_session_jwt(&session_id, &key_bytes)?;
         if let Some(slot) = parts.extensions.get::<RefreshedJwtSlot>() {
             #[allow(clippy::unwrap_used)]
             {
@@ -166,22 +149,19 @@ where
 
         // Session cookie only — never the bearer header.
         let jwt = cookie::extract_session_jwt(&parts.headers).ok_or(AppError::Unauthorized)?;
-        let key_bytes =
-            crypto::jwt_signing_key(&state.config.encryption_secret).map_err(AppError::Internal)?;
+        let key_bytes = crypto::jwt_signing_key(&state.config.encryption_secret)?;
         let session_id =
             crypto::verify_session_jwt(&jwt, &key_bytes).map_err(|_| AppError::Unauthorized)?;
         let session = state
             .session_store
             .get(&session_id)
-            .await
-            .map_err(AppError::Internal)?
+            .await?
             .ok_or(AppError::Unauthorized)?;
 
         // Load the account and require the admin flag. A missing account row for
         // a live session is an invariant violation, treated as unauthenticated.
         let account = accounts::get_account(&state.db, session.account_id)
-            .await
-            .map_err(AppError::Internal)?
+            .await?
             .ok_or(AppError::Unauthorized)?;
 
         if !account.is_server_admin {
@@ -315,6 +295,7 @@ mod tests {
                 esi_client_id: "test_client_id".into(),
                 esi_client_secret: "test_client_secret".into(),
                 database_url: String::new(),
+                bind_addr: "0.0.0.0:3000".to_string(),
                 rate_limit: Default::default(),
             }),
             db: pool.clone(),
@@ -353,7 +334,7 @@ mod tests {
         let session_id = Uuid::new_v4().to_string();
         state
             .session_store
-            .add(&session_id, account_id, None, false)
+            .add(&session_id, account_id)
             .await
             .unwrap();
         let key_bytes = crypto::jwt_signing_key(&state.config.encryption_secret).unwrap();

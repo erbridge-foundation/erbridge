@@ -164,11 +164,16 @@ async fn callback_inner(state: &AppState, query: &CallbackQuery) -> Result<Respo
     let scopes = claims.scp.into_vec();
     let owner_hash = claims.owner;
 
-    // Fetch corporation and alliance IDs from ESI public info.
-    let (corporation_id, alliance_id) =
-        fetch_character_public_info(&state.http_client, eve_character_id)
-            .await
-            .map_err(|e| AppError::BadGateway(format!("ESI public info error: {e}")))?;
+    // Fetch corporation and alliance IDs from ESI public info. Base URL injected
+    // (shared `public_info::ESI_BASE`) rather than hardcoded, matching the search
+    // path's injectable base — so tests can point it at a mock server.
+    let (corporation_id, alliance_id) = fetch_character_public_info(
+        &state.http_client,
+        crate::esi::public_info::ESI_BASE,
+        eve_character_id,
+    )
+    .await
+    .map_err(|e| AppError::BadGateway(format!("ESI public info error: {e}")))?;
 
     // Fetch corp and (optionally) alliance names concurrently.
     use crate::esi::public_info;
@@ -225,11 +230,7 @@ async fn callback_inner(state: &AppState, query: &CallbackQuery) -> Result<Respo
     // Create the persistent session row. The session ID is a fresh UUID; the
     // cookie carries it as a signed JWT.
     let session_id = Uuid::new_v4().to_string();
-    state
-        .session_store
-        .add(&session_id, account_id, None, inflight.account_id.is_some())
-        .await
-        .map_err(AppError::Internal)?;
+    state.session_store.add(&session_id, account_id).await?;
 
     let jwt_key = crypto::jwt_signing_key(&state.config.encryption_secret)?;
     let jwt = crypto::sign_session_jwt(&session_id, &jwt_key)?;
@@ -243,6 +244,7 @@ async fn callback_inner(state: &AppState, query: &CallbackQuery) -> Result<Respo
 
 async fn fetch_character_public_info(
     client: &reqwest_middleware::ClientWithMiddleware,
+    esi_base: &str,
     eve_character_id: i64,
 ) -> anyhow::Result<(i64, Option<i64>)> {
     #[derive(Deserialize)]
@@ -251,7 +253,7 @@ async fn fetch_character_public_info(
         alliance_id: Option<i64>,
     }
 
-    let url = format!("https://esi.evetech.net/latest/characters/{eve_character_id}/");
+    let url = format!("{esi_base}/characters/{eve_character_id}/");
     let info: PublicInfo = client
         .get(&url)
         .send()
@@ -331,16 +333,11 @@ pub async fn extract_session(
     let Some(jwt) = cookie::extract_session_jwt(headers) else {
         return Ok(None);
     };
-    let key =
-        crypto::jwt_signing_key(&state.config.encryption_secret).map_err(AppError::Internal)?;
+    let key = crypto::jwt_signing_key(&state.config.encryption_secret)?;
     let Ok(session_id) = crypto::verify_session_jwt(&jwt, &key) else {
         return Ok(None);
     };
-    state
-        .session_store
-        .get(&session_id)
-        .await
-        .map_err(AppError::Internal)
+    Ok(state.session_store.get(&session_id).await?)
 }
 
 #[cfg(test)]

@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT\n            k.scope,\n            k.account_id,\n            a.status AS \"account_status?\",\n            EXISTS (\n                SELECT 1\n                FROM eve_character c\n                JOIN blocked_eve_character b ON b.eve_character_id = c.eve_character_id\n                WHERE c.account_id = k.account_id\n            ) AS \"account_blocked!\"\n        FROM api_key k\n        LEFT JOIN account a ON a.id = k.account_id\n        WHERE k.key_hash = $1\n          AND (k.expires_at IS NULL OR k.expires_at > now())\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "scope",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "account_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "account_status?",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "account_blocked!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      false,
+      null
+    ]
+  },
+  "hash": "79c075eb0eaf592426248b2ce3f1f7108620f2e47711d6d40e86fa7c13f27f39"
+}

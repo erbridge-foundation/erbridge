@@ -6,6 +6,7 @@ use crate::{
     db::{accounts, characters, sessions},
     dto::account::TokenStatus,
     error::{AppError, ConflictKind},
+    esi,
 };
 
 pub struct CharacterInfo {
@@ -22,10 +23,7 @@ pub struct CharacterInfo {
 }
 
 fn character_to_info(c: characters::Character) -> CharacterInfo {
-    let portrait_url = format!(
-        "https://images.evetech.net/characters/{}/portrait?size=128",
-        c.eve_character_id
-    );
+    let portrait_url = esi::portrait_url(c.eve_character_id);
     let token_status = TokenStatus::from_db(&c.token_status);
     CharacterInfo {
         id: c.id,
@@ -48,13 +46,10 @@ pub struct MeInfo {
 
 pub async fn get_me(pool: &PgPool, account_id: Uuid) -> Result<MeInfo, AppError> {
     let account = accounts::get_account(pool, account_id)
-        .await
-        .map_err(AppError::Internal)?
+        .await?
         .ok_or(AppError::NotFound)?;
 
-    let chars = characters::list_for_account(pool, account_id)
-        .await
-        .map_err(AppError::Internal)?;
+    let chars = characters::list_for_account(pool, account_id).await?;
 
     Ok(MeInfo {
         account,
@@ -69,18 +64,13 @@ pub async fn set_main_character(
 ) -> Result<CharacterInfo, AppError> {
     // Verify ownership and capture the new main's EVE ID + name for the audit
     // payload (snapshotted so the row stays readable after a later rename/delete).
-    let (new_main_eve_id, new_main_name) = match characters::lookup_for_account(pool, character_id)
-        .await
-        .map_err(AppError::Internal)?
-    {
-        Some((owner_id, eve_id, name, _)) if owner_id == account_id => (eve_id, name),
-        _ => return Err(AppError::NotFound),
-    };
+    let (new_main_eve_id, new_main_name) =
+        match characters::lookup_for_account(pool, character_id).await? {
+            Some((owner_id, eve_id, name, _)) if owner_id == account_id => (eve_id, name),
+            _ => return Err(AppError::NotFound),
+        };
 
-    let mut tx = pool
-        .begin()
-        .await
-        .map_err(|e| AppError::Internal(e.into()))?;
+    let mut tx = pool.begin().await?;
     // Emit the audit row *before* the is_main flip so the actor-character
     // snapshot resolves to the outgoing main.
     audit::record_in_tx(
@@ -93,38 +83,22 @@ pub async fn set_main_character(
             character_name: new_main_name,
         },
     )
-    .await
-    .map_err(AppError::Internal)?;
-    characters::set_main(&mut tx, account_id, character_id)
-        .await
-        .map_err(AppError::Internal)?;
-    tx.commit()
-        .await
-        .map_err(|e| AppError::Internal(e.into()))?;
-
-    // Reload the updated character from DB — no ESI call needed.
-    let chars = characters::list_for_account(pool, account_id)
-        .await
-        .map_err(AppError::Internal)?;
-
-    let c = chars
-        .into_iter()
-        .find(|c| c.id == character_id)
+    .await?;
+    // `set_main` returns the promoted row via RETURNING — no post-commit re-list.
+    let updated = characters::set_main(&mut tx, account_id, character_id)
+        .await?
         .ok_or(AppError::NotFound)?;
+    tx.commit().await?;
 
-    Ok(character_to_info(c))
+    Ok(character_to_info(updated))
 }
 
 pub async fn delete_account(pool: &PgPool, account_id: Uuid) -> Result<(), AppError> {
     let account = accounts::get_account(pool, account_id)
-        .await
-        .map_err(AppError::Internal)?
+        .await?
         .ok_or(AppError::NotFound)?;
 
-    let mut tx = pool
-        .begin()
-        .await
-        .map_err(|e| AppError::Internal(e.into()))?;
+    let mut tx = pool.begin().await?;
     // Evaluate the last-admin guard inside the transaction, *before* the status
     // flip. `count_server_admins_tx` takes a `FOR UPDATE` lock on every active
     // admin row, so two concurrent deletes from the final two admins serialise
@@ -132,9 +106,7 @@ pub async fn delete_account(pool: &PgPool, account_id: Uuid) -> Result<(), AppEr
     // commits, then re-reads a count of 1 (only itself) and is refused. Locking
     // before flipping (rather than after) avoids a lock-ordering deadlock.
     if account.is_server_admin {
-        let admin_count = accounts::count_server_admins_tx(&mut tx)
-            .await
-            .map_err(AppError::Internal)?;
+        let admin_count = accounts::count_server_admins_tx(&mut tx).await?;
         if admin_count <= 1 {
             return Err(AppError::Conflict(
                 ConflictKind::CannotRemoveLastServerAdmin,
@@ -148,24 +120,15 @@ pub async fn delete_account(pool: &PgPool, account_id: Uuid) -> Result<(), AppEr
         None,
         AuditEvent::AccountDeletionRequested { account_id },
     )
-    .await
-    .map_err(AppError::Internal)?;
-    accounts::soft_delete(&mut tx, account_id)
-        .await
-        .map_err(AppError::Internal)?;
+    .await?;
+    accounts::soft_delete(&mut tx, account_id).await?;
 
-    characters::clear_tokens_for_account(&mut tx, account_id)
-        .await
-        .map_err(AppError::Internal)?;
+    characters::clear_tokens_for_account(&mut tx, account_id).await?;
     // Delete sessions in the same transaction: cookie-path auth enforces
     // soft-delete solely through session absence, so a soft-deleted account
     // must never retain a usable session under any partial-failure ordering.
-    sessions::delete_for_account_in_tx(&mut tx, account_id)
-        .await
-        .map_err(AppError::Internal)?;
-    tx.commit()
-        .await
-        .map_err(|e| AppError::Internal(e.into()))?;
+    sessions::delete_for_account_in_tx(&mut tx, account_id).await?;
+    tx.commit().await?;
 
     Ok(())
 }
@@ -175,10 +138,7 @@ pub async fn delete_character(
     account_id: Uuid,
     character_id: Uuid,
 ) -> Result<(), AppError> {
-    let mut tx = pool
-        .begin()
-        .await
-        .map_err(|e| AppError::Internal(e.into()))?;
+    let mut tx = pool.begin().await?;
 
     // Delete the row first, scoped to the owner (the WHERE subsumes the
     // ownership check) and returning is_main + the audit snapshot fields. A
@@ -187,17 +147,12 @@ pub async fn delete_character(
     // two concurrent deletes on a two-character account serialise on the row
     // locks their DELETEs take and cannot jointly empty the account.
     let (eve_character_id, character_name, was_main) =
-        match characters::delete_character_owned_in_tx(&mut tx, account_id, character_id)
-            .await
-            .map_err(AppError::Internal)?
-        {
+        match characters::delete_character_owned_in_tx(&mut tx, account_id, character_id).await? {
             Some(v) => v,
             None => return Err(AppError::NotFound),
         };
 
-    let remaining = characters::count_for_account_in_tx(&mut tx, account_id)
-        .await
-        .map_err(AppError::Internal)?;
+    let remaining = characters::count_for_account_in_tx(&mut tx, account_id).await?;
 
     // Last character: removing it would leave the account without an identity.
     if remaining == 0 {
@@ -219,11 +174,8 @@ pub async fn delete_character(
             character_name,
         },
     )
-    .await
-    .map_err(AppError::Internal)?;
-    tx.commit()
-        .await
-        .map_err(|e| AppError::Internal(e.into()))?;
+    .await?;
+    tx.commit().await?;
 
     Ok(())
 }
@@ -233,13 +185,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn portrait_url_format() {
-        let url = format!(
-            "https://images.evetech.net/characters/{}/portrait?size=128",
-            12345i64
-        );
+    fn portrait_url_uses_shared_esi_helper() {
+        // The service derives portraits from the one `esi::portrait_url` helper;
+        // pin the URL the API contract exposes.
         assert_eq!(
-            url,
+            esi::portrait_url(12345),
             "https://images.evetech.net/characters/12345/portrait?size=128"
         );
     }
@@ -359,12 +309,8 @@ mod tests {
             .unwrap();
         tx.commit().await.unwrap();
 
-        sessions::insert(&pool, "sess-1", user, None, false)
-            .await
-            .unwrap();
-        sessions::insert(&pool, "sess-2", user, None, false)
-            .await
-            .unwrap();
+        sessions::insert(&pool, "sess-1", user).await.unwrap();
+        sessions::insert(&pool, "sess-2", user).await.unwrap();
 
         delete_account(&pool, user).await.unwrap();
 
@@ -388,9 +334,7 @@ mod tests {
             .await
             .unwrap();
         tx.commit().await.unwrap();
-        sessions::insert(&pool, "admin-sess", admin, None, false)
-            .await
-            .unwrap();
+        sessions::insert(&pool, "admin-sess", admin).await.unwrap();
 
         let err = delete_account(&pool, admin).await.unwrap_err();
         assert!(matches!(

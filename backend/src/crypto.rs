@@ -64,10 +64,9 @@ pub fn encrypt_token(plaintext: &str, key_bytes: &[u8]) -> Result<Vec<u8>> {
     Ok(output)
 }
 
-/// Decrypts a token previously produced by `encrypt_token`. Consumed by the
-/// ESI-token-refresh path in a forthcoming change; the encrypt side is already
-/// in use by the SSO callback.
-#[allow(dead_code)]
+/// Decrypts a token previously produced by `encrypt_token`. Used by the daily
+/// token-refresh sweep and the entity-search path to recover stored ESI refresh
+/// tokens; the encrypt side is used by the SSO callback.
 pub fn decrypt_token(ciphertext_with_nonce: &[u8], key_bytes: &[u8]) -> Result<String> {
     if ciphertext_with_nonce.len() < 12 {
         return Err(anyhow!("ciphertext too short"));

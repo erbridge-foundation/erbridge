@@ -34,6 +34,7 @@ fn build_state(pool: PgPool) -> AppState {
             esi_client_id: "test_client_id".into(),
             esi_client_secret: "test_client_secret".into(),
             database_url: String::new(),
+            bind_addr: "0.0.0.0:3000".to_string(),
             rate_limit: Default::default(),
         }),
         db: pool.clone(),

@@ -56,20 +56,12 @@ const MAX_AUDIT_LIMIT: i64 = 200;
 ///
 /// `actor` is the admin performing the grant (the audit actor).
 pub async fn grant_admin(pool: &PgPool, actor: Uuid, target: Uuid) -> Result<(), AppError> {
-    if !accounts::account_exists(pool, target)
-        .await
-        .map_err(AppError::Internal)?
-    {
+    if !accounts::account_exists(pool, target).await? {
         return Err(AppError::NotFound);
     }
 
-    let mut tx = pool
-        .begin()
-        .await
-        .map_err(|e| AppError::Internal(e.into()))?;
-    let changed = accounts::set_server_admin(&mut tx, target, true)
-        .await
-        .map_err(AppError::Internal)?;
+    let mut tx = pool.begin().await?;
+    let changed = accounts::set_server_admin(&mut tx, target, true).await?;
     if changed {
         audit::record_in_tx(
             &mut tx,
@@ -80,12 +72,9 @@ pub async fn grant_admin(pool: &PgPool, actor: Uuid, target: Uuid) -> Result<(),
                 source: ServerAdminGrantSource::AdminGrant,
             },
         )
-        .await
-        .map_err(AppError::Internal)?;
+        .await?;
     }
-    tx.commit()
-        .await
-        .map_err(|e| AppError::Internal(e.into()))?;
+    tx.commit().await?;
     Ok(())
 }
 
@@ -97,17 +86,11 @@ pub async fn grant_admin(pool: &PgPool, actor: Uuid, target: Uuid) -> Result<(),
 /// Self-revoke is permitted as long as the guard holds. A state-changing revoke
 /// emits `ServerAdminRevoked` in the same transaction.
 pub async fn revoke_admin(pool: &PgPool, actor: Uuid, target: Uuid) -> Result<(), AppError> {
-    if !accounts::account_exists(pool, target)
-        .await
-        .map_err(AppError::Internal)?
-    {
+    if !accounts::account_exists(pool, target).await? {
         return Err(AppError::NotFound);
     }
 
-    let mut tx = pool
-        .begin()
-        .await
-        .map_err(|e| AppError::Internal(e.into()))?;
+    let mut tx = pool.begin().await?;
 
     // Lock + count the active admins *before* the flip. `count_server_admins_tx`
     // takes a `FOR UPDATE` lock on every active admin row, so concurrent revokes
@@ -115,27 +98,19 @@ pub async fn revoke_admin(pool: &PgPool, actor: Uuid, target: Uuid) -> Result<()
     // avoids a lock-ordering deadlock between two revokes of different targets.
     // A count <= 1 means the only active admin is the target itself, so revoking
     // it would leave zero — reject.
-    let active_admins = accounts::count_server_admins_tx(&mut tx)
-        .await
-        .map_err(AppError::Internal)?;
+    let active_admins = accounts::count_server_admins_tx(&mut tx).await?;
 
-    let changed = accounts::set_server_admin(&mut tx, target, false)
-        .await
-        .map_err(AppError::Internal)?;
+    let changed = accounts::set_server_admin(&mut tx, target, false).await?;
 
     if !changed {
         // Target was not an admin — idempotent no-op. Nothing was changed, so
         // the rollback/commit are equivalent; commit to release the tx cleanly.
-        tx.commit()
-            .await
-            .map_err(|e| AppError::Internal(e.into()))?;
+        tx.commit().await?;
         return Ok(());
     }
 
     if active_admins <= 1 {
-        tx.rollback()
-            .await
-            .map_err(|e| AppError::Internal(e.into()))?;
+        tx.rollback().await?;
         return Err(AppError::Conflict(
             ConflictKind::CannotRemoveLastServerAdmin,
         ));
@@ -147,11 +122,8 @@ pub async fn revoke_admin(pool: &PgPool, actor: Uuid, target: Uuid) -> Result<()
         None,
         AuditEvent::ServerAdminRevoked { account_id: target },
     )
-    .await
-    .map_err(AppError::Internal)?;
-    tx.commit()
-        .await
-        .map_err(|e| AppError::Internal(e.into()))?;
+    .await?;
+    tx.commit().await?;
     Ok(())
 }
 
@@ -178,9 +150,7 @@ pub async fn block_character(
 ) -> Result<(), AppError> {
     // Resolve the owning account (if any) up front — needed for both the
     // self-block guard and the teardown decision.
-    let owning_account = characters::find_account_for_eve_character(pool, eve_character_id)
-        .await
-        .map_err(AppError::Internal)?;
+    let owning_account = characters::find_account_for_eve_character(pool, eve_character_id).await?;
 
     // Self-block guard: reject if the target character belongs to the actor's
     // own account. Writes nothing.
@@ -188,10 +158,7 @@ pub async fn block_character(
         return Err(AppError::Conflict(ConflictKind::CannotBlockSelf));
     }
 
-    let mut tx = pool
-        .begin()
-        .await
-        .map_err(|e| AppError::Internal(e.into()))?;
+    let mut tx = pool.begin().await?;
 
     let inserted = blocks::insert_block(
         &mut tx,
@@ -201,26 +168,19 @@ pub async fn block_character(
         reason,
         actor,
     )
-    .await
-    .map_err(AppError::Internal)?;
+    .await?;
 
     if !inserted {
         // Already blocked — idempotent no-op, no teardown, no audit.
-        tx.commit()
-            .await
-            .map_err(|e| AppError::Internal(e.into()))?;
+        tx.commit().await?;
         return Ok(());
     }
 
     // Tear down the owning account (if any), mirroring soft-delete: clear EVE
     // tokens and delete all sessions, atomically with the block insert.
     if let Some(account_id) = owning_account {
-        characters::clear_tokens_for_account(&mut tx, account_id)
-            .await
-            .map_err(AppError::Internal)?;
-        sessions::delete_for_account_in_tx(&mut tx, account_id)
-            .await
-            .map_err(AppError::Internal)?;
+        characters::clear_tokens_for_account(&mut tx, account_id).await?;
+        sessions::delete_for_account_in_tx(&mut tx, account_id).await?;
     }
 
     audit::record_in_tx(
@@ -233,11 +193,8 @@ pub async fn block_character(
             reason: reason.map(|r| r.to_string()),
         },
     )
-    .await
-    .map_err(AppError::Internal)?;
-    tx.commit()
-        .await
-        .map_err(|e| AppError::Internal(e.into()))?;
+    .await?;
+    tx.commit().await?;
     Ok(())
 }
 
@@ -250,20 +207,12 @@ pub async fn unblock_character(
     actor: Uuid,
     eve_character_id: i64,
 ) -> Result<(), AppError> {
-    let mut tx = pool
-        .begin()
-        .await
-        .map_err(|e| AppError::Internal(e.into()))?;
+    let mut tx = pool.begin().await?;
 
-    let character_name = match blocks::delete_block(&mut tx, eve_character_id)
-        .await
-        .map_err(AppError::Internal)?
-    {
+    let character_name = match blocks::delete_block(&mut tx, eve_character_id).await? {
         Some(name) => name,
         None => {
-            tx.rollback()
-                .await
-                .map_err(|e| AppError::Internal(e.into()))?;
+            tx.rollback().await?;
             return Err(AppError::NotFound);
         }
     };
@@ -277,11 +226,8 @@ pub async fn unblock_character(
             character_name,
         },
     )
-    .await
-    .map_err(AppError::Internal)?;
-    tx.commit()
-        .await
-        .map_err(|e| AppError::Internal(e.into()))?;
+    .await?;
+    tx.commit().await?;
     Ok(())
 }
 
@@ -292,14 +238,12 @@ pub use crate::db::accounts::AccountWithCharacters as AdminAccountInfo;
 /// All accounts (newest first) each with its characters, for the admin accounts
 /// list.
 pub async fn list_accounts(pool: &PgPool) -> Result<Vec<AdminAccountInfo>, AppError> {
-    accounts::list_accounts_with_characters(pool)
-        .await
-        .map_err(AppError::Internal)
+    Ok(accounts::list_accounts_with_characters(pool).await?)
 }
 
 /// All block rows, newest first (pass-through for the admin block list).
 pub async fn list_blocks(pool: &PgPool) -> Result<Vec<blocks::BlockedEveCharacter>, AppError> {
-    blocks::list_blocks(pool).await.map_err(AppError::Internal)
+    Ok(blocks::list_blocks(pool).await?)
 }
 
 /// Local character name search for the grant + block UIs. `limit` is clamped to
@@ -312,15 +256,11 @@ pub async fn search_characters(
     limit: Option<i64>,
 ) -> Result<Vec<AdminCharacterSearchResult>, AppError> {
     let limit = clamp_limit(limit);
-    let matches = characters::search_by_name(pool, q, limit)
-        .await
-        .map_err(AppError::Internal)?;
+    let matches = characters::search_by_name(pool, q, limit).await?;
 
     let mut out = Vec::with_capacity(matches.len());
     for m in matches {
-        let already_blocked = blocks::is_eve_character_blocked(pool, m.eve_character_id)
-            .await
-            .map_err(AppError::Internal)?;
+        let already_blocked = blocks::is_eve_character_blocked(pool, m.eve_character_id).await?;
         out.push(AdminCharacterSearchResult {
             portrait_url: esi::portrait_url(m.eve_character_id),
             eve_character_id: m.eve_character_id,
@@ -367,9 +307,7 @@ pub async fn esi_search_characters(
 
     let mut out = Vec::with_capacity(results.characters.len());
     for c in results.characters {
-        let already_blocked = blocks::is_eve_character_blocked(pool, c.eve_character_id)
-            .await
-            .map_err(AppError::Internal)?;
+        let already_blocked = blocks::is_eve_character_blocked(pool, c.eve_character_id).await?;
         out.push(EsiCharacterSearchResult {
             portrait_url: esi::portrait_url(c.eve_character_id),
             eve_character_id: c.eve_character_id,
@@ -399,7 +337,7 @@ pub async fn list_audit_log(
     limit: Option<i64>,
 ) -> Result<Vec<AuditLogEntry>, AppError> {
     let limit = clamp_limit(limit);
-    audit::list_audit_log(
+    Ok(audit::list_audit_log(
         pool,
         event_type,
         actor,
@@ -411,8 +349,7 @@ pub async fn list_audit_log(
         before,
         limit,
     )
-    .await
-    .map_err(AppError::Internal)
+    .await?)
 }
 
 /// Clamps a caller-supplied page size into `[1, MAX_AUDIT_LIMIT]`, defaulting

@@ -43,6 +43,7 @@ fn test_config() -> Arc<Config> {
         esi_client_id: "test_client_id".into(),
         esi_client_secret: "test_client_secret".into(),
         database_url: String::new(), // not used by the router during tests
+        bind_addr: "0.0.0.0:3000".to_string(),
         rate_limit: Default::default(),
     })
 }
@@ -80,7 +81,7 @@ async fn create_session(state: &AppState) -> (Uuid, String) {
     let session_id = Uuid::new_v4().to_string();
     state
         .session_store
-        .add(&session_id, account_id, None, false)
+        .add(&session_id, account_id)
         .await
         .expect("insert session");
 

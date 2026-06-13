@@ -39,6 +39,7 @@ fn test_config() -> Arc<Config> {
         esi_client_id: "test_client_id".into(),
         esi_client_secret: "test_client_secret".into(),
         database_url: String::new(),
+        bind_addr: "0.0.0.0:3000".to_string(),
         rate_limit: Default::default(),
     })
 }
@@ -72,7 +73,7 @@ async fn create_session(state: &AppState) -> (Uuid, String) {
     let session_id = Uuid::new_v4().to_string();
     state
         .session_store
-        .add(&session_id, account_id, None, false)
+        .add(&session_id, account_id)
         .await
         .expect("insert session");
     let key_bytes = crypto::jwt_signing_key(&state.config.encryption_secret).unwrap();
@@ -561,7 +562,7 @@ async fn deny_member_refuses_access(pool: PgPool) {
     let state = build_state(pool.clone());
     let (_owner, owner_cookie) = create_session(&state).await;
     let (member_account, member_cookie) = create_session(&state).await;
-    insert_character(&pool, member_account, 9002, 6000).await;
+    let member_char_id = insert_character(&pool, member_account, 9002, 6000).await;
     let router = backend::build_router(state);
 
     let resp = send(
@@ -594,19 +595,38 @@ async fn deny_member_refuses_access(pool: PgPool) {
         .unwrap()
         .to_string();
 
-    // Grant read to the corp, then deny the corp: deny wins.
-    for permission in ["read", "deny"] {
-        send(
-            &router,
-            req(
-                Method::POST,
-                &format!("/api/v1/acls/{acl_id}/members"),
-                &owner_cookie,
-                Some(json!({"member_type": "corporation", "eve_entity_id": 6000, "permission": permission})),
+    // Grant read to the member's corp, then deny the member's character
+    // directly: deny wins over the corp grant. Read and deny must sit on
+    // *distinct* member identities — `acl_member_unique_entity` forbids a second
+    // (acl, corporation, 6000) row, so the deny is applied to the character
+    // instead (mirroring the `permissions::deny_overrides_all_grants` unit test).
+    send(
+        &router,
+        req(
+            Method::POST,
+            &format!("/api/v1/acls/{acl_id}/members"),
+            &owner_cookie,
+            Some(
+                json!({"member_type": "corporation", "eve_entity_id": 6000, "permission": "read"}),
             ),
-        )
-        .await;
-    }
+        ),
+    )
+    .await;
+    send(
+        &router,
+        req(
+            Method::POST,
+            &format!("/api/v1/acls/{acl_id}/members"),
+            &owner_cookie,
+            Some(json!({
+                "member_type": "character",
+                "eve_entity_id": 9002,
+                "character_id": member_char_id,
+                "permission": "deny"
+            })),
+        ),
+    )
+    .await;
     send(
         &router,
         req(

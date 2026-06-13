@@ -55,12 +55,18 @@ impl RateLimitConfig {
     }
 }
 
+/// The default socket address the server binds. Overridable via `BIND_ADDR` so
+/// no deployment change is required for the common case.
+pub const DEFAULT_BIND_ADDR: &str = "0.0.0.0:3000";
+
 pub struct Config {
     pub app_url: String,
     pub encryption_secret: String,
     pub esi_client_id: String,
     pub esi_client_secret: String,
     pub database_url: String,
+    /// Socket address to bind, `BIND_ADDR` (default [`DEFAULT_BIND_ADDR`]).
+    pub bind_addr: String,
     pub rate_limit: RateLimitConfig,
 }
 
@@ -77,6 +83,7 @@ impl Config {
                 .context("ESI_CLIENT_SECRET environment variable is required")?,
             database_url: std::env::var("DATABASE_URL")
                 .context("DATABASE_URL environment variable is required")?,
+            bind_addr: std::env::var("BIND_ADDR").unwrap_or_else(|_| DEFAULT_BIND_ADDR.to_string()),
             rate_limit: RateLimitConfig::from_env()?,
         })
     }
@@ -94,5 +101,29 @@ impl Default for RateLimitConfig {
             auth_per_millis: 1000,
             auth_burst: 5,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `from_env` reads `BIND_ADDR`, falling back to the default when unset.
+    /// Mirrors the resolution `from_env` performs (kept in lockstep so the test
+    /// does not have to mutate process-global env, which would race other tests).
+    fn resolve_bind_addr(var: Option<&str>) -> String {
+        var.map(str::to_string)
+            .unwrap_or_else(|| DEFAULT_BIND_ADDR.to_string())
+    }
+
+    #[test]
+    fn bind_addr_defaults_when_unset() {
+        assert_eq!(resolve_bind_addr(None), "0.0.0.0:3000");
+        assert_eq!(resolve_bind_addr(None), DEFAULT_BIND_ADDR);
+    }
+
+    #[test]
+    fn bind_addr_uses_override_when_set() {
+        assert_eq!(resolve_bind_addr(Some("127.0.0.1:8080")), "127.0.0.1:8080");
     }
 }

@@ -30,21 +30,14 @@ pub async fn list_manageable_for_account(
     pool: &PgPool,
     account_id: Uuid,
 ) -> Result<Vec<Acl>, AppError> {
-    db::find_acls_manageable_by_account(pool, account_id)
-        .await
-        .map_err(AppError::Internal)
+    Ok(db::find_acls_manageable_by_account(pool, account_id).await?)
 }
 
 /// Creates an ACL owned by `account_id` and records an audit event.
 pub async fn create_acl(pool: &PgPool, account_id: Uuid, name: &str) -> Result<Acl, AppError> {
-    let mut tx = pool
-        .begin()
-        .await
-        .map_err(|e| AppError::Internal(e.into()))?;
+    let mut tx = pool.begin().await?;
 
-    let acl = db::insert_acl(&mut tx, account_id, name)
-        .await
-        .map_err(AppError::Internal)?;
+    let acl = db::insert_acl(&mut tx, account_id, name).await?;
 
     audit::record_in_tx(
         &mut tx,
@@ -56,12 +49,9 @@ pub async fn create_acl(pool: &PgPool, account_id: Uuid, name: &str) -> Result<A
             name: name.to_string(),
         },
     )
-    .await
-    .map_err(AppError::Internal)?;
+    .await?;
 
-    tx.commit()
-        .await
-        .map_err(|e| AppError::Internal(e.into()))?;
+    tx.commit().await?;
 
     Ok(acl)
 }
@@ -74,18 +64,14 @@ pub async fn rename_acl(
     acl_id: Uuid,
     new_name: &str,
 ) -> Result<Acl, AppError> {
-    let mut tx = pool
-        .begin()
-        .await
-        .map_err(|e| AppError::Internal(e.into()))?;
+    let mut tx = pool.begin().await?;
 
     // Ownership check, write, and audit all in one transaction.
     let acl = load_owned_acl_in_tx(&mut tx, account_id, acl_id).await?;
     let old_name = acl.name;
 
     let updated = db::update_acl_name(&mut tx, acl_id, new_name)
-        .await
-        .map_err(AppError::Internal)?
+        .await?
         .ok_or(AppError::NotFound)?;
 
     audit::record_in_tx(
@@ -99,22 +85,16 @@ pub async fn rename_acl(
             new_name: new_name.to_string(),
         },
     )
-    .await
-    .map_err(AppError::Internal)?;
+    .await?;
 
-    tx.commit()
-        .await
-        .map_err(|e| AppError::Internal(e.into()))?;
+    tx.commit().await?;
 
     Ok(updated)
 }
 
 /// Deletes an ACL the account owns (cascading members and attachments).
 pub async fn delete_acl(pool: &PgPool, account_id: Uuid, acl_id: Uuid) -> Result<(), AppError> {
-    let mut tx = pool
-        .begin()
-        .await
-        .map_err(|e| AppError::Internal(e.into()))?;
+    let mut tx = pool.begin().await?;
 
     let acl = load_owned_acl_in_tx(&mut tx, account_id, acl_id).await?;
 
@@ -129,19 +109,14 @@ pub async fn delete_acl(pool: &PgPool, account_id: Uuid, acl_id: Uuid) -> Result
             name: acl.name,
         },
     )
-    .await
-    .map_err(AppError::Internal)?;
+    .await?;
 
-    let deleted = db::delete_acl(&mut tx, acl_id)
-        .await
-        .map_err(AppError::Internal)?;
+    let deleted = db::delete_acl(&mut tx, acl_id).await?;
     if !deleted {
         return Err(AppError::NotFound);
     }
 
-    tx.commit()
-        .await
-        .map_err(|e| AppError::Internal(e.into()))?;
+    tx.commit().await?;
 
     Ok(())
 }
@@ -153,9 +128,7 @@ pub async fn list_members(
     acl_id: Uuid,
 ) -> Result<Vec<AclMember>, AppError> {
     load_owned_acl(pool, account_id, acl_id).await?;
-    member_db::list_members(pool, acl_id)
-        .await
-        .map_err(AppError::Internal)
+    Ok(member_db::list_members(pool, acl_id).await?)
 }
 
 /// Adds a member to an ACL the account owns. Validates that the identifier
@@ -168,10 +141,7 @@ pub async fn add_member(
 ) -> Result<AclMember, AppError> {
     validate_member_shape(&input)?;
 
-    let mut tx = pool
-        .begin()
-        .await
-        .map_err(|e| AppError::Internal(e.into()))?;
+    let mut tx = pool.begin().await?;
 
     load_owned_acl_in_tx(&mut tx, account_id, acl_id).await?;
 
@@ -200,11 +170,8 @@ pub async fn add_member(
             permission: input.permission.as_str().to_string(),
         },
     )
-    .await
-    .map_err(AppError::Internal)?;
-    tx.commit()
-        .await
-        .map_err(|e| AppError::Internal(e.into()))?;
+    .await?;
+    tx.commit().await?;
 
     Ok(member)
 }
@@ -217,10 +184,7 @@ pub async fn update_member_permission(
     member_id: Uuid,
     permission: AclPermission,
 ) -> Result<AclMember, AppError> {
-    let mut tx = pool
-        .begin()
-        .await
-        .map_err(|e| AppError::Internal(e.into()))?;
+    let mut tx = pool.begin().await?;
 
     load_owned_acl_in_tx(&mut tx, account_id, acl_id).await?;
 
@@ -242,11 +206,8 @@ pub async fn update_member_permission(
             permission: permission.as_str().to_string(),
         },
     )
-    .await
-    .map_err(AppError::Internal)?;
-    tx.commit()
-        .await
-        .map_err(|e| AppError::Internal(e.into()))?;
+    .await?;
+    tx.commit().await?;
 
     Ok(updated)
 }
@@ -258,16 +219,12 @@ pub async fn remove_member(
     acl_id: Uuid,
     member_id: Uuid,
 ) -> Result<(), AppError> {
-    let mut tx = pool
-        .begin()
-        .await
-        .map_err(|e| AppError::Internal(e.into()))?;
+    let mut tx = pool.begin().await?;
 
     load_owned_acl_in_tx(&mut tx, account_id, acl_id).await?;
 
     let removed = member_db::remove_member(&mut *tx, acl_id, member_id)
-        .await
-        .map_err(AppError::Internal)?
+        .await?
         .ok_or(AppError::NotFound)?;
 
     audit::record_in_tx(
@@ -281,11 +238,8 @@ pub async fn remove_member(
             eve_entity_id: removed.eve_entity_id,
         },
     )
-    .await
-    .map_err(AppError::Internal)?;
-    tx.commit()
-        .await
-        .map_err(|e| AppError::Internal(e.into()))?;
+    .await?;
+    tx.commit().await?;
 
     Ok(())
 }
@@ -299,8 +253,7 @@ pub async fn remove_member(
 /// checks (e.g. `list_members`).
 async fn load_owned_acl(pool: &PgPool, account_id: Uuid, acl_id: Uuid) -> Result<Acl, AppError> {
     let acl = db::find_acl_by_id(pool, acl_id)
-        .await
-        .map_err(AppError::Internal)?
+        .await?
         .ok_or(AppError::NotFound)?;
     if acl.owner_account_id != Some(account_id) {
         return Err(AppError::Forbidden);
@@ -317,8 +270,7 @@ async fn load_owned_acl_in_tx(
     acl_id: Uuid,
 ) -> Result<Acl, AppError> {
     let acl = db::find_acl_by_id(&mut **tx, acl_id)
-        .await
-        .map_err(AppError::Internal)?
+        .await?
         .ok_or(AppError::NotFound)?;
     if acl.owner_account_id != Some(account_id) {
         return Err(AppError::Forbidden);

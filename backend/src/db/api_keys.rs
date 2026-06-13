@@ -1,19 +1,9 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use sqlx::{PgPool, Postgres, Transaction};
+use sqlx::{PgExecutor, PgPool};
 use uuid::Uuid;
 
 use crate::db::DbError;
-
-#[allow(dead_code)]
-pub struct ApiKeyRow {
-    pub id: Uuid,
-    pub account_id: Option<Uuid>,
-    pub scope: String,
-    pub name: String,
-    pub expires_at: Option<DateTime<Utc>>,
-    pub created_at: DateTime<Utc>,
-}
 
 pub struct ApiKeyMetadata {
     pub id: Uuid,
@@ -26,8 +16,12 @@ pub struct ApiKeyMetadata {
 /// Inserts an account-scoped API key row. The caller is responsible for generating the hash.
 /// Returns `(id, created_at)`. A unique constraint failure surfaces as
 /// `DbError::UniqueViolation` so callers can distinguish it from other errors.
+///
+/// Generic over the executor so a pool (tests) and a transaction (the service,
+/// committing the insert alongside an audit emission) share one query — see the
+/// no-new-twins rule in `db/mod.rs`.
 pub async fn insert_key(
-    pool: &PgPool,
+    executor: impl PgExecutor<'_>,
     account_id: Uuid,
     name: &str,
     key_hash: &str,
@@ -44,47 +38,46 @@ pub async fn insert_key(
         key_hash,
         expires_at,
     )
-    .fetch_one(pool)
+    .fetch_one(executor)
     .await?;
 
     Ok((row.id, row.created_at))
 }
 
-/// Transactional variant of [`insert_key`] for callers that need to commit the
-/// insert alongside an audit emission in one transaction.
-pub async fn insert_key_in_tx(
-    tx: &mut Transaction<'_, Postgres>,
-    account_id: Uuid,
-    name: &str,
-    key_hash: &str,
-    expires_at: Option<DateTime<Utc>>,
-) -> Result<(Uuid, DateTime<Utc>), DbError> {
-    let row = sqlx::query!(
-        r#"
-        INSERT INTO api_key (account_id, scope, name, key_hash, expires_at)
-        VALUES ($1, 'account', $2, $3, $4)
-        RETURNING id, created_at
-        "#,
-        account_id,
-        name,
-        key_hash,
-        expires_at,
-    )
-    .fetch_one(&mut **tx)
-    .await?;
-
-    Ok((row.id, row.created_at))
+/// A key row joined with everything the bearer-auth path needs to make its
+/// authorisation decision in a single round-trip: the key's `scope`/`account_id`
+/// plus the owning account's `status` and whether that account owns a blocked
+/// character. The account fields are `Option` because `account_id` may be NULL
+/// (server-scoped keys), in which case the LEFT JOIN yields no account row.
+pub struct BearerKeyRow {
+    pub scope: String,
+    pub account_id: Option<Uuid>,
+    /// `account.status`, or `None` if the key has no owning account row.
+    pub account_status: Option<String>,
+    /// Whether the owning account owns at least one blocked character.
+    pub account_blocked: bool,
 }
 
-/// Looks up a key row by its pre-computed SHA-256 hex hash.
-/// Returns `None` if not found or expired.
-pub async fn find_by_hash(pool: &PgPool, key_hash: &str) -> Result<Option<ApiKeyRow>> {
+/// Looks up a key row by its pre-computed SHA-256 hex hash, joining the owning
+/// account's status and block state so the bearer extractor authorises in one
+/// query. Returns `None` if no live (unexpired) key matches.
+pub async fn find_by_hash(pool: &PgPool, key_hash: &str) -> Result<Option<BearerKeyRow>> {
     let row = sqlx::query!(
         r#"
-        SELECT id, account_id, scope, name, expires_at, created_at
-        FROM api_key
-        WHERE key_hash = $1
-          AND (expires_at IS NULL OR expires_at > now())
+        SELECT
+            k.scope,
+            k.account_id,
+            a.status AS "account_status?",
+            EXISTS (
+                SELECT 1
+                FROM eve_character c
+                JOIN blocked_eve_character b ON b.eve_character_id = c.eve_character_id
+                WHERE c.account_id = k.account_id
+            ) AS "account_blocked!"
+        FROM api_key k
+        LEFT JOIN account a ON a.id = k.account_id
+        WHERE k.key_hash = $1
+          AND (k.expires_at IS NULL OR k.expires_at > now())
         "#,
         key_hash,
     )
@@ -92,13 +85,11 @@ pub async fn find_by_hash(pool: &PgPool, key_hash: &str) -> Result<Option<ApiKey
     .await
     .context("failed to look up api key by hash")?;
 
-    Ok(row.map(|r| ApiKeyRow {
-        id: r.id,
-        account_id: r.account_id,
+    Ok(row.map(|r| BearerKeyRow {
         scope: r.scope,
-        name: r.name,
-        expires_at: r.expires_at,
-        created_at: r.created_at,
+        account_id: r.account_id,
+        account_status: r.account_status,
+        account_blocked: r.account_blocked,
     }))
 }
 
@@ -130,32 +121,13 @@ pub async fn list_for_account(pool: &PgPool, account_id: Uuid) -> Result<Vec<Api
         .collect())
 }
 
-/// Deletes a key by id, only if it belongs to the given account with `scope = 'account'`.
-/// Returns `true` if a row was deleted.
-pub async fn delete_for_account(pool: &PgPool, id: Uuid, account_id: Uuid) -> Result<bool> {
-    let result = sqlx::query!(
-        r#"
-        DELETE FROM api_key
-        WHERE id = $1
-          AND account_id = $2
-          AND scope = 'account'
-        "#,
-        id,
-        account_id,
-    )
-    .execute(pool)
-    .await
-    .context("failed to delete api key")?;
-
-    Ok(result.rows_affected() > 0)
-}
-
-/// Transactional variant of [`delete_for_account`] for callers that need to
-/// commit the delete alongside an audit emission in one transaction. Returns the
-/// deleted key's `name` (so the caller can snapshot the label into the audit
-/// event), or `None` if no matching key was deleted.
-pub async fn delete_for_account_in_tx(
-    tx: &mut Transaction<'_, Postgres>,
+/// Deletes a key by id, only if it belongs to the given account with
+/// `scope = 'account'`. Returns the deleted key's `name` (so the caller can
+/// snapshot the label into an audit event), or `None` if no matching key was
+/// deleted. Generic over the executor so the service can commit the delete
+/// alongside its audit emission in one transaction.
+pub async fn delete_for_account(
+    executor: impl PgExecutor<'_>,
     id: Uuid,
     account_id: Uuid,
 ) -> Result<Option<String>> {
@@ -170,7 +142,7 @@ pub async fn delete_for_account_in_tx(
         id,
         account_id,
     )
-    .fetch_optional(&mut **tx)
+    .fetch_optional(executor)
     .await
     .context("failed to delete api key")?;
 
@@ -217,6 +189,53 @@ mod tests {
         let row = find_by_hash(&pool, &hash).await.unwrap().unwrap();
         assert_eq!(row.account_id, Some(account_id));
         assert_eq!(row.scope, "account");
+        assert_eq!(row.account_status.as_deref(), Some("active"));
+        assert!(!row.account_blocked);
+    }
+
+    #[sqlx::test]
+    async fn find_by_hash_reports_soft_deleted_status(pool: PgPool) {
+        let account_id = accounts::create_account(&pool).await.unwrap();
+        let mut tx = pool.begin().await.unwrap();
+        accounts::soft_delete(&mut tx, account_id).await.unwrap();
+        tx.commit().await.unwrap();
+        let hash = fake_hash("soft");
+        insert_key(&pool, account_id, "k", &hash, None)
+            .await
+            .unwrap();
+
+        let row = find_by_hash(&pool, &hash).await.unwrap().unwrap();
+        assert_eq!(row.account_status.as_deref(), Some("soft_deleted"));
+        assert!(!row.account_blocked);
+    }
+
+    #[sqlx::test]
+    async fn find_by_hash_reports_blocked_account(pool: PgPool) {
+        use crate::db::blocks;
+        let admin = accounts::create_account(&pool).await.unwrap();
+        let account_id = accounts::create_account(&pool).await.unwrap();
+        // Bind a character to the account, then block that character.
+        sqlx::query!(
+            "INSERT INTO eve_character (account_id, eve_character_id, name, corporation_id, corporation_name)
+             VALUES ($1, 700, 'Owned', 1_000_001, 'Test Corp')",
+            account_id,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let mut tx = pool.begin().await.unwrap();
+        blocks::insert_block(&mut tx, 700, Some("Owned"), None, None, admin)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        let hash = fake_hash("blocked");
+        insert_key(&pool, account_id, "k", &hash, None)
+            .await
+            .unwrap();
+
+        let row = find_by_hash(&pool, &hash).await.unwrap().unwrap();
+        assert_eq!(row.account_status.as_deref(), Some("active"));
+        assert!(row.account_blocked);
     }
 
     #[sqlx::test]
@@ -252,7 +271,7 @@ mod tests {
             .unwrap();
 
         let deleted = delete_for_account(&pool, id, account_id).await.unwrap();
-        assert!(deleted);
+        assert_eq!(deleted.as_deref(), Some("to-delete"));
         assert!(find_by_hash(&pool, &hash).await.unwrap().is_none());
     }
 
@@ -266,7 +285,7 @@ mod tests {
             .unwrap();
 
         let deleted = delete_for_account(&pool, id, account_b).await.unwrap();
-        assert!(!deleted);
+        assert!(deleted.is_none());
         assert!(find_by_hash(&pool, &hash).await.unwrap().is_some());
     }
 

@@ -14,8 +14,6 @@ use crate::db::sessions as db_sessions;
 pub struct Session {
     pub session_id: String,
     pub account_id: Uuid,
-    pub csrf_state: Option<String>,
-    pub add_character_mode: bool,
     pub created_at: DateTime<Utc>,
     pub last_seen_at: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
@@ -26,8 +24,6 @@ impl From<db_sessions::SessionRow> for Session {
         Self {
             session_id: r.session_id,
             account_id: r.account_id,
-            csrf_state: r.csrf_state,
-            add_character_mode: r.add_character_mode,
             created_at: r.created_at,
             last_seen_at: r.last_seen_at,
             expires_at: r.expires_at,
@@ -46,21 +42,8 @@ impl SessionStore {
         Self { pool }
     }
 
-    pub async fn add(
-        &self,
-        session_id: &str,
-        account_id: Uuid,
-        csrf_state: Option<&str>,
-        add_character_mode: bool,
-    ) -> Result<()> {
-        db_sessions::insert(
-            &self.pool,
-            session_id,
-            account_id,
-            csrf_state,
-            add_character_mode,
-        )
-        .await
+    pub async fn add(&self, session_id: &str, account_id: Uuid) -> Result<()> {
+        db_sessions::insert(&self.pool, session_id, account_id).await
     }
 
     /// Reads the session for `session_id`, atomically advancing `last_seen_at`

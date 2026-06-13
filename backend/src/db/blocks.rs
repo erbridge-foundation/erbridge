@@ -106,44 +106,10 @@ pub async fn is_eve_character_blocked(pool: &PgPool, eve_character_id: i64) -> R
     Ok(row.exists)
 }
 
-/// Whether an account owns at least one blocked character — the derived
-/// "account is blocked" rule. Used by the bearer branch of `AuthenticatedAccount`.
-pub async fn account_has_blocked_character(pool: &PgPool, account_id: Uuid) -> Result<bool> {
-    let row = sqlx::query!(
-        r#"SELECT EXISTS (
-            SELECT 1
-            FROM eve_character c
-            JOIN blocked_eve_character b ON b.eve_character_id = c.eve_character_id
-            WHERE c.account_id = $1
-        ) AS "exists!""#,
-        account_id
-    )
-    .fetch_one(pool)
-    .await
-    .context("failed to check account block status")?;
-    Ok(row.exists)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::db::accounts;
-
-    /// Inserts a bare `eve_character` row bound to `account_id` so the join-based
-    /// queries have something to find. Mirrors the minimal columns other db
-    /// tests insert directly.
-    async fn bind_character(pool: &PgPool, account_id: Uuid, eve_id: i64, name: &str) {
-        sqlx::query!(
-            "INSERT INTO eve_character (account_id, eve_character_id, name, corporation_id, corporation_name)
-             VALUES ($1, $2, $3, 1_000_001, 'Test Corp')",
-            account_id,
-            eve_id,
-            name,
-        )
-        .execute(pool)
-        .await
-        .unwrap();
-    }
 
     async fn block(pool: &PgPool, eve_id: i64, by: Uuid) -> bool {
         let mut tx = pool.begin().await.unwrap();
@@ -238,35 +204,5 @@ mod tests {
         block(&pool, 42, admin).await;
         assert!(is_eve_character_blocked(&pool, 42).await.unwrap());
         assert!(!is_eve_character_blocked(&pool, 43).await.unwrap());
-    }
-
-    #[sqlx::test]
-    async fn account_has_blocked_character_true_when_owned_char_blocked(pool: PgPool) {
-        let admin = accounts::create_account(&pool).await.unwrap();
-        let victim = accounts::create_account(&pool).await.unwrap();
-        bind_character(&pool, victim, 500, "Alt").await;
-        block(&pool, 500, admin).await;
-
-        assert!(account_has_blocked_character(&pool, victim).await.unwrap());
-    }
-
-    #[sqlx::test]
-    async fn account_has_blocked_character_false_when_no_owned_block(pool: PgPool) {
-        let admin = accounts::create_account(&pool).await.unwrap();
-        let other = accounts::create_account(&pool).await.unwrap();
-        bind_character(&pool, other, 500, "Clean Pilot").await;
-        // Block a *different*, unowned character id.
-        block(&pool, 999, admin).await;
-
-        assert!(!account_has_blocked_character(&pool, other).await.unwrap());
-    }
-
-    #[sqlx::test]
-    async fn account_has_blocked_character_false_for_block_of_unowned_id(pool: PgPool) {
-        // A block exists, but the character row binding it to an account does
-        // not (orphan/never-seen) — so no account "has" it.
-        let admin = accounts::create_account(&pool).await.unwrap();
-        block(&pool, 12345, admin).await;
-        assert!(!account_has_blocked_character(&pool, admin).await.unwrap());
     }
 }

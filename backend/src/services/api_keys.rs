@@ -29,12 +29,9 @@ pub async fn create_key(
     let plaintext = api_key::generate();
     let key_hash = api_key::hash(&plaintext);
 
-    let mut tx = pool
-        .begin()
-        .await
-        .map_err(|e| AppError::Internal(e.into()))?;
+    let mut tx = pool.begin().await?;
 
-    let (id, created_at) = db::insert_key_in_tx(&mut tx, account_id, name, &key_hash, expires_at)
+    let (id, created_at) = db::insert_key(&mut *tx, account_id, name, &key_hash, expires_at)
         .await
         .map_err(|e| match e {
             DbError::UniqueViolation { .. } => {
@@ -56,12 +53,9 @@ pub async fn create_key(
             name: name.to_string(),
         },
     )
-    .await
-    .map_err(AppError::Internal)?;
+    .await?;
 
-    tx.commit()
-        .await
-        .map_err(|e| AppError::Internal(e.into()))?;
+    tx.commit().await?;
 
     Ok(CreatedKey {
         id,
@@ -72,43 +66,33 @@ pub async fn create_key(
     })
 }
 
-/// Looks up an API key row by its plaintext value. Hashes internally before querying.
-/// Returns `None` if not found or expired.
+/// Resolves an API key (by plaintext) to the bearer-auth row carrying the key's
+/// scope plus the owning account's status and block state — everything the
+/// extractor needs to authorise in a single query. Hashes internally before
+/// querying. Returns `None` if no live (unexpired) key matches.
 pub async fn lookup_by_plaintext(
     pool: &PgPool,
     plaintext: &str,
-) -> Result<Option<db::ApiKeyRow>, AppError> {
+) -> Result<Option<db::BearerKeyRow>, AppError> {
     let key_hash = api_key::hash(plaintext);
-    db::find_by_hash(pool, &key_hash)
-        .await
-        .map_err(AppError::Internal)
+    Ok(db::find_by_hash(pool, &key_hash).await?)
 }
 
 pub async fn list_keys(
     pool: &PgPool,
     account_id: Uuid,
 ) -> Result<Vec<db::ApiKeyMetadata>, AppError> {
-    db::list_for_account(pool, account_id)
-        .await
-        .map_err(AppError::Internal)
+    Ok(db::list_for_account(pool, account_id).await?)
 }
 
 pub async fn delete_key(pool: &PgPool, id: Uuid, account_id: Uuid) -> Result<bool, AppError> {
-    let mut tx = pool
-        .begin()
-        .await
-        .map_err(|e| AppError::Internal(e.into()))?;
+    let mut tx = pool.begin().await?;
 
-    let key_name = match db::delete_for_account_in_tx(&mut tx, id, account_id)
-        .await
-        .map_err(AppError::Internal)?
-    {
+    let key_name = match db::delete_for_account(&mut *tx, id, account_id).await? {
         Some(name) => name,
         None => {
             // Nothing to audit — roll back the empty tx and return.
-            tx.rollback()
-                .await
-                .map_err(|e| AppError::Internal(e.into()))?;
+            tx.rollback().await?;
             return Ok(false);
         }
     };
@@ -123,12 +107,9 @@ pub async fn delete_key(pool: &PgPool, id: Uuid, account_id: Uuid) -> Result<boo
             key_name,
         },
     )
-    .await
-    .map_err(AppError::Internal)?;
+    .await?;
 
-    tx.commit()
-        .await
-        .map_err(|e| AppError::Internal(e.into()))?;
+    tx.commit().await?;
 
     Ok(true)
 }

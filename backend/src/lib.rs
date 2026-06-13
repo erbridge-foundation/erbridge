@@ -28,12 +28,17 @@ use tower_governor::{
     governor::GovernorConfigBuilder,
     key_extractor::{KeyExtractor, SmartIpKeyExtractor},
 };
-use tower_http::trace::TraceLayer;
+use tower_http::{timeout::TimeoutLayer, trace::TraceLayer};
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
 use app_state::AppState;
 use handlers::middleware::refresh_session_cookie;
+
+/// Upper bound on how long any single request may take before the server aborts
+/// it with a 408. No streaming endpoints exist yet; revisit (exclude SSE) when
+/// they land. Tunable here.
+const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Path the auth rate limiter redirects to when an `/auth/*` request is
 /// throttled. The api-contract exempts `/auth/*` from the JSON envelope, so a
@@ -225,6 +230,13 @@ pub fn build_router(state: AppState) -> Router {
         // SwaggerUi registers GET /api/openapi.json and GET /api/docs (+ /api/docs/*rest)
         .merge(SwaggerUi::new("/api/docs").url("/api/openapi.json", openapi::ApiDoc::openapi()))
         .layer(from_fn(refresh_session_cookie))
+        // Abort any request that runs longer than the timeout. Outermost of the
+        // app layers so the whole handler stack (including cookie refresh) is
+        // bounded; the limiter layers above remain unaffected.
+        .layer(TimeoutLayer::with_status_code(
+            axum::http::StatusCode::REQUEST_TIMEOUT,
+            REQUEST_TIMEOUT,
+        ))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }
@@ -330,4 +342,66 @@ pub fn registered_api_v1_routes() -> Vec<(String, String)> {
         ),
         ("/api/v1/entities/search".to_string(), "get".to_string()),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{body::Body, http::Request, routing::get};
+    use tower::ServiceExt;
+
+    /// The request-timeout layer aborts a handler that outlives `REQUEST_TIMEOUT`.
+    /// Exercised here with the same `TimeoutLayer` the real router uses but a
+    /// tiny duration and a deliberately slow route, so the test is fast.
+    #[tokio::test]
+    async fn timeout_layer_aborts_slow_request() {
+        let app = Router::new()
+            .route(
+                "/slow",
+                get(|| async {
+                    tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                    "never"
+                }),
+            )
+            .layer(TimeoutLayer::with_status_code(
+                axum::http::StatusCode::REQUEST_TIMEOUT,
+                std::time::Duration::from_millis(50),
+            ));
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/slow")
+                    .body(Body::empty())
+                    .expect("request builds"),
+            )
+            .await
+            .expect("service responds");
+
+        // TimeoutLayer surfaces an elapsed request as 408 Request Timeout.
+        assert_eq!(resp.status(), axum::http::StatusCode::REQUEST_TIMEOUT);
+    }
+
+    /// A fast handler under the same layer is unaffected.
+    #[tokio::test]
+    async fn timeout_layer_passes_fast_request() {
+        let app = Router::new().route("/fast", get(|| async { "ok" })).layer(
+            TimeoutLayer::with_status_code(
+                axum::http::StatusCode::REQUEST_TIMEOUT,
+                std::time::Duration::from_secs(30),
+            ),
+        );
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/fast")
+                    .body(Body::empty())
+                    .expect("request builds"),
+            )
+            .await
+            .expect("service responds");
+
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+    }
 }

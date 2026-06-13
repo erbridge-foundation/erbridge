@@ -132,6 +132,29 @@ pub enum AppError {
     Internal(#[from] anyhow::Error),
 }
 
+/// Any raw `sqlx::Error` that reaches a service/handler is an unexpected DB
+/// failure → 500. Typed conflicts (unique/check violations) are produced
+/// explicitly at the call sites that know which constraint means what, by
+/// matching on [`crate::db::DbError`] before it reaches this conversion.
+impl From<sqlx::Error> for AppError {
+    fn from(err: sqlx::Error) -> Self {
+        AppError::Internal(anyhow::Error::from(err))
+    }
+}
+
+/// A [`crate::db::DbError`] that isn't translated to a typed conflict at its
+/// call site defaults to 500. Services that care about a specific constraint
+/// match `DbError::UniqueViolation` / `CheckViolation` explicitly and map to
+/// `AppError::Conflict(...)` / `BadRequest` before falling through to this.
+impl From<crate::db::DbError> for AppError {
+    fn from(err: crate::db::DbError) -> Self {
+        match err {
+            crate::db::DbError::Other(e) => AppError::Internal(e),
+            other => AppError::Internal(anyhow::Error::new(other)),
+        }
+    }
+}
+
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let (status, code, message) = match &self {

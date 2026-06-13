@@ -12,6 +12,15 @@ pub mod sessions;
 #[cfg(test)]
 pub mod test_helpers;
 
+// No-new-twins rule: do not add byte-identical pool/tx pairs (`f` / `f_in_tx`).
+// A function that may run against either a pool or a transaction takes
+// `executor: impl PgExecutor<'_>` and the caller passes `&pool` or `&mut *tx`
+// (see `api_keys::insert_key` / `delete_for_account`). Keep a tx-only variant
+// (named `_in_tx`) ONLY when every caller is transactional AND the query is not
+// trivially poolable — e.g. `accounts::count_server_admins_tx`, whose
+// `FOR UPDATE` row lock is semantically distinct from the lock-free pool
+// `count_server_admins` read; those two are NOT twins and both are kept.
+
 use anyhow::{Context, Result};
 use sqlx::PgPool;
 use std::time::Duration;

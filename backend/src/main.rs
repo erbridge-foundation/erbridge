@@ -72,31 +72,67 @@ async fn main() -> anyhow::Result<()> {
     // Start the daily token-refresh sweep: detects character transfers
     // (owner-hash change) and expires stale / idle tokens. Cloned handles so the
     // task outlives `state`, which `build_router` consumes below.
-    backend::services::token_sweep::spawn(
-        state.db.clone(),
-        state.http_client.clone(),
-        state.jwks.clone(),
-        state.esi_metadata.token_endpoint.clone(),
-        state.config.esi_client_id.clone(),
-        state.config.esi_client_secret.clone(),
-        state.config.encryption_secret.clone(),
-    );
+    backend::services::token_sweep::spawn(backend::services::token_sweep::SweepContext {
+        pool: state.db.clone(),
+        http: state.http_client.clone(),
+        jwks: state.jwks.clone(),
+        token_endpoint: state.esi_metadata.token_endpoint.clone(),
+        client_id: state.config.esi_client_id.clone(),
+        client_secret: state.config.esi_client_secret.clone(),
+        encryption_secret: state.config.encryption_secret.clone(),
+    });
 
+    let bind_addr = state.config.bind_addr.clone();
     let app = backend::build_router(state);
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000")
+    let listener = tokio::net::TcpListener::bind(&bind_addr)
         .await
-        .context("failed to bind port 3000")?;
+        .with_context(|| format!("failed to bind {bind_addr}"))?;
 
-    tracing::info!("listening on port 3000");
+    tracing::info!("listening on {bind_addr}");
     // Serve with connection info so the per-IP rate limiters can fall back to
-    // the peer IP when the X-Forwarded-For header is absent.
+    // the peer IP when the X-Forwarded-For header is absent. Graceful shutdown
+    // on SIGTERM/ctrl-c lets in-flight requests drain on deploy restarts.
     axum::serve(
         listener,
         app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
     )
+    .with_graceful_shutdown(shutdown_signal())
     .await
     .context("server error")?;
 
     Ok(())
+}
+
+/// Resolves when the process receives SIGTERM (orchestrator stop) or ctrl-c
+/// (SIGINT, interactive). Either triggers a graceful drain of in-flight requests.
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        // Installing the ctrl-c handler fails only on a fundamentally broken OS
+        // signal setup at startup; there is no sensible recovery, and a panic
+        // here aborts boot rather than running without a shutdown signal.
+        #[allow(clippy::expect_used)]
+        tokio::signal::ctrl_c()
+            .await
+            .expect("failed to install ctrl-c handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        // Same rationale as ctrl-c: a SIGTERM handler that cannot be installed
+        // is an unrecoverable startup fault, so panicking at boot is correct.
+        #[allow(clippy::expect_used)]
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to install SIGTERM handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => tracing::info!("received ctrl-c, shutting down"),
+        _ = terminate => tracing::info!("received SIGTERM, shutting down"),
+    }
 }

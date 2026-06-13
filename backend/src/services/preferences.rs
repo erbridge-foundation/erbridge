@@ -20,8 +20,7 @@ use crate::{
 /// future feature) — they are ignored here.
 pub async fn get_preferences(pool: &PgPool, account_id: Uuid) -> Result<PreferencesDto, AppError> {
     let bag = db::get_preferences(pool, account_id)
-        .await
-        .map_err(AppError::Internal)?
+        .await?
         .ok_or(AppError::NotFound)?;
 
     Ok(dto_from_bag(&bag))
@@ -45,8 +44,7 @@ pub async fn update_preferences(
     let patch_json = patch_to_json(&patch);
 
     let merged = db::merge_preferences(pool, account_id, &patch_json)
-        .await
-        .map_err(AppError::Internal)?
+        .await?
         .ok_or(AppError::NotFound)?;
 
     Ok(dto_from_bag(&merged))

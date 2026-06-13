@@ -243,11 +243,14 @@ pub async fn count_for_account_in_tx(
     Ok(row.count.unwrap_or(0))
 }
 
+/// Promotes `character_id` to the account's main, clearing any prior main first.
+/// Returns the updated character via `RETURNING` so the caller needs no second
+/// fetch; `None` if no row matched `(id, account_id)` (unknown or foreign).
 pub async fn set_main(
     tx: &mut Transaction<'_, Postgres>,
     account_id: Uuid,
     character_id: Uuid,
-) -> Result<()> {
+) -> Result<Option<Character>> {
     sqlx::query!(
         "UPDATE eve_character SET is_main = FALSE WHERE account_id = $1",
         account_id
@@ -256,16 +259,43 @@ pub async fn set_main(
     .await
     .context("failed to clear existing main")?;
 
-    sqlx::query!(
-        "UPDATE eve_character SET is_main = TRUE WHERE id = $1 AND account_id = $2",
+    let row = sqlx::query!(
+        r#"
+        UPDATE eve_character SET is_main = TRUE
+        WHERE id = $1 AND account_id = $2
+        RETURNING id, account_id, eve_character_id, name,
+                  corporation_id, corporation_name, alliance_id, alliance_name,
+                  is_main, is_online, esi_client_id, encrypted_refresh_token,
+                  access_token_expires_at, scopes, owner_hash, token_status,
+                  created_at, updated_at
+        "#,
         character_id,
         account_id,
     )
-    .execute(&mut **tx)
+    .fetch_optional(&mut **tx)
     .await
     .context("failed to set new main")?;
 
-    Ok(())
+    Ok(row.map(|r| Character {
+        id: r.id,
+        account_id: r.account_id,
+        eve_character_id: r.eve_character_id,
+        name: r.name,
+        corporation_id: r.corporation_id,
+        corporation_name: r.corporation_name,
+        alliance_id: r.alliance_id,
+        alliance_name: r.alliance_name,
+        is_main: r.is_main,
+        is_online: r.is_online,
+        esi_client_id: r.esi_client_id,
+        encrypted_refresh_token: r.encrypted_refresh_token,
+        access_token_expires_at: r.access_token_expires_at,
+        scopes: r.scopes,
+        owner_hash: r.owner_hash,
+        token_status: r.token_status,
+        created_at: r.created_at,
+        updated_at: r.updated_at,
+    }))
 }
 
 pub async fn clear_tokens_for_account(

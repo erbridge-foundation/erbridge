@@ -16,7 +16,7 @@ use tracing::{error, info, warn};
 
 use crate::audit::{self, AuditEvent};
 use crate::crypto;
-use crate::db::{accounts, characters};
+use crate::db::{accounts, characters, sessions};
 use crate::esi::token;
 
 /// How long an account may go without logging in before the waterfall expires
@@ -54,32 +54,27 @@ pub(crate) fn decide(
     }
 }
 
+/// The sweep's dependencies, bundled so `spawn`/`run_once` take one argument
+/// instead of seven loose ones. Owns its handles (the spawned task outlives the
+/// `AppState` they were cloned from).
+pub struct SweepContext {
+    pub pool: PgPool,
+    pub http: reqwest_middleware::ClientWithMiddleware,
+    pub jwks: std::sync::Arc<crate::esi::jwks::JwksCache>,
+    pub token_endpoint: String,
+    pub client_id: String,
+    pub client_secret: String,
+    pub encryption_secret: String,
+}
+
 /// Spawns the sweep on a ~24h interval. The first tick fires immediately at
 /// startup. A single run's failure is logged and never kills the loop.
-pub fn spawn(
-    pool: PgPool,
-    http: reqwest_middleware::ClientWithMiddleware,
-    jwks: std::sync::Arc<crate::esi::jwks::JwksCache>,
-    token_endpoint: String,
-    client_id: String,
-    client_secret: String,
-    encryption_secret: String,
-) {
+pub fn spawn(ctx: SweepContext) {
     tokio::spawn(async move {
         let mut ticker = interval(Duration::from_secs(24 * 60 * 60));
         loop {
             ticker.tick().await;
-            if let Err(e) = run_once(
-                &pool,
-                &http,
-                &jwks,
-                &token_endpoint,
-                &client_id,
-                &client_secret,
-                &encryption_secret,
-            )
-            .await
-            {
+            if let Err(e) = run_once(&ctx).await {
                 error!("token-refresh sweep run failed: {e:#}");
             }
         }
@@ -90,15 +85,17 @@ pub fn spawn(
 /// idle waterfall. Returns an error only for failures that abort the whole run
 /// (e.g. the initial listing query); per-character refresh failures are normal
 /// and handled inline.
-pub async fn run_once(
-    pool: &PgPool,
-    http: &reqwest_middleware::ClientWithMiddleware,
-    jwks: &crate::esi::jwks::JwksCache,
-    token_endpoint: &str,
-    client_id: &str,
-    client_secret: &str,
-    encryption_secret: &str,
-) -> anyhow::Result<()> {
+pub async fn run_once(ctx: &SweepContext) -> anyhow::Result<()> {
+    let SweepContext {
+        pool,
+        http,
+        jwks,
+        token_endpoint,
+        client_id,
+        client_secret,
+        encryption_secret,
+    } = ctx;
+
     let encryption_key = crypto::token_encryption_key(encryption_secret)?;
 
     let eligible = characters::list_refreshable(pool).await?;
@@ -207,9 +204,20 @@ pub async fn run_once(
         }
     }
 
+    // Reap expired session rows. They are already invisible to auth (every read
+    // filters `expires_at > now()`); this is hygiene so the table does not grow
+    // without bound. A reap failure must not abort the sweep — it is logged.
+    let sessions_reaped = match sessions::delete_expired(pool).await {
+        Ok(n) => n,
+        Err(e) => {
+            warn!("failed to reap expired sessions: {e:#}");
+            0
+        }
+    };
+
     info!(
         total,
-        kept, mismatched, expired, idle_expired, "token-refresh sweep complete"
+        kept, mismatched, expired, idle_expired, sessions_reaped, "token-refresh sweep complete"
     );
     Ok(())
 }
@@ -268,6 +276,21 @@ mod run_once_tests {
             "http://unused",
             crate::esi::jwks::decode_keys_for_test(jwks_json(&[kp]).as_bytes()),
         )
+    }
+
+    /// Builds a `SweepContext` for a test: real pool, a JWKS cache verifying
+    /// `kp`, and the mock token endpoint. The all-zero `SECRET` matches the seed
+    /// encryption key.
+    fn ctx(pool: &PgPool, kp: &TestKeypair, endpoint: &str) -> SweepContext {
+        SweepContext {
+            pool: pool.clone(),
+            http: http(),
+            jwks: std::sync::Arc::new(jwks_cache(kp)),
+            token_endpoint: endpoint.to_string(),
+            client_id: "id".to_string(),
+            client_secret: "secret".to_string(),
+            encryption_secret: SECRET.to_string(),
+        }
     }
 
     /// An RS256-signed access token (character 1) carrying the given owner hash,
@@ -338,17 +361,7 @@ mod run_once_tests {
         let kp = test_keypair("kid-1");
         let (_s, endpoint) = mock_refresh_returning(&kp, "hash-x").await;
 
-        run_once(
-            &pool,
-            &http(),
-            &jwks_cache(&kp),
-            &endpoint,
-            "id",
-            "secret",
-            SECRET,
-        )
-        .await
-        .unwrap();
+        run_once(&ctx(&pool, &kp, &endpoint)).await.unwrap();
 
         assert_eq!(status_of(&pool, 1).await, "valid");
     }
@@ -359,17 +372,7 @@ mod run_once_tests {
         let kp = test_keypair("kid-1");
         let (_s, endpoint) = mock_refresh_returning(&kp, "hash-new").await;
 
-        run_once(
-            &pool,
-            &http(),
-            &jwks_cache(&kp),
-            &endpoint,
-            "id",
-            "secret",
-            SECRET,
-        )
-        .await
-        .unwrap();
+        run_once(&ctx(&pool, &kp, &endpoint)).await.unwrap();
 
         assert_eq!(status_of(&pool, 1).await, "owner_mismatch");
         // Credentials wiped, new hash recorded.
@@ -405,17 +408,9 @@ mod run_once_tests {
             .await;
         let endpoint = format!("{}/oauth/token", server.uri());
 
-        run_once(
-            &pool,
-            &http(),
-            &jwks_cache(&test_keypair("kid-1")),
-            &endpoint,
-            "id",
-            "secret",
-            SECRET,
-        )
-        .await
-        .unwrap();
+        run_once(&ctx(&pool, &test_keypair("kid-1"), &endpoint))
+            .await
+            .unwrap();
 
         assert_eq!(status_of(&pool, 1).await, "token_expired");
     }
@@ -432,19 +427,41 @@ mod run_once_tests {
         // Endpoint serves a token signed by `signer`, carrying the matching hash.
         let (_s, endpoint) = mock_refresh_returning(&signer, "hash-x").await;
 
-        run_once(
-            &pool,
-            &http(),
-            &jwks_cache(&cache_kp),
-            &endpoint,
-            "id",
-            "secret",
-            SECRET,
+        run_once(&ctx(&pool, &cache_kp, &endpoint)).await.unwrap();
+
+        assert_eq!(status_of(&pool, 1).await, "token_expired");
+    }
+
+    #[sqlx::test]
+    async fn sweep_reaps_expired_sessions(pool: PgPool) {
+        // Seed a character so the sweep has its usual work, plus an account with
+        // one expired and one live session. The expired row must be gone after a
+        // pass; the live one must survive.
+        let account_id = seed(&pool, 1, "hash-x").await;
+        sessions::insert(&pool, "live", account_id).await.unwrap();
+        sessions::insert(&pool, "stale", account_id).await.unwrap();
+        sqlx::query!(
+            "UPDATE session SET expires_at = now() - interval '1 second' WHERE session_id = $1",
+            "stale",
         )
+        .execute(&pool)
         .await
         .unwrap();
 
-        assert_eq!(status_of(&pool, 1).await, "token_expired");
+        let kp = test_keypair("kid-1");
+        let (_s, endpoint) = mock_refresh_returning(&kp, "hash-x").await;
+        run_once(&ctx(&pool, &kp, &endpoint)).await.unwrap();
+
+        let ids = sessions::list_ids_for_account(&pool, account_id)
+            .await
+            .unwrap();
+        assert_eq!(ids, vec!["live".to_string()]);
+        // The expired row is physically gone, not merely filtered.
+        let remaining = sqlx::query!("SELECT COUNT(*) AS \"c!\" FROM session")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(remaining.c, 1);
     }
 
     #[sqlx::test]
@@ -462,17 +479,7 @@ mod run_once_tests {
         let kp = test_keypair("kid-1");
         let (_s, endpoint) = mock_refresh_returning(&kp, "hash-x").await;
 
-        run_once(
-            &pool,
-            &http(),
-            &jwks_cache(&kp),
-            &endpoint,
-            "id",
-            "secret",
-            SECRET,
-        )
-        .await
-        .unwrap();
+        run_once(&ctx(&pool, &kp, &endpoint)).await.unwrap();
 
         // ...but the idle waterfall expires it in the same run.
         assert_eq!(status_of(&pool, 1).await, "token_expired");

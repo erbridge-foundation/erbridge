@@ -41,6 +41,7 @@ fn test_config() -> Arc<Config> {
         esi_client_id: "test_client_id".into(),
         esi_client_secret: "test_client_secret".into(),
         database_url: String::new(),
+        bind_addr: "0.0.0.0:3000".to_string(),
         rate_limit: Default::default(),
     })
 }
@@ -106,7 +107,7 @@ async fn session_survives_backend_restart(pool: PgPool) {
     let session_id = Uuid::new_v4().to_string();
     state1
         .session_store
-        .add(&session_id, account_id, None, false)
+        .add(&session_id, account_id)
         .await
         .unwrap();
     let cookie = sign_cookie(&session_id);
@@ -148,7 +149,7 @@ async fn expired_session_is_rejected(pool: PgPool) {
     let session_id = Uuid::new_v4().to_string();
     state
         .session_store
-        .add(&session_id, account_id, None, false)
+        .add(&session_id, account_id)
         .await
         .unwrap();
 
@@ -192,7 +193,7 @@ async fn cookie_is_reissued_on_success(pool: PgPool) {
     let session_id = Uuid::new_v4().to_string();
     state
         .session_store
-        .add(&session_id, account_id, None, false)
+        .add(&session_id, account_id)
         .await
         .unwrap();
     let cookie = sign_cookie(&session_id);
@@ -233,7 +234,7 @@ async fn api_key_request_does_not_touch_session(pool: PgPool) {
     let session_id = Uuid::new_v4().to_string();
     state
         .session_store
-        .add(&session_id, account_id, None, false)
+        .add(&session_id, account_id)
         .await
         .unwrap();
 
