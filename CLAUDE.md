@@ -32,3 +32,14 @@ Run these **from the `frontend/` directory**. This repo has no pnpm workspace ro
 All three must pass before a change is marked complete and before any commit lands. `pnpm test` alone is **not** sufficient — it runs only Vitest. The e2e suite catches regressions in destructive-action wiring, route changes, and form-action flows that unit tests cannot see.
 
 When generating a change's `tasks.md`, the verification section MUST list these three commands explicitly, not "run the test suite" or similar shorthand.
+
+## Architecture doc upkeep
+
+`openspec/AGENTS.md` is the project's architecture/orientation map (module layout, layer relationships, router wiring, auth model, route/component trees). It exists so exploration starts from a map instead of re-deriving structure with `git grep` each time — keep it accurate.
+
+A change MUST update `openspec/AGENTS.md` **in the same change** when it does any of:
+
+- adds, removes, renames, or relocates a module / route / service / db / dto / component (i.e. one of the trees in that doc goes stale);
+- changes a structural fact stated there (layering, auth model, router wiring, ESI/crypto notes, the i18n/locale or verification commands).
+
+When generating a change's `tasks.md`, if the change does any of the above, the tasks MUST include an explicit step to update `openspec/AGENTS.md` (alongside the spec deltas, before the change is marked complete). Pure-behaviour changes that move no structural fact don't need to touch it. Keep edits a *map*, not a changelog — state where things are now, don't accrete history.
