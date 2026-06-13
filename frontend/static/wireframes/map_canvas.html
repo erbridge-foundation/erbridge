@@ -1,0 +1,2920 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta http-equiv="content-type" content="text/html; charset=UTF-8">
+		<meta charset="UTF-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1.0">
+		<title>E-R Bridge · Map Canvas Wireframe (US-008.5)</title>
+		<style>
+			@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap");
+
+			/* ── Design tokens ─────────────────────────────────────────── */
+			:root {
+				--space-950: #05080f;
+				--space-900: #080d1a;
+				--space-800: #0d1526;
+				--space-700: #152238;
+				--space-600: #1e3352;
+
+				--slate-100: #f1f5f9;
+				--slate-200: #e2e8f0;
+				--slate-300: #cbd5e1;
+				--slate-400: #94a3b8;
+				--slate-500: #64748b;
+				--slate-600: #475569;
+				--slate-700: #334155;
+
+				--emerald: #10b981;
+				--amber: #f59e0b;
+				--red: #ef4444;
+				--sky: #38bdf8;
+				--violet: #a78bfa;
+
+				/* class colours */
+				--c1: #60a5fa;
+				--c2: #34d399;
+				--c3: #a78bfa;
+				--c4: #f472b6;
+				--c5: #fb923c;
+				--c6: #f87171;
+				--hs: #4ade80;
+				--ls: #facc15;
+				--ns: #fca5a5;
+
+				/* mass colours */
+				--mass-fresh: #22c55e;
+				--mass-half: #f59e0b;
+				--mass-critical: #ef4444;
+			}
+
+			* {
+				box-sizing: border-box;
+				margin: 0;
+				padding: 0;
+			}
+
+			html,
+			body {
+				height: 100%;
+				overflow: hidden;
+				background: var(--space-950);
+				color: var(--slate-100);
+				font-family: "JetBrains Mono", ui-monospace, monospace;
+				font-size: 13px;
+			}
+
+			/* ── Layout shell ──────────────────────────────────────────── */
+			.shell {
+				display: flex;
+				flex-direction: column;
+				height: 100%;
+			}
+
+			/* ── Global nav header ─────────────────────────────────────── */
+			.global-header {
+				flex: none;
+				display: flex;
+				align-items: center;
+				gap: 12px;
+				height: 48px;
+				padding: 0 16px;
+				background: var(--space-900);
+				border-bottom: 1px solid var(--space-700);
+				z-index: 30;
+			}
+
+			.brand {
+				display: flex;
+				align-items: center;
+				gap: 8px;
+				padding-right: 16px;
+				border-right: 1px solid var(--space-700);
+				text-decoration: none;
+				color: var(--slate-100);
+			}
+			.brand svg {
+				color: var(--sky);
+			}
+			.brand-name {
+				font-size: 12px;
+				font-weight: 600;
+				letter-spacing: 0.2em;
+			}
+
+			.header-nav {
+				display: flex;
+				align-items: center;
+				gap: 4px;
+			}
+			.header-nav a {
+				height: 28px;
+				padding: 0 12px;
+				display: flex;
+				align-items: center;
+				font-size: 11px;
+				color: var(--slate-400);
+				text-decoration: none;
+				border-radius: 4px;
+				transition:
+					color 0.15s,
+					background 0.15s;
+			}
+			.header-nav a:hover {
+				color: var(--slate-200);
+				background: var(--space-700);
+			}
+			.header-nav a.active {
+				color: var(--slate-200);
+				background: var(--space-700);
+			}
+
+			.header-spacer {
+				flex: 1;
+			}
+
+			.status-dot {
+				width: 8px;
+				height: 8px;
+				border-radius: 50%;
+				background: var(--emerald);
+				animation: pulse 2s ease-in-out infinite;
+			}
+			@keyframes pulse {
+				0%,
+				100% {
+					opacity: 1;
+				}
+				50% {
+					opacity: 0.4;
+				}
+			}
+
+			.status-label {
+				font-size: 11px;
+				color: var(--slate-400);
+			}
+
+			.find-input {
+				width: 180px;
+				height: 28px;
+				background: var(--space-800);
+				border: 1px solid var(--space-600);
+				border-radius: 4px;
+				padding: 0 28px 0 10px;
+				font-family: inherit;
+				font-size: 11px;
+				color: var(--slate-300);
+				outline: none;
+			}
+			.find-input::placeholder {
+				color: var(--slate-600);
+			}
+			.find-input:focus {
+				border-color: #0369a1;
+				box-shadow: 0 0 0 1px #0369a155;
+			}
+
+			.find-wrap {
+				position: relative;
+			}
+			.find-wrap svg {
+				position: absolute;
+				right: 8px;
+				top: 50%;
+				transform: translateY(-50%);
+				width: 13px;
+				height: 13px;
+				color: var(--slate-600);
+				pointer-events: none;
+			}
+
+			/* ── Tab bar ───────────────────────────────────────────────── */
+			/*
+      DESIGN NOTE — Tab bar
+      Each tab has:
+        • A user-editable label (map name or custom view name)
+        • A root system field — accepts a system name or "*"
+        • A close button (hidden on the last tab)
+      The tab bar scrolls horizontally if tabs overflow.
+      A "+" button appends a new tab defaulting root to "*".
+    */
+			.tab-bar {
+				flex: none;
+				display: flex;
+				align-items: stretch;
+				height: 38px;
+				background: var(--space-900);
+				border-bottom: 1px solid var(--space-700);
+				overflow-x: auto;
+				overflow-y: hidden;
+				z-index: 20;
+				scrollbar-width: none;
+			}
+			.tab-bar::-webkit-scrollbar {
+				display: none;
+			}
+
+			.tab {
+				display: flex;
+				align-items: center;
+				gap: 8px;
+				padding: 0 10px 0 12px;
+				min-width: 180px;
+				max-width: 260px;
+				border-right: 1px solid var(--space-700);
+				cursor: pointer;
+				user-select: none;
+				position: relative;
+				flex: none;
+				/* inactive */
+				background: var(--space-900);
+				color: var(--slate-500);
+				transition:
+					background 0.1s,
+					color 0.1s;
+			}
+			.tab:hover {
+				background: var(--space-800);
+				color: var(--slate-300);
+			}
+
+			.tab.active {
+				background: var(--space-800);
+				color: var(--slate-100);
+				/* bottom indicator line */
+			}
+			.tab.active::after {
+				content: "";
+				position: absolute;
+				bottom: 0;
+				left: 0;
+				right: 0;
+				height: 2px;
+				background: var(--sky);
+			}
+
+			.tab-label {
+				font-size: 11px;
+				font-weight: 500;
+				white-space: nowrap;
+				overflow: hidden;
+				text-overflow: ellipsis;
+				flex: 1;
+			}
+
+			/*
+      DESIGN NOTE — Root system field
+      The root system pill inside the tab shows the current filter.
+      Clicking it opens an inline text input to change it.
+      "*" means "show everything".
+      A named system (e.g. "J123456") means show only systems
+      reachable from that root via BFS over the connections graph.
+    */
+			.tab-root {
+				display: flex;
+				align-items: center;
+				gap: 4px;
+				padding: 2px 6px;
+				background: var(--space-700);
+				border: 1px solid var(--space-600);
+				border-radius: 3px;
+				font-size: 10px;
+				white-space: nowrap;
+				flex: none;
+			}
+			.tab-root.wildcard {
+				color: var(--slate-400);
+			}
+			.tab-root.named {
+				color: var(--violet);
+			}
+			.tab-root-icon {
+				opacity: 0.6;
+			}
+
+			.tab-close {
+				width: 16px;
+				height: 16px;
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				border-radius: 3px;
+				color: var(--slate-600);
+				background: none;
+				border: none;
+				cursor: pointer;
+				font-size: 14px;
+				line-height: 1;
+				flex: none;
+				transition:
+					color 0.1s,
+					background 0.1s;
+			}
+			.tab-close:hover {
+				color: var(--red);
+				background: rgba(239, 68, 68, 0.12);
+			}
+
+			.tab-add {
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				width: 38px;
+				flex: none;
+				background: none;
+				border: none;
+				border-right: 1px solid var(--space-700);
+				color: var(--slate-600);
+				cursor: pointer;
+				font-size: 18px;
+				transition:
+					color 0.15s,
+					background 0.15s;
+			}
+			.tab-add:hover {
+				color: var(--slate-300);
+				background: var(--space-800);
+			}
+
+			/* ── Main content area ─────────────────────────────────────── */
+			.content {
+				flex: 1;
+				display: flex;
+				overflow: hidden;
+				min-height: 0;
+			}
+
+			/* ── Sidebar ───────────────────────────────────────────────── */
+			/*
+      DESIGN NOTE — Sidebar is collapsible.
+      The sidebar-outer wrapper clips the scroll but allows the toggle
+      button to overflow its right edge without being clipped.
+      Collapsed: sidebar shrinks to a 40px icon rail; each section
+      shows only a small icon so the user can identify and expand it.
+      Collapsed state persists to localStorage keyed by map slug.
+    */
+			.sidebar-outer {
+				flex: none;
+				position: relative;
+				display: flex;
+				transition: width 0.2s ease;
+				width: 288px;
+			}
+			.sidebar-outer.collapsed {
+				width: 40px;
+			}
+
+			.sidebar {
+				flex: 1;
+				display: flex;
+				flex-direction: column;
+				background: var(--space-900);
+				border-right: 1px solid var(--space-700);
+				overflow-y: auto;
+				overflow-x: hidden;
+				z-index: 10;
+				scrollbar-width: thin;
+				scrollbar-color: var(--space-600) transparent;
+				min-width: 0;
+			}
+
+			/* collapsed state — hide text, keep icon rail */
+			.sidebar-outer.collapsed .section-title,
+			.sidebar-outer.collapsed .section-count,
+			.sidebar-outer.collapsed .section-action,
+			.sidebar-outer.collapsed .chevron,
+			.sidebar-outer.collapsed .sys-intel,
+			.sidebar-outer.collapsed .sig-table,
+			.sidebar-outer.collapsed .pilot-row-text,
+			.sidebar-outer.collapsed .empty-note,
+			.sidebar-outer.collapsed .section-body {
+				display: none;
+			}
+			.sidebar-outer.collapsed .sidebar-section-header {
+				justify-content: center;
+				padding: 10px 0;
+			}
+			/* section icons visible in collapsed rail */
+			.section-icon {
+				display: none;
+				flex: none;
+			}
+			.sidebar-outer.collapsed .section-icon {
+				display: flex;
+			}
+
+			.sidebar-toggle {
+				position: absolute;
+				top: 50%;
+				right: -12px;
+				transform: translateY(-50%);
+				width: 24px;
+				height: 24px;
+				background: var(--space-800);
+				border: 1px solid var(--space-600);
+				border-radius: 50%;
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				cursor: pointer;
+				color: var(--slate-500);
+				z-index: 20;
+				transition:
+					color 0.15s,
+					background 0.15s;
+			}
+			.sidebar-toggle:hover {
+				color: var(--slate-200);
+				background: var(--space-700);
+			}
+			.sidebar-toggle-icon {
+				transition: transform 0.2s ease;
+			}
+			.sidebar-outer.collapsed .sidebar-toggle-icon {
+				transform: rotate(180deg);
+			}
+
+			.sidebar-section {
+				border-bottom: 1px solid var(--space-700);
+			}
+
+			.sidebar-section-header {
+				display: flex;
+				align-items: center;
+				gap: 8px;
+				padding: 8px 12px;
+				font-size: 10px;
+				font-weight: 500;
+				color: var(--slate-400);
+				text-transform: uppercase;
+				letter-spacing: 0.08em;
+				cursor: pointer;
+				user-select: none;
+				background: none;
+				border: none;
+				width: 100%;
+				text-align: left;
+				transition: color 0.1s;
+			}
+			.sidebar-section-header:hover {
+				color: var(--slate-300);
+			}
+
+			.chevron {
+				width: 10px;
+				height: 10px;
+				flex: none;
+				transition: transform 0.18s ease;
+			}
+			.chevron.open {
+				transform: rotate(90deg);
+			}
+
+			.section-title {
+				flex: 1;
+			}
+			.section-count {
+				color: var(--slate-600);
+			}
+
+			.section-action {
+				width: 20px;
+				height: 20px;
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				border-radius: 3px;
+				background: none;
+				border: none;
+				color: var(--slate-500);
+				cursor: pointer;
+				transition:
+					color 0.1s,
+					background 0.1s;
+			}
+			.section-action:hover {
+				color: var(--emerald);
+				background: var(--space-700);
+			}
+
+			/* System intel */
+			.sys-intel {
+				padding: 4px 12px 12px;
+			}
+			.sys-intel-name-row {
+				display: flex;
+				align-items: center;
+				justify-content: space-between;
+				margin-bottom: 8px;
+			}
+			.sys-intel-name {
+				font-size: 14px;
+				font-weight: 600;
+				color: var(--slate-100);
+			}
+			.class-pill {
+				padding: 2px 8px;
+				border-radius: 4px;
+				font-size: 11px;
+				font-weight: 700;
+			}
+			.sys-stats {
+				display: grid;
+				grid-template-columns: 1fr 1fr;
+				gap: 2px 16px;
+				font-size: 11px;
+			}
+			.sys-stat-label {
+				color: var(--slate-500);
+			}
+			.sys-stat-value {
+				color: var(--slate-300);
+			}
+			.sys-effect {
+				display: flex;
+				align-items: center;
+				gap: 6px;
+				font-size: 11px;
+				color: #fbbf24cc;
+				margin-bottom: 6px;
+			}
+			.sys-statics {
+				display: flex;
+				gap: 4px;
+				flex-wrap: wrap;
+				margin-top: 4px;
+			}
+			.static-badge {
+				font-size: 10px;
+				padding: 1px 5px;
+				background: var(--space-800);
+				border: 1px solid var(--space-600);
+				border-radius: 3px;
+				color: var(--slate-400);
+			}
+
+			/* Sig table */
+			.sig-table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 11px;
+			}
+			.sig-table thead tr {
+				border-bottom: 1px solid var(--space-700);
+			}
+			.sig-table th {
+				padding: 4px 8px;
+				text-align: left;
+				font-weight: 500;
+				color: var(--slate-600);
+				white-space: nowrap;
+			}
+			.sig-table td {
+				padding: 5px 8px;
+				border-bottom: 1px solid rgba(21, 34, 56, 0.5);
+			}
+			.sig-table tr:hover td {
+				background: rgba(13, 21, 38, 0.6);
+			}
+			.sig-group {
+				font-weight: 600;
+			}
+			.sig-id {
+				font-family: inherit;
+				color: var(--slate-400);
+			}
+			.sig-info {
+				color: var(--slate-400);
+				max-width: 80px;
+				overflow: hidden;
+				text-overflow: ellipsis;
+				white-space: nowrap;
+			}
+			.sig-when {
+				color: var(--slate-600);
+				text-align: right;
+				white-space: nowrap;
+			}
+			.empty-note {
+				padding: 6px 12px 10px;
+				font-size: 11px;
+				color: var(--slate-600);
+				font-style: italic;
+			}
+
+			/* Pilot rows */
+			.pilot-row {
+				display: flex;
+				align-items: center;
+				gap: 8px;
+				padding: 4px 12px;
+				font-size: 11px;
+			}
+			.pilot-online {
+				width: 6px;
+				height: 6px;
+				border-radius: 50%;
+				background: var(--emerald);
+				flex: none;
+			}
+			.pilot-offline {
+				width: 6px;
+				height: 6px;
+				border-radius: 50%;
+				background: var(--slate-600);
+				flex: none;
+			}
+			.pilot-name {
+				color: var(--slate-300);
+				flex: 1;
+			}
+			.pilot-ship {
+				color: var(--slate-500);
+			}
+
+			/* ── Canvas area ───────────────────────────────────────────── */
+			.canvas-wrap {
+				flex: 1;
+				position: relative;
+				overflow: hidden;
+				background: var(--space-950);
+				background-image: radial-gradient(
+					circle,
+					var(--space-600) 1px,
+					transparent 1px
+				);
+				background-size: 32px 32px;
+			}
+
+			/* ── SVG canvas mock ───────────────────────────────────────── */
+			.canvas-svg {
+				width: 100%;
+				height: 100%;
+			}
+
+			/* ── System nodes ──────────────────────────────────────────── */
+			.sys-node-wrap {
+				/* positioned via foreignObject / absolute in SVG */
+			}
+
+			.sys-node {
+				width: 176px;
+				background: var(--space-800);
+				border: 1px solid transparent;
+				border-radius: 6px;
+				overflow: hidden;
+				cursor: pointer;
+				user-select: none;
+				box-shadow: 0 2px 12px rgba(0, 0, 0, 0.5);
+				transition: filter 0.15s;
+			}
+			.sys-node:hover {
+				filter: brightness(1.15);
+			}
+			.sys-node.selected {
+				filter: brightness(1.3);
+			}
+			.sys-node.is-root {
+				box-shadow:
+					0 0 0 1px var(--emerald),
+					0 2px 12px rgba(0, 0, 0, 0.5);
+			}
+
+			.node-accent {
+				height: 3px;
+				width: 100%;
+			}
+			.node-body {
+				padding: 7px 10px;
+			}
+			.node-header {
+				display: flex;
+				align-items: center;
+				justify-content: space-between;
+				gap: 6px;
+				margin-bottom: 3px;
+			}
+			.node-class-badge {
+				font-size: 10px;
+				font-weight: 700;
+				padding: 1px 5px;
+				border-radius: 3px;
+				flex: none;
+			}
+			.node-name {
+				font-size: 12px;
+				font-weight: 600;
+				color: var(--slate-100);
+				flex: 1;
+				text-align: right;
+				white-space: nowrap;
+				overflow: hidden;
+				text-overflow: ellipsis;
+			}
+			.node-effect {
+				display: flex;
+				align-items: center;
+				gap: 4px;
+				font-size: 10px;
+				color: #fbbf24cc;
+				margin-bottom: 3px;
+			}
+			.node-statics {
+				display: flex;
+				gap: 3px;
+				flex-wrap: wrap;
+			}
+			.node-static-badge {
+				font-size: 10px;
+				padding: 1px 4px;
+				background: rgba(5, 8, 15, 0.8);
+				border: 1px solid var(--space-600);
+				border-radius: 2px;
+				color: var(--slate-400);
+			}
+			.node-pilots {
+				display: flex;
+				align-items: center;
+				gap: 4px;
+				margin-top: 4px;
+				font-size: 10px;
+				color: var(--emerald);
+			}
+
+			.root-indicator {
+				position: absolute;
+				top: -4px;
+				right: -4px;
+				width: 10px;
+				height: 10px;
+				border-radius: 50%;
+				background: var(--emerald);
+				border: 2px solid #6ee7b7;
+			}
+
+			/* ── Edge label mock ───────────────────────────────────────── */
+			.edge-label {
+				background: rgba(8, 13, 26, 0.85);
+				border: 1px solid var(--space-600);
+				border-radius: 3px;
+				padding: 1px 5px;
+				font-size: 10px;
+				pointer-events: none;
+				white-space: nowrap;
+			}
+			.edge-label.eol {
+				animation: eol-pulse 2s ease-in-out infinite;
+			}
+			@keyframes eol-pulse {
+				0%,
+				100% {
+					opacity: 0.85;
+				}
+				50% {
+					opacity: 0.3;
+				}
+			}
+
+			.sig-endpoint-label {
+				background: rgba(8, 13, 26, 0.8);
+				border: 1px solid var(--space-600);
+				border-radius: 3px;
+				padding: 1px 4px;
+				font-size: 9px;
+				font-weight: 700;
+				color: var(--slate-300);
+				pointer-events: none;
+			}
+
+			/* ── Canvas controls overlay ───────────────────────────────── */
+			/*
+      DESIGN NOTE — Auto-layout
+      The layout button opens a small popover with layout options
+      (left→right, top→bottom, radial). Selecting one applies it as a
+      one-shot action: svelte-flow computes positions, which immediately
+      become the new user-positioned state saved to localStorage.
+      There is no persistent layout mode — the map is always user-positioned.
+    */
+			/* wrapper keeps controls + slideout together and prevents overflow clipping */
+			.controls-group {
+				position: absolute;
+				bottom: 16px;
+				left: 16px;
+				display: flex;
+				flex-direction: row;
+				align-items: flex-end;
+				gap: 6px;
+			}
+			.canvas-controls {
+				display: flex;
+				flex-direction: column;
+				gap: 1px;
+				background: rgba(8, 13, 26, 0.9);
+				border: 1px solid var(--space-700);
+				border-radius: 6px;
+			}
+			.ctrl-btn {
+				width: 28px;
+				height: 28px;
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				background: none;
+				border: none;
+				color: var(--slate-400);
+				cursor: pointer;
+				font-size: 16px;
+				border-bottom: 1px solid var(--space-700);
+				transition:
+					color 0.1s,
+					background 0.1s;
+				border-radius: 0;
+				position: relative;
+			}
+			.ctrl-btn:first-child {
+				border-radius: 6px 6px 0 0;
+			}
+			.ctrl-btn:last-child {
+				border-bottom: none;
+				border-radius: 0 0 6px 6px;
+			}
+			.ctrl-btn:only-child {
+				border-radius: 6px;
+			}
+			.ctrl-btn:hover {
+				color: var(--slate-100);
+				background: var(--space-700);
+			}
+
+			/* auto-layout slide-out — sits in .controls-group flex row to the right of .canvas-controls */
+			.layout-slideout {
+				display: flex;
+				flex-direction: row;
+				align-items: center;
+				gap: 4px;
+				/* hidden by default — shrink to zero width with no-overflow so it takes no space */
+				opacity: 0;
+				pointer-events: none;
+				max-width: 0;
+				overflow: hidden;
+				transition:
+					opacity 0.15s ease,
+					max-width 0.15s ease;
+			}
+			.layout-slideout.open {
+				opacity: 1;
+				pointer-events: auto;
+				max-width: 120px;
+			}
+			.layout-opt {
+				flex: 0 0 28px;
+				width: 28px;
+				height: 28px;
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				background: rgba(8, 13, 26, 0.9);
+				border: 1px solid var(--space-700);
+				border-radius: 6px;
+				color: var(--slate-400);
+				cursor: pointer;
+				font-family: inherit;
+				position: relative;
+				transition:
+					color 0.1s,
+					background 0.1s;
+			}
+			.layout-opt:hover {
+				color: var(--slate-100);
+				background: var(--space-700);
+			}
+			.layout-opt::after {
+				content: attr(title);
+				position: absolute;
+				bottom: calc(100% + 6px);
+				left: 50%;
+				transform: translateX(-50%);
+				background: rgba(8, 13, 26, 0.95);
+				border: 1px solid var(--space-600);
+				border-radius: 3px;
+				padding: 2px 6px;
+				font-size: 9px;
+				color: var(--slate-300);
+				white-space: nowrap;
+				pointer-events: none;
+				opacity: 0;
+				transition: opacity 0.1s;
+			}
+			.layout-opt:hover::after {
+				opacity: 1;
+			}
+
+			/* ── Minimap ───────────────────────────────────────────────── */
+			.minimap {
+				position: absolute;
+				bottom: 16px;
+				right: 16px;
+				width: 140px;
+				height: 90px;
+				background: rgba(8, 13, 26, 0.85);
+				border: 1px solid var(--space-600);
+				border-radius: 6px;
+				overflow: hidden;
+			}
+			.minimap-inner {
+				width: 100%;
+				height: 100%;
+			}
+
+			/* ── Annotation callouts ───────────────────────────────────── */
+			.callout {
+				position: absolute;
+				background: rgba(251, 191, 36, 0.08);
+				border: 1px dashed rgba(251, 191, 36, 0.4);
+				border-radius: 4px;
+				padding: 4px 8px;
+				font-size: 10px;
+				color: #fbbf24cc;
+				pointer-events: none;
+				max-width: 220px;
+				line-height: 1.5;
+				z-index: 50;
+			}
+			.callout-line {
+				position: absolute;
+				border-top: 1px dashed rgba(251, 191, 36, 0.35);
+				pointer-events: none;
+				z-index: 49;
+			}
+
+			/* ── Section divider label for wireframe sections ─────────── */
+			.wf-section-label {
+				position: absolute;
+				font-size: 9px;
+				font-weight: 700;
+				letter-spacing: 0.15em;
+				text-transform: uppercase;
+				color: rgba(251, 191, 36, 0.5);
+				pointer-events: none;
+				z-index: 51;
+			}
+
+			/* ── Island cluster label ──────────────────────────────────── */
+			.island-label {
+				position: absolute;
+				font-size: 10px;
+				color: var(--slate-600);
+				font-style: italic;
+				pointer-events: none;
+				z-index: 5;
+			}
+
+			/* ── Tabs panel (second view — wildcard mode) ──────────────── */
+			/* shown via JS toggle at bottom of this file */
+			.view {
+				display: none;
+			}
+			.view.active {
+				display: flex;
+				flex-direction: column;
+				height: 100%;
+			}
+
+			.view-toggle {
+				position: fixed;
+				bottom: 16px;
+				left: 50%;
+				transform: translateX(-50%);
+				display: flex;
+				gap: 8px;
+				z-index: 100;
+				background: rgba(8, 13, 26, 0.92);
+				border: 1px solid var(--space-600);
+				border-radius: 8px;
+				padding: 6px 10px;
+			}
+			.vt-btn {
+				padding: 4px 14px;
+				border-radius: 5px;
+				font-family: inherit;
+				font-size: 11px;
+				background: none;
+				border: 1px solid var(--space-600);
+				color: var(--slate-400);
+				cursor: pointer;
+				transition: all 0.15s;
+			}
+			.vt-btn.active {
+				background: var(--space-700);
+				color: var(--slate-100);
+				border-color: var(--sky);
+			}
+			.vt-btn:hover:not(.active) {
+				color: var(--slate-200);
+				background: var(--space-800);
+			}
+
+			/* ── History mode ──────────────────────────────────────────── */
+			/*
+      DESIGN NOTE — History mode
+      A tab can be put into "history mode" via a clock button on the tab.
+      When active, a vertical scrubber rail appears on the right edge of
+      the canvas. Dragging it (or clicking positions on it) replays the
+      event log to reconstruct the map state at that point in time.
+      The canvas is dimmed and a timestamp banner shows the current offset.
+      All interactions (add/remove system, edit sig, etc.) are read-only
+      while in history mode. Exiting restores live state.
+    */
+			.tab-history-btn {
+				width: 16px;
+				height: 16px;
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				border-radius: 3px;
+				background: none;
+				border: none;
+				color: var(--slate-600);
+				cursor: pointer;
+				flex: none;
+				transition:
+					color 0.1s,
+					background 0.1s;
+			}
+			.tab-history-btn:hover {
+				color: var(--amber);
+				background: rgba(245, 158, 11, 0.1);
+			}
+			.tab-history-btn.active {
+				color: var(--amber);
+				background: rgba(245, 158, 11, 0.12);
+			}
+
+			/* dimmed canvas overlay in history mode */
+			.canvas-history-overlay {
+				position: absolute;
+				inset: 0;
+				background: rgba(5, 8, 15, 0.35);
+				pointer-events: none;
+				z-index: 5;
+			}
+
+			/* timestamp banner */
+			.history-banner {
+				position: absolute;
+				top: 12px;
+				left: 50%;
+				transform: translateX(-50%);
+				display: flex;
+				align-items: center;
+				gap: 8px;
+				background: rgba(8, 13, 26, 0.92);
+				border: 1px solid var(--amber);
+				border-radius: 6px;
+				padding: 5px 14px;
+				font-size: 11px;
+				color: var(--amber);
+				z-index: 15;
+				white-space: nowrap;
+				box-shadow: 0 0 16px rgba(245, 158, 11, 0.15);
+			}
+			.history-banner-dot {
+				width: 7px;
+				height: 7px;
+				border-radius: 50%;
+				background: var(--amber);
+				animation: pulse 1.5s ease-in-out infinite;
+				flex: none;
+			}
+			.history-banner-label {
+				font-weight: 600;
+				letter-spacing: 0.05em;
+			}
+			.history-banner-time {
+				color: #fde68a;
+				font-weight: 500;
+			}
+			.history-banner-exit {
+				margin-left: 6px;
+				padding: 1px 8px;
+				border-radius: 3px;
+				background: rgba(245, 158, 11, 0.15);
+				border: 1px solid rgba(245, 158, 11, 0.35);
+				color: var(--amber);
+				font-size: 10px;
+				cursor: pointer;
+				font-family: inherit;
+				transition: background 0.1s;
+			}
+			.history-banner-exit:hover {
+				background: rgba(245, 158, 11, 0.25);
+			}
+
+			/* scrubber rail */
+			.history-scrubber {
+				position: absolute;
+				top: 0;
+				right: 0;
+				bottom: 0;
+				width: 48px;
+				background: rgba(8, 13, 26, 0.88);
+				border-left: 1px solid var(--space-600);
+				display: flex;
+				flex-direction: column;
+				align-items: center;
+				padding: 12px 0;
+				z-index: 10;
+				user-select: none;
+			}
+			.scrubber-label {
+				font-size: 9px;
+				font-weight: 600;
+				letter-spacing: 0.1em;
+				text-transform: uppercase;
+				color: var(--slate-600);
+				margin-bottom: 8px;
+				writing-mode: vertical-rl;
+				transform: rotate(180deg);
+			}
+			.scrubber-track {
+				flex: 1;
+				width: 4px;
+				background: var(--space-700);
+				border-radius: 2px;
+				position: relative;
+				cursor: pointer;
+				margin: 0 auto;
+			}
+			.scrubber-fill {
+				position: absolute;
+				bottom: 0;
+				left: 0;
+				right: 0;
+				background: var(--amber);
+				border-radius: 2px;
+				opacity: 0.6;
+			}
+			.scrubber-thumb {
+				position: absolute;
+				left: 50%;
+				transform: translate(-50%, 50%);
+				width: 14px;
+				height: 14px;
+				border-radius: 50%;
+				background: var(--amber);
+				border: 2px solid var(--space-900);
+				box-shadow: 0 0 6px rgba(245, 158, 11, 0.5);
+				cursor: grab;
+			}
+			.scrubber-tick {
+				position: absolute;
+				left: 100%;
+				margin-left: 4px;
+				font-size: 9px;
+				color: var(--slate-600);
+				white-space: nowrap;
+				transform: translateY(50%);
+			}
+			.scrubber-tick.highlighted {
+				color: var(--amber);
+				font-weight: 600;
+			}
+			.scrubber-now {
+				font-size: 9px;
+				color: var(--slate-500);
+				margin-top: 8px;
+				writing-mode: vertical-rl;
+				transform: rotate(180deg);
+			}
+
+			/* annotation panel at bottom */
+			.annotation-bar {
+				flex: none;
+				background: rgba(8, 13, 26, 0.95);
+				border-top: 1px solid var(--space-700);
+				padding: 8px 16px;
+				font-size: 10px;
+				color: var(--slate-500);
+				line-height: 1.7;
+				z-index: 20;
+			}
+			.annotation-bar strong {
+				color: var(--slate-300);
+			}
+			.annotation-bar code {
+				background: var(--space-700);
+				border-radius: 3px;
+				padding: 0 4px;
+				color: var(--violet);
+				font-family: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<!-- ═══════════════════════════════════════════════════════════════
+     VIEW SWITCHER
+════════════════════════════════════════════════════════════════ -->
+		<div class="view-toggle">
+			<button class="vt-btn active" onclick="showView('chain')">
+				View 1 · Named root
+			</button>
+			<button class="vt-btn" onclick="showView('wild')">
+				View 2 · Wildcard (*)
+			</button>
+			<button class="vt-btn" onclick="showView('history')">
+				View 3 · History mode
+			</button>
+			<button class="vt-btn" onclick="showView('tabui')">
+				View 4 · Tab interactions
+			</button>
+		</div>
+
+		<!-- ═══════════════════════════════════════════════════════════════
+     VIEW 1 — Named root: J123456  (chain filter active)
+════════════════════════════════════════════════════════════════ -->
+		<div id="view-chain" class="view active">
+			<div class="shell">
+				<!-- Global nav -->
+				<header class="global-header" data-protonpass-form="">
+					<a href="#" class="brand">
+						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+							<circle cx="12" cy="12" r="3"></circle>
+							<path d="M12 2v4M12 18v4M2 12h4M18 12h4"></path>
+							<path d="M5.6 5.6l2.8 2.8M15.6 15.6l2.8 2.8M18.4 5.6l-2.8 2.8M8.4 15.6l-2.8 2.8"></path>
+						</svg>
+						<span class="brand-name">E-R BRIDGE</span>
+					</a>
+					<nav class="header-nav">
+						<a href="#" class="active">maps</a>
+						<a href="#">characters</a>
+					</nav>
+					<div class="header-spacer"></div>
+					<div class="status-dot"></div>
+					<span class="status-label">connected</span>
+					<div class="find-wrap">
+						<input class="find-input" type="text" placeholder="Find system…">
+						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<circle cx="11" cy="11" r="8"></circle>
+							<path d="m21 21-4.35-4.35"></path>
+						</svg>
+					</div>
+					<button style="
+							width: 28px;
+							height: 28px;
+							display: flex;
+							align-items: center;
+							justify-content: center;
+							border-radius: 4px;
+							background: none;
+							border: none;
+							color: var(--slate-500);
+							cursor: pointer;
+						" title="Log out">
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"></path>
+						</svg>
+					</button>
+				</header>
+
+				<!-- Tab bar -->
+				<!--
+      DESIGN NOTE — Tab bar sits between global nav and the canvas/sidebar pair.
+      Each tab encapsulates one "view" of the map — its own root system filter.
+      Tabs are local browser state; they are NOT persisted server-side.
+      On first load a single tab is created with root = "*".
+    -->
+				<div class="tab-bar">
+					<!-- Tab 1 — active, named root -->
+					<div class="tab active" title="Click to rename; click root pill to change root">
+						<span class="tab-label">Home chain</span>
+						<div class="tab-root named" title="Root system: click to edit">
+							<svg class="tab-root-icon" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+								<circle cx="12" cy="12" r="3"></circle>
+								<path d="M12 2v4M12 18v4M2 12h4M18 12h4"></path>
+							</svg>
+							J123456
+						</div>
+						<button class="tab-close" title="Close tab">×</button>
+					</div>
+
+					<!-- Tab 2 — inactive, wildcard root -->
+					<div class="tab" title="Click to switch to this tab">
+						<span class="tab-label">All systems</span>
+						<div class="tab-root wildcard" title="Root: all systems">
+							<svg class="tab-root-icon" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+								<circle cx="12" cy="12" r="3"></circle>
+								<path d="M12 2v4M12 18v4M2 12h4M18 12h4"></path>
+							</svg>
+							*
+						</div>
+						<button class="tab-close" title="Close tab">×</button>
+					</div>
+
+					<!-- Add tab -->
+					<button class="tab-add" title="New tab (defaults root to *)">
+						+
+					</button>
+				</div>
+
+				<!-- Content -->
+				<div class="content">
+					<!-- Sidebar -->
+					<div class="sidebar-outer" id="sidebar-v1">
+						<button class="sidebar-toggle" onclick="toggleSidebar('sidebar-v1')" title="Collapse/expand sidebar">
+							<svg class="sidebar-toggle-icon" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+								<path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"></path>
+							</svg>
+						</button>
+						<aside class="sidebar">
+							<!-- System Intel -->
+							<div class="sidebar-section">
+								<button class="sidebar-section-header" onclick="toggleSection(this)">
+									<svg class="chevron open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+										<path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"></path>
+									</svg>
+									<!-- icon visible only when sidebar collapsed -->
+									<svg class="section-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: var(--slate-400)">
+										<circle cx="12" cy="12" r="3"></circle>
+										<path d="M12 2v4M12 18v4M2 12h4M18 12h4"></path>
+									</svg>
+									<span class="section-title">System Intel</span>
+								</button>
+								<div class="section-body sys-intel">
+									<div class="sys-intel-name-row">
+										<span class="sys-intel-name">J123456</span>
+										<span class="class-pill" style="
+												background: #a78bfa18;
+												color: #a78bfa;
+												border: 1px solid #a78bfa44;
+											">C3</span>
+									</div>
+									<div class="sys-effect">
+										<svg width="11" height="11" fill="currentColor" viewBox="0 0 24 24">
+											<path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"></path>
+										</svg>
+										Wolf-Rayet Star
+									</div>
+									<div class="sys-stats">
+										<span class="sys-stat-label">Security</span>
+										<span class="sys-stat-value">-1.0</span>
+										<span class="sys-stat-label">Statics</span>
+										<span class="sys-stat-value">
+											<div class="sys-statics">
+												<span class="static-badge">C5a</span>
+												<span class="static-badge">HSa</span>
+											</div>
+										</span>
+									</div>
+								</div>
+							</div>
+
+							<!-- Signatures -->
+							<div class="sidebar-section">
+								<button class="sidebar-section-header" onclick="toggleSection(this)">
+									<svg class="chevron open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+										<path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"></path>
+									</svg>
+									<svg class="section-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: var(--slate-400)">
+										<path stroke-linecap="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path>
+									</svg>
+									<span class="section-title">Signatures</span>
+									<span class="section-count">4</span>
+									</button><button class="section-action" title="Add signature" onclick="event.stopPropagation()">
+										<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+											<path stroke-linecap="round" d="M12 4v16M4 12h16"></path>
+										</svg>
+									</button>
+								
+								<div class="section-body">
+									<table class="sig-table">
+										<thead>
+											<tr>
+												<th>ID</th>
+												<th>Type</th>
+												<th>Info</th>
+												<th style="text-align: right">When</th>
+												<th></th>
+											</tr>
+										</thead>
+										<tbody>
+											<tr>
+												<td class="sig-id">ABC-123</td>
+												<td>
+													<span class="sig-group" style="color: #a78bfa">WH</span>
+												</td>
+												<td class="sig-info">C3a → J234567</td>
+												<td class="sig-when">2m ago</td>
+												<td></td>
+											</tr>
+											<tr>
+												<td class="sig-id">DEF-456</td>
+												<td>
+													<span class="sig-group" style="color: #4ade80">WH</span>
+												</td>
+												<td class="sig-info">HSa → Jita</td>
+												<td class="sig-when">5m ago</td>
+												<td></td>
+											</tr>
+											<tr>
+												<td class="sig-id">GHI-789</td>
+												<td>
+													<span class="sig-group" style="color: #fbbf24">REL</span>
+												</td>
+												<td class="sig-info" style="color: var(--slate-600); font-style: italic">
+													Unknown
+												</td>
+												<td class="sig-when">12m ago</td>
+												<td></td>
+											</tr>
+											<tr>
+												<td class="sig-id">JKL-012</td>
+												<td>
+													<span class="sig-group" style="color: #38bdf8">DAT</span>
+												</td>
+												<td class="sig-info" style="color: var(--slate-600); font-style: italic">
+													Unknown
+												</td>
+												<td class="sig-when">1h ago</td>
+												<td></td>
+											</tr>
+										</tbody>
+									</table>
+								</div>
+							</div>
+
+							<!-- Pilots -->
+							<div class="sidebar-section">
+								<button class="sidebar-section-header" onclick="toggleSection(this)">
+									<svg class="chevron open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+										<path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"></path>
+									</svg>
+									<svg class="section-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: var(--slate-400)">
+										<circle cx="12" cy="8" r="4"></circle>
+										<path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"></path>
+									</svg>
+									<span class="section-title">Pilots</span>
+									<span class="section-count">2</span>
+								</button>
+								<div class="section-body" style="padding: 4px 0 8px">
+									<div class="pilot-row">
+										<span class="pilot-online"></span>
+										<span class="pilot-name pilot-row-text">Alara Voss</span>
+										<span class="pilot-ship pilot-row-text">Loki</span>
+									</div>
+									<div class="pilot-row">
+										<span class="pilot-online"></span>
+										<span class="pilot-name pilot-row-text">Drek Omara</span>
+										<span class="pilot-ship pilot-row-text">Tengu</span>
+									</div>
+								</div>
+							</div>
+
+							<!-- Structures -->
+							<div class="sidebar-section">
+								<button class="sidebar-section-header" onclick="toggleSection(this)">
+									<svg class="chevron open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+										<path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"></path>
+									</svg>
+									<svg class="section-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: var(--slate-400)">
+										<rect x="3" y="3" width="18" height="18" rx="2"></rect>
+										<path d="M9 9h6M9 12h6M9 15h4"></path>
+									</svg>
+									<span class="section-title">Structures</span>
+									<span class="section-count">1</span>
+								</button>
+								<div class="section-body" style="padding: 4px 12px 10px; font-size: 11px">
+									<div style="color: var(--slate-300); margin-bottom: 2px">
+										Fort Nightfall
+									</div>
+									<div style="color: var(--slate-500)">
+										Fortizar · Brave Collective
+									</div>
+								</div>
+							</div>
+						</aside>
+					</div>
+
+					<!-- Canvas -->
+					<div class="canvas-wrap" id="canvas-chain">
+						<svg class="canvas-svg" viewBox="0 0 900 600" preserveAspectRatio="xMidYMid meet">
+							<!-- ── Edges ─────────────────────────────────────────── -->
+
+							<!-- J123456 → J234567  fresh, C3a type -->
+							<path d="M 270 180 C 350 180, 380 260, 460 270" stroke="#22c55e" stroke-width="5" stroke-opacity="0.85" fill="none" stroke-linecap="round"></path>
+							<!-- wh type label -->
+							<foreignObject x="330" y="198" width="60" height="20">
+								<div xmlns="http://www.w3.org/1999/xhtml" class="edge-label" style="color: #22c55e">
+									C364
+								</div>
+							</foreignObject>
+							<!-- sig endpoint labels -->
+							<foreignObject x="283" y="164" width="40" height="16">
+								<div xmlns="http://www.w3.org/1999/xhtml" class="sig-endpoint-label">
+									ABC
+								</div>
+							</foreignObject>
+							<foreignObject x="392" y="222" width="40" height="16">
+								<div xmlns="http://www.w3.org/1999/xhtml" class="sig-endpoint-label">
+									XYZ
+								</div>
+							</foreignObject>
+
+							<!-- J234567 → J345678  half mass, C5b type -->
+							<path d="M 636 270 C 700 270, 720 340, 740 370" stroke="#f59e0b" stroke-width="5" stroke-opacity="0.85" fill="none" stroke-linecap="round"></path>
+							<foreignObject x="670" y="290" width="60" height="20">
+								<div xmlns="http://www.w3.org/1999/xhtml" class="edge-label" style="color: #f59e0b">
+									C125
+								</div>
+							</foreignObject>
+
+							<!-- J234567 → J456789  critical, EOL -->
+							<path d="M 550 336 C 550 400, 500 430, 460 460" stroke="#ef4444" stroke-width="5" stroke-opacity="0.7" fill="none" stroke-linecap="round" style="animation: eol-pulse 2s ease-in-out infinite"></path>
+							<foreignObject x="488" y="380" width="60" height="20">
+								<div xmlns="http://www.w3.org/1999/xhtml" class="edge-label eol" style="color: #ef4444">
+									D845 ⚠
+								</div>
+							</foreignObject>
+
+							<!-- J123456 → J567890  fresh, HSa -->
+							<path d="M 180 216 C 180 300, 200 360, 220 400" stroke="#22c55e" stroke-width="5" stroke-opacity="0.85" fill="none" stroke-linecap="round"></path>
+							<foreignObject x="170" y="310" width="60" height="20">
+								<div xmlns="http://www.w3.org/1999/xhtml" class="edge-label" style="color: #22c55e">
+									N110
+								</div>
+							</foreignObject>
+
+							<!-- ── Nodes ─────────────────────────────────────────── -->
+
+							<!-- J123456 — ROOT — C3, Wolf-Rayet -->
+							<foreignObject x="92" y="136" width="176" height="80">
+								<div xmlns="http://www.w3.org/1999/xhtml" style="position: relative">
+									<div class="sys-node is-root selected" style="border-color: #a78bfa44">
+										<div class="node-accent" style="
+												background: linear-gradient(90deg, #a78bfa, #a78bfa44);
+											"></div>
+										<div class="node-body">
+											<div class="node-header">
+												<span class="node-class-badge" style="color: #a78bfa; background: #a78bfa18">C3</span>
+												<span class="node-name">J123456</span>
+											</div>
+											<div class="node-effect">
+												<svg width="10" height="10" fill="currentColor" viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"></path></svg>
+												Wolf-Rayet
+											</div>
+											<div class="node-statics">
+												<span class="node-static-badge">C5a</span>
+												<span class="node-static-badge">HSa</span>
+											</div>
+											<div class="node-pilots">
+												<svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"></circle><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"></path></svg>
+												2
+											</div>
+										</div>
+									</div>
+									<div class="root-indicator"></div>
+								</div>
+							</foreignObject>
+
+							<!-- J234567 — C5 -->
+							<foreignObject x="460" y="240" width="176" height="68">
+								<div xmlns="http://www.w3.org/1999/xhtml">
+									<div class="sys-node" style="border-color: #fb923c44">
+										<div class="node-accent" style="
+												background: linear-gradient(90deg, #fb923c, #fb923c44);
+											"></div>
+										<div class="node-body">
+											<div class="node-header">
+												<span class="node-class-badge" style="color: #fb923c; background: #fb923c18">C5</span>
+												<span class="node-name">J234567</span>
+											</div>
+											<div class="node-statics">
+												<span class="node-static-badge">C5b</span>
+												<span class="node-static-badge">C6a</span>
+											</div>
+										</div>
+									</div>
+								</div>
+							</foreignObject>
+
+							<!-- J345678 — C5 (deep) -->
+							<foreignObject x="700" y="360" width="176" height="56">
+								<div xmlns="http://www.w3.org/1999/xhtml">
+									<div class="sys-node" style="border-color: #fb923c44">
+										<div class="node-accent" style="
+												background: linear-gradient(90deg, #fb923c, #fb923c44);
+											"></div>
+										<div class="node-body">
+											<div class="node-header">
+												<span class="node-class-badge" style="color: #fb923c; background: #fb923c18">C5</span>
+												<span class="node-name">J345678</span>
+											</div>
+										</div>
+									</div>
+								</div>
+							</foreignObject>
+
+							<!-- J456789 — C6, EOL downstream -->
+							<foreignObject x="340" y="450" width="176" height="56">
+								<div xmlns="http://www.w3.org/1999/xhtml">
+									<div class="sys-node" style="border-color: #f8717144; opacity: 0.75">
+										<div class="node-accent" style="
+												background: linear-gradient(90deg, #f87171, #f8717144);
+											"></div>
+										<div class="node-body">
+											<div class="node-header">
+												<span class="node-class-badge" style="color: #f87171; background: #f8717118">C6</span>
+												<span class="node-name">J456789</span>
+											</div>
+										</div>
+									</div>
+								</div>
+							</foreignObject>
+
+							<!-- J567890 — HS exit -->
+							<foreignObject x="132" y="392" width="176" height="56">
+								<div xmlns="http://www.w3.org/1999/xhtml">
+									<div class="sys-node" style="border-color: #4ade8044">
+										<div class="node-accent" style="
+												background: linear-gradient(90deg, #4ade80, #4ade8044);
+											"></div>
+										<div class="node-body">
+											<div class="node-header">
+												<span class="node-class-badge" style="color: #4ade80; background: #4ade8018">HS</span>
+												<span class="node-name">Jita</span>
+											</div>
+										</div>
+									</div>
+								</div>
+							</foreignObject>
+						</svg>
+
+						<!-- Controls + layout slide-out grouped together -->
+						<div class="controls-group">
+							<div class="canvas-controls">
+								<button class="ctrl-btn" title="Zoom in">+</button>
+								<button class="ctrl-btn" title="Zoom out">−</button>
+								<button class="ctrl-btn" title="Fit view" style="font-size: 12px">
+									⊡
+								</button>
+								<button class="ctrl-btn" title="Auto layout" onclick="togglePopover('view1-slideout')">
+									<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+										<rect x="3" y="3" width="7" height="7" rx="1"></rect>
+										<rect x="14" y="3" width="7" height="7" rx="1"></rect>
+										<rect x="3" y="14" width="7" height="7" rx="1"></rect>
+										<rect x="14" y="14" width="7" height="7" rx="1"></rect>
+									</svg>
+								</button>
+							</div>
+							<!-- Layout options slide out to the right -->
+							<div class="layout-slideout" id="view1-slideout">
+								<button class="layout-opt" title="Left → Right">
+									<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+										<path d="M5 12h14M15 7l5 5-5 5"></path>
+									</svg>
+								</button>
+								<button class="layout-opt" title="Top → Bottom">
+									<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+										<path d="M12 5v14M7 15l5 5 5-5"></path>
+									</svg>
+								</button>
+								<button class="layout-opt" title="Radial">
+									<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+										<circle cx="12" cy="12" r="3"></circle>
+										<path d="M12 2v4M12 18v4M2 12h4M18 12h4"></path>
+									</svg>
+								</button>
+							</div>
+						</div>
+
+						<!-- Minimap -->
+						<div class="minimap">
+							<svg class="minimap-inner" viewBox="0 0 900 600">
+								<rect x="92" y="136" width="40" height="22" rx="2" fill="#a78bfa88"></rect>
+								<rect x="460" y="240" width="40" height="18" rx="2" fill="#fb923c88"></rect>
+								<rect x="700" y="360" width="40" height="16" rx="2" fill="#fb923c88"></rect>
+								<rect x="340" y="450" width="40" height="16" rx="2" fill="#f8717188"></rect>
+								<rect x="132" y="392" width="40" height="16" rx="2" fill="#4ade8088"></rect>
+								<line x1="132" y1="176" x2="480" y2="270" stroke="#22c55e" stroke-width="2" opacity="0.6"></line>
+								<line x1="636" y1="270" x2="720" y2="370" stroke="#f59e0b" stroke-width="2" opacity="0.6"></line>
+								<line x1="550" y1="310" x2="460" y2="460" stroke="#ef4444" stroke-width="2" opacity="0.5"></line>
+								<line x1="180" y1="216" x2="220" y2="400" stroke="#22c55e" stroke-width="2" opacity="0.6"></line>
+							</svg>
+						</div>
+
+						<!-- Wireframe callouts -->
+						<div class="callout" style="top: 52px; left: 16px; max-width: 200px">
+							<strong>Root node</strong><br>
+							Green ring = tab's root system.<br>
+							Position saved to <code>localStorage</code>.
+						</div>
+
+						<div class="callout" style="top: 52px; right: 170px; max-width: 210px">
+							<strong>EOL edge</strong><br>
+							Pulsing + ⚠ label when <code>time_state = "eol"</code>.<br>
+							Red = critical mass.
+						</div>
+
+						<div class="callout" style="bottom: 140px; left: 16px; max-width: 240px">
+							<strong>Node positions</strong><br>
+							Always user-positioned, stored in <code>localStorage</code>.<br>
+							Auto-layout (grid icon) is a one-shot action — applies a layout
+							then returns control to the user.
+						</div>
+					</div>
+					<!-- /canvas-wrap -->
+				</div>
+				<!-- /content -->
+			</div>
+			<!-- /shell -->
+		</div>
+		<!-- /view-chain -->
+
+		<!-- ═══════════════════════════════════════════════════════════════
+     VIEW 2 — Wildcard root: * (all systems, island clusters)
+════════════════════════════════════════════════════════════════ -->
+		<div id="view-wild" class="view">
+			<div class="shell">
+				<header class="global-header">
+					<a href="#" class="brand">
+						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+							<circle cx="12" cy="12" r="3"></circle>
+							<path d="M12 2v4M12 18v4M2 12h4M18 12h4"></path>
+							<path d="M5.6 5.6l2.8 2.8M15.6 15.6l2.8 2.8M18.4 5.6l-2.8 2.8M8.4 15.6l-2.8 2.8"></path>
+						</svg>
+						<span class="brand-name">E-R BRIDGE</span>
+					</a>
+					<nav class="header-nav">
+						<a href="#" class="active">maps</a>
+						<a href="#">characters</a>
+					</nav>
+					<div class="header-spacer"></div>
+					<div class="status-dot"></div>
+					<span class="status-label">connected</span>
+					<div class="find-wrap">
+						<input class="find-input" type="text" placeholder="Find system…">
+						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<circle cx="11" cy="11" r="8"></circle>
+							<path d="m21 21-4.35-4.35"></path>
+						</svg>
+					</div>
+				</header>
+
+				<!-- Tab bar — "All systems" tab active, root = * -->
+				<div class="tab-bar">
+					<div class="tab" title="Inactive tab">
+						<span class="tab-label">Home chain</span>
+						<div class="tab-root named">
+							<svg class="tab-root-icon" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+								<circle cx="12" cy="12" r="3"></circle>
+								<path d="M12 2v4M12 18v4M2 12h4M18 12h4"></path>
+							</svg>
+							J123456
+						</div>
+						<button class="tab-close">×</button>
+					</div>
+					<div class="tab active">
+						<span class="tab-label">All systems</span>
+						<div class="tab-root wildcard">
+							<svg class="tab-root-icon" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+								<circle cx="12" cy="12" r="3"></circle>
+								<path d="M12 2v4M12 18v4M2 12h4M18 12h4"></path>
+							</svg>
+							*
+						</div>
+						<button class="tab-close">×</button>
+					</div>
+					<button class="tab-add">+</button>
+				</div>
+
+				<div class="content">
+					<div class="sidebar-outer" id="sidebar-v2">
+						<button class="sidebar-toggle" onclick="toggleSidebar('sidebar-v2')" title="Collapse/expand sidebar">
+							<svg class="sidebar-toggle-icon" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+								<path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"></path>
+							</svg>
+						</button>
+						<aside class="sidebar">
+							<div class="sidebar-section">
+								<button class="sidebar-section-header" onclick="toggleSection(this)">
+									<svg class="chevron open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+										<path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"></path>
+									</svg>
+									<svg class="section-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: var(--slate-400)">
+										<circle cx="12" cy="12" r="3"></circle>
+										<path d="M12 2v4M12 18v4M2 12h4M18 12h4"></path>
+									</svg>
+									<span class="section-title">System Intel</span>
+								</button>
+								<div class="section-body sys-intel">
+									<div style="
+											font-size: 11px;
+											color: var(--slate-600);
+											font-style: italic;
+											padding-bottom: 6px;
+										">
+										Click a system to inspect it.
+									</div>
+								</div>
+							</div>
+							<div class="sidebar-section">
+								<button class="sidebar-section-header" onclick="toggleSection(this)">
+									<svg class="chevron open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+										<path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"></path>
+									</svg>
+									<svg class="section-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: var(--slate-400)">
+										<path stroke-linecap="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path>
+									</svg>
+									<span class="section-title">Signatures</span>
+									<span class="section-count">0</span>
+								</button>
+								<div class="section-body">
+									<p class="empty-note">No signatures scanned.</p>
+								</div>
+							</div>
+							<div class="sidebar-section">
+								<button class="sidebar-section-header" onclick="toggleSection(this)">
+									<svg class="chevron open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+										<path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"></path>
+									</svg>
+									<svg class="section-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: var(--slate-400)">
+										<circle cx="12" cy="8" r="4"></circle>
+										<path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"></path>
+									</svg>
+									<span class="section-title">Pilots</span>
+									<span class="section-count">2</span>
+								</button>
+								<div class="section-body" style="padding: 4px 0 8px">
+									<div class="pilot-row">
+										<span class="pilot-online"></span>
+										<span class="pilot-name pilot-row-text">Alara Voss</span>
+										<span class="pilot-ship pilot-row-text">Loki</span>
+									</div>
+									<div class="pilot-row">
+										<span class="pilot-online"></span>
+										<span class="pilot-name pilot-row-text">Drek Omara</span>
+										<span class="pilot-ship pilot-row-text">Tengu</span>
+									</div>
+								</div>
+							</div>
+						</aside>
+					</div>
+
+					<!-- Canvas with 3 disconnected island clusters -->
+					<div class="canvas-wrap">
+						<svg class="canvas-svg" viewBox="0 0 1040 580" preserveAspectRatio="xMidYMid meet">
+							<!-- ── ISLAND 1 — Main chain (connected) ──────────────── -->
+
+							<!-- edges -->
+							<path d="M 220 160 C 300 160 340 230 380 240" stroke="#22c55e" stroke-width="5" stroke-opacity="0.85" fill="none" stroke-linecap="round"></path>
+							<path d="M 556 240 C 620 240 650 300 660 330" stroke="#f59e0b" stroke-width="5" stroke-opacity="0.85" fill="none" stroke-linecap="round"></path>
+							<path d="M 220 216 C 220 290 230 350 235 380" stroke="#22c55e" stroke-width="5" stroke-opacity="0.85" fill="none" stroke-linecap="round"></path>
+
+							<!-- nodes -->
+							<foreignObject x="132" y="130" width="176" height="86">
+								<div xmlns="http://www.w3.org/1999/xhtml" style="position: relative">
+									<div class="sys-node" style="border-color: #a78bfa44">
+										<div class="node-accent" style="
+												background: linear-gradient(90deg, #a78bfa, #a78bfa44);
+											"></div>
+										<div class="node-body">
+											<div class="node-header">
+												<span class="node-class-badge" style="color: #a78bfa; background: #a78bfa18">C3</span>
+												<span class="node-name">J123456</span>
+											</div>
+											<div class="node-effect">
+												<svg width="10" height="10" fill="currentColor" viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"></path></svg>Wolf-Rayet
+											</div>
+											<div class="node-statics">
+												<span class="node-static-badge">C5a</span><span class="node-static-badge">HSa</span>
+											</div>
+										</div>
+									</div>
+								</div>
+							</foreignObject>
+
+							<foreignObject x="380" y="212" width="176" height="56">
+								<div xmlns="http://www.w3.org/1999/xhtml">
+									<div class="sys-node" style="border-color: #fb923c44">
+										<div class="node-accent" style="
+												background: linear-gradient(90deg, #fb923c, #fb923c44);
+											"></div>
+										<div class="node-body">
+											<div class="node-header">
+												<span class="node-class-badge" style="color: #fb923c; background: #fb923c18">C5</span><span class="node-name">J234567</span>
+											</div>
+										</div>
+									</div>
+								</div>
+							</foreignObject>
+
+							<foreignObject x="620" y="316" width="176" height="56">
+								<div xmlns="http://www.w3.org/1999/xhtml">
+									<div class="sys-node" style="border-color: #fb923c44">
+										<div class="node-accent" style="
+												background: linear-gradient(90deg, #fb923c, #fb923c44);
+											"></div>
+										<div class="node-body">
+											<div class="node-header">
+												<span class="node-class-badge" style="color: #fb923c; background: #fb923c18">C5</span><span class="node-name">J345678</span>
+											</div>
+										</div>
+									</div>
+								</div>
+							</foreignObject>
+
+							<foreignObject x="148" y="372" width="176" height="56">
+								<div xmlns="http://www.w3.org/1999/xhtml">
+									<div class="sys-node" style="border-color: #4ade8044">
+										<div class="node-accent" style="
+												background: linear-gradient(90deg, #4ade80, #4ade8044);
+											"></div>
+										<div class="node-body">
+											<div class="node-header">
+												<span class="node-class-badge" style="color: #4ade80; background: #4ade8018">HS</span><span class="node-name">Jita</span>
+											</div>
+										</div>
+									</div>
+								</div>
+							</foreignObject>
+
+							<!-- Island 1 label -->
+							<foreignObject x="132" y="96" width="200" height="24">
+								<div xmlns="http://www.w3.org/1999/xhtml" class="island-label">
+									Island 1 · 4 systems
+								</div>
+							</foreignObject>
+							<!-- faint island boundary -->
+							<rect x="118" y="110" width="500" height="340" rx="8" fill="none" stroke="rgba(30,51,82,0.5)" stroke-width="1" stroke-dasharray="4 4"></rect>
+
+							<!-- ── ISLAND 2 — Separate disconnected chain ──────────── -->
+
+							<path d="M 790 120 C 840 120 860 180 870 200" stroke="#22c55e" stroke-width="5" stroke-opacity="0.85" fill="none" stroke-linecap="round"></path>
+							<path d="M 870 256 C 870 300 840 340 820 360" stroke="#f59e0b" stroke-width="5" stroke-opacity="0.85" fill="none" stroke-linecap="round"></path>
+
+							<foreignObject x="702" y="90" width="176" height="56">
+								<div xmlns="http://www.w3.org/1999/xhtml">
+									<div class="sys-node" style="border-color: #f472b644">
+										<div class="node-accent" style="
+												background: linear-gradient(90deg, #f472b6, #f472b644);
+											"></div>
+										<div class="node-body">
+											<div class="node-header">
+												<span class="node-class-badge" style="color: #f472b6; background: #f472b618">C4</span><span class="node-name">J789012</span>
+											</div>
+										</div>
+									</div>
+								</div>
+							</foreignObject>
+
+							<foreignObject x="750" y="192" width="176" height="64">
+								<div xmlns="http://www.w3.org/1999/xhtml">
+									<div class="sys-node" style="border-color: #60a5fa44">
+										<div class="node-accent" style="
+												background: linear-gradient(90deg, #60a5fa, #60a5fa44);
+											"></div>
+										<div class="node-body">
+											<div class="node-header">
+												<span class="node-class-badge" style="color: #60a5fa; background: #60a5fa18">C1</span><span class="node-name">J890123</span>
+											</div>
+											<div class="node-statics">
+												<span class="node-static-badge">NSa</span>
+											</div>
+										</div>
+									</div>
+								</div>
+							</foreignObject>
+
+							<foreignObject x="724" y="348" width="176" height="56">
+								<div xmlns="http://www.w3.org/1999/xhtml">
+									<div class="sys-node" style="border-color: #fca5a544">
+										<div class="node-accent" style="
+												background: linear-gradient(90deg, #fca5a5, #fca5a544);
+											"></div>
+										<div class="node-body">
+											<div class="node-header">
+												<span class="node-class-badge" style="color: #fca5a5; background: #fca5a518">NS</span><span class="node-name">0WN-T5</span>
+											</div>
+										</div>
+									</div>
+								</div>
+							</foreignObject>
+
+							<!-- Island 2 label + boundary -->
+							<foreignObject x="695" y="56" width="200" height="24">
+								<div xmlns="http://www.w3.org/1999/xhtml" class="island-label">
+									Island 2 · 3 systems
+								</div>
+							</foreignObject>
+							<rect x="688" y="70" width="350" height="360" rx="8" fill="none" stroke="rgba(30,51,82,0.5)" stroke-width="1" stroke-dasharray="4 4"></rect>
+
+							<!-- ── ISLAND 3 — Solo orphan system ───────────────────── -->
+
+							<foreignObject x="350" y="460" width="176" height="56">
+								<div xmlns="http://www.w3.org/1999/xhtml">
+									<div class="sys-node" style="border-color: #34d39944">
+										<div class="node-accent" style="
+												background: linear-gradient(90deg, #34d399, #34d39944);
+											"></div>
+										<div class="node-body">
+											<div class="node-header">
+												<span class="node-class-badge" style="color: #34d399; background: #34d39918">C2</span><span class="node-name">J999000</span>
+											</div>
+										</div>
+									</div>
+								</div>
+							</foreignObject>
+
+							<!-- Island 3 label + boundary -->
+							<foreignObject x="340" y="428" width="200" height="24">
+								<div xmlns="http://www.w3.org/1999/xhtml" class="island-label">
+									Island 3 · 1 system (orphan)
+								</div>
+							</foreignObject>
+							<rect x="335" y="442" width="200" height="90" rx="8" fill="none" stroke="rgba(30,51,82,0.5)" stroke-width="1" stroke-dasharray="4 4"></rect>
+						</svg>
+
+						<!-- Controls -->
+						<div class="controls-group">
+							<div class="canvas-controls">
+								<button class="ctrl-btn">+</button>
+								<button class="ctrl-btn">−</button>
+								<button class="ctrl-btn" style="font-size: 12px">⊡</button>
+							</div>
+						</div>
+
+						<!-- Minimap -->
+						<div class="minimap">
+							<svg class="minimap-inner" viewBox="0 0 1040 580">
+								<rect x="132" y="130" width="30" height="16" rx="2" fill="#a78bfa77"></rect>
+								<rect x="380" y="212" width="30" height="14" rx="2" fill="#fb923c77"></rect>
+								<rect x="620" y="316" width="30" height="14" rx="2" fill="#fb923c77"></rect>
+								<rect x="148" y="372" width="30" height="14" rx="2" fill="#4ade8077"></rect>
+								<rect x="702" y="90" width="30" height="14" rx="2" fill="#f472b677"></rect>
+								<rect x="750" y="192" width="30" height="14" rx="2" fill="#60a5fa77"></rect>
+								<rect x="724" y="348" width="30" height="14" rx="2" fill="#fca5a577"></rect>
+								<rect x="350" y="460" width="30" height="14" rx="2" fill="#34d39977"></rect>
+							</svg>
+						</div>
+
+						<!-- Callout -->
+						<div class="callout" style="top: 52px; left: 16px; max-width: 230px">
+							<strong>Wildcard mode (*)</strong><br>
+							All systems rendered. Disconnected subgraphs become separate
+							island clusters, laid out independently by svelte-flow.
+						</div>
+
+						<div class="callout" style="bottom: 120px; right: 180px; max-width: 210px">
+							<strong>Orphan system</strong><br>
+							A system with no connections still appears as a single-node
+							island.
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+		<!-- /view-wild -->
+
+		<!-- ═══════════════════════════════════════════════════════════════
+     VIEW 3 — History mode
+════════════════════════════════════════════════════════════════ -->
+		<div id="view-history" class="view">
+			<div class="shell">
+				<header class="global-header">
+					<a href="#" class="brand">
+						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+							<circle cx="12" cy="12" r="3"></circle>
+							<path d="M12 2v4M12 18v4M2 12h4M18 12h4"></path>
+							<path d="M5.6 5.6l2.8 2.8M15.6 15.6l2.8 2.8M18.4 5.6l-2.8 2.8M8.4 15.6l-2.8 2.8"></path>
+						</svg>
+						<span class="brand-name">E-R BRIDGE</span>
+					</a>
+					<nav class="header-nav">
+						<a href="#" class="active">maps</a>
+						<a href="#">characters</a>
+					</nav>
+					<div class="header-spacer"></div>
+					<!-- status dot is amber in history mode — not live -->
+					<div class="status-dot" style="background: var(--amber); animation: none; opacity: 0.7"></div>
+					<span class="status-label" style="color: var(--amber)">history mode</span>
+					<div class="find-wrap">
+						<input class="find-input" type="text" placeholder="Find system…">
+						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<circle cx="11" cy="11" r="8"></circle>
+							<path d="m21 21-4.35-4.35"></path>
+						</svg>
+					</div>
+				</header>
+
+				<!-- Tab bar — "Home chain" tab in history mode -->
+				<!--
+      DESIGN NOTE — History mode is per-tab.
+      The clock icon on the tab toggles history mode for that tab only.
+      Other tabs remain live. The tab shows an amber clock icon when active.
+      Exiting history mode (via the banner or the clock icon again) restores
+      the tab to its live state without affecting other tabs.
+    -->
+				<div class="tab-bar">
+					<!-- Tab 1 — active, history mode ON -->
+					<div class="tab active" style="border-bottom: 2px solid var(--amber)">
+						<span class="tab-label" style="color: var(--amber)">Home chain</span>
+						<div class="tab-root named" style="border-color: rgba(245, 158, 11, 0.4)">
+							<svg class="tab-root-icon" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+								<circle cx="12" cy="12" r="3"></circle>
+								<path d="M12 2v4M12 18v4M2 12h4M18 12h4"></path>
+							</svg>
+							J123456
+						</div>
+						<!-- clock icon — amber = history mode active -->
+						<button class="tab-history-btn active" title="Exit history mode">
+							<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+								<circle cx="12" cy="12" r="9"></circle>
+								<path d="M12 7v5l3 3"></path>
+							</svg>
+						</button>
+						<button class="tab-close">×</button>
+					</div>
+
+					<!-- Tab 2 — inactive, live (no history) -->
+					<div class="tab">
+						<span class="tab-label">All systems</span>
+						<div class="tab-root wildcard">
+							<svg class="tab-root-icon" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+								<circle cx="12" cy="12" r="3"></circle>
+								<path d="M12 2v4M12 18v4M2 12h4M18 12h4"></path>
+							</svg>
+							*
+						</div>
+						<!-- clock icon — grey = history mode inactive -->
+						<button class="tab-history-btn" title="Enter history mode">
+							<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+								<circle cx="12" cy="12" r="9"></circle>
+								<path d="M12 7v5l3 3"></path>
+							</svg>
+						</button>
+						<button class="tab-close">×</button>
+					</div>
+
+					<button class="tab-add">+</button>
+				</div>
+
+				<div class="content">
+					<!-- Sidebar — same structure, read-only in history mode -->
+					<div class="sidebar-outer" id="sidebar-v3">
+						<button class="sidebar-toggle" onclick="toggleSidebar('sidebar-v3')" title="Collapse/expand sidebar">
+							<svg class="sidebar-toggle-icon" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+								<path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"></path>
+							</svg>
+						</button>
+						<aside class="sidebar">
+							<!-- System Intel — shows historical state -->
+							<div class="sidebar-section">
+								<button class="sidebar-section-header" onclick="toggleSection(this)">
+									<svg class="chevron open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+										<path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"></path>
+									</svg>
+									<svg class="section-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: var(--slate-400)">
+										<circle cx="12" cy="12" r="3"></circle>
+										<path d="M12 2v4M12 18v4M2 12h4M18 12h4"></path>
+									</svg>
+									<span class="section-title">System Intel</span>
+								</button>
+								<div class="section-body sys-intel">
+									<div class="sys-intel-name-row">
+										<span class="sys-intel-name">J123456</span>
+										<span class="class-pill" style="
+												background: #a78bfa18;
+												color: #a78bfa;
+												border: 1px solid #a78bfa44;
+											">C3</span>
+									</div>
+									<div class="sys-effect">
+										<svg width="11" height="11" fill="currentColor" viewBox="0 0 24 24">
+											<path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"></path>
+										</svg>
+										Wolf-Rayet Star
+									</div>
+									<div class="sys-stats">
+										<span class="sys-stat-label">Security</span><span class="sys-stat-value">-1.0</span>
+										<span class="sys-stat-label">Statics</span>
+										<span class="sys-stat-value"><div class="sys-statics">
+												<span class="static-badge">C5a</span><span class="static-badge">HSa</span>
+											</div></span>
+									</div>
+								</div>
+							</div>
+
+							<!-- Signatures — historical snapshot -->
+							<div class="sidebar-section">
+								<button class="sidebar-section-header" onclick="toggleSection(this)">
+									<svg class="chevron open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+										<path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"></path>
+									</svg>
+									<svg class="section-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: var(--slate-400)">
+										<path stroke-linecap="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path>
+									</svg>
+									<span class="section-title">Signatures</span>
+									<span class="section-count">6</span>
+									<!-- add button absent in history mode — read-only -->
+								</button>
+								<div class="section-body">
+									<table class="sig-table">
+										<thead>
+											<tr>
+												<th>ID</th>
+												<th>Type</th>
+												<th>Info</th>
+												<th style="text-align: right">When</th>
+											</tr>
+										</thead>
+										<tbody>
+											<tr>
+												<td class="sig-id">ABC-123</td>
+												<td>
+													<span class="sig-group" style="color: #a78bfa">WH</span>
+												</td>
+												<td class="sig-info">C3a → J234567</td>
+												<td class="sig-when">-58m</td>
+											</tr>
+											<tr>
+												<td class="sig-id">DEF-456</td>
+												<td>
+													<span class="sig-group" style="color: #4ade80">WH</span>
+												</td>
+												<td class="sig-info">HSa → Jita</td>
+												<td class="sig-when">-55m</td>
+											</tr>
+											<tr>
+												<td class="sig-id">GHI-789</td>
+												<td>
+													<span class="sig-group" style="color: #fbbf24">REL</span>
+												</td>
+												<td class="sig-info" style="color: var(--slate-600); font-style: italic">
+													Unknown
+												</td>
+												<td class="sig-when">-50m</td>
+											</tr>
+											<tr>
+												<td class="sig-id">MNO-345</td>
+												<td>
+													<span class="sig-group" style="color: #a78bfa">WH</span>
+												</td>
+												<td class="sig-info">C4a → J999</td>
+												<td class="sig-when">-62m</td>
+											</tr>
+											<tr>
+												<td class="sig-id">PQR-678</td>
+												<td>
+													<span class="sig-group" style="color: #34d399">GAS</span>
+												</td>
+												<td class="sig-info" style="color: var(--slate-600); font-style: italic">
+													Unknown
+												</td>
+												<td class="sig-when">-70m</td>
+											</tr>
+											<tr>
+												<td class="sig-id">STU-901</td>
+												<td>
+													<span class="sig-group" style="color: #38bdf8">DAT</span>
+												</td>
+												<td class="sig-info" style="color: var(--slate-600); font-style: italic">
+													Unknown
+												</td>
+												<td class="sig-when">-72m</td>
+											</tr>
+										</tbody>
+									</table>
+									<!-- read-only notice -->
+									<div style="
+											padding: 5px 10px 8px;
+											font-size: 10px;
+											color: var(--amber);
+											opacity: 0.7;
+											display: flex;
+											align-items: center;
+											gap: 5px;
+										">
+										<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+											<circle cx="12" cy="12" r="9"></circle>
+											<path d="M12 7v5l3 3"></path>
+										</svg>
+										historical snapshot · read-only
+									</div>
+								</div>
+							</div>
+
+							<!-- Pilots at that point in time -->
+							<div class="sidebar-section">
+								<button class="sidebar-section-header" onclick="toggleSection(this)">
+									<svg class="chevron open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+										<path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"></path>
+									</svg>
+									<svg class="section-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: var(--slate-400)">
+										<circle cx="12" cy="8" r="4"></circle>
+										<path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"></path>
+									</svg>
+									<span class="section-title">Pilots</span>
+									<span class="section-count">3</span>
+								</button>
+								<div class="section-body" style="padding: 4px 0 8px">
+									<div class="pilot-row">
+										<span class="pilot-online"></span><span class="pilot-name pilot-row-text">Alara Voss</span><span class="pilot-ship pilot-row-text">Loki</span>
+									</div>
+									<div class="pilot-row">
+										<span class="pilot-online"></span><span class="pilot-name pilot-row-text">Drek Omara</span><span class="pilot-ship pilot-row-text">Tengu</span>
+									</div>
+									<div class="pilot-row">
+										<span class="pilot-online"></span><span class="pilot-name pilot-row-text">Kira Shan</span><span class="pilot-ship pilot-row-text">Loki</span>
+									</div>
+								</div>
+							</div>
+						</aside>
+					</div>
+
+					<!-- Canvas — dimmed, historical state, scrubber on right -->
+					<div class="canvas-wrap" style="position: relative">
+						<!-- dim overlay -->
+						<div class="canvas-history-overlay"></div>
+
+						<!-- timestamp banner -->
+						<div class="history-banner">
+							<span class="history-banner-dot"></span>
+							<span class="history-banner-label">HISTORY</span>
+							<span class="history-banner-time">−1 hour 2 minutes ago &nbsp;·&nbsp; 12 Apr 2026 · 14:23
+								EVE</span>
+							<button class="history-banner-exit">exit ×</button>
+						</div>
+
+						<!-- Historical map state — note: J999 system existed at this point, now gone -->
+						<svg class="canvas-svg" viewBox="0 0 860 560" preserveAspectRatio="xMidYMid meet">
+							<!-- edges — all fresh (1hr ago, nothing critical yet) -->
+							<path d="M 260 170 C 340 170, 370 250, 450 260" stroke="#22c55e" stroke-width="5" stroke-opacity="0.6" fill="none" stroke-linecap="round"></path>
+							<foreignObject x="320" y="188" width="60" height="20">
+								<div xmlns="http://www.w3.org/1999/xhtml" class="edge-label" style="color: #22c55e; opacity: 0.7">
+									C364
+								</div>
+							</foreignObject>
+
+							<path d="M 170 206 C 170 290, 190 350, 210 390" stroke="#22c55e" stroke-width="5" stroke-opacity="0.6" fill="none" stroke-linecap="round"></path>
+							<foreignObject x="160" y="300" width="60" height="20">
+								<div xmlns="http://www.w3.org/1999/xhtml" class="edge-label" style="color: #22c55e; opacity: 0.7">
+									N110
+								</div>
+							</foreignObject>
+
+							<!-- extra connection that no longer exists in present -->
+							<path d="M 530 310 C 580 360, 600 400, 590 430" stroke="#22c55e" stroke-width="5" stroke-opacity="0.6" fill="none" stroke-linecap="round" stroke-dasharray="6 3"></path>
+							<foreignObject x="548" y="360" width="60" height="20">
+								<div xmlns="http://www.w3.org/1999/xhtml" class="edge-label" style="color: #22c55e; opacity: 0.7">
+									C247
+								</div>
+							</foreignObject>
+
+							<!-- nodes — slightly faded to reinforce "past state" -->
+
+							<!-- J123456 ROOT -->
+							<foreignObject x="82" y="126" width="176" height="80">
+								<div xmlns="http://www.w3.org/1999/xhtml" style="position: relative; opacity: 0.85">
+									<div class="sys-node is-root" style="border-color: #a78bfa44">
+										<div class="node-accent" style="
+												background: linear-gradient(90deg, #a78bfa, #a78bfa44);
+											"></div>
+										<div class="node-body">
+											<div class="node-header">
+												<span class="node-class-badge" style="color: #a78bfa; background: #a78bfa18">C3</span><span class="node-name">J123456</span>
+											</div>
+											<div class="node-effect">
+												<svg width="10" height="10" fill="currentColor" viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"></path></svg>Wolf-Rayet
+											</div>
+											<div class="node-statics">
+												<span class="node-static-badge">C5a</span><span class="node-static-badge">HSa</span>
+											</div>
+											<div class="node-pilots">
+												<svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8" r="4"></circle><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"></path></svg>3
+											</div>
+										</div>
+									</div>
+									<div class="root-indicator"></div>
+								</div>
+							</foreignObject>
+
+							<!-- J234567 -->
+							<foreignObject x="450" y="230" width="176" height="68" style="opacity: 0.85">
+								<div xmlns="http://www.w3.org/1999/xhtml">
+									<div class="sys-node" style="border-color: #fb923c44">
+										<div class="node-accent" style="
+												background: linear-gradient(90deg, #fb923c, #fb923c44);
+											"></div>
+										<div class="node-body">
+											<div class="node-header">
+												<span class="node-class-badge" style="color: #fb923c; background: #fb923c18">C5</span><span class="node-name">J234567</span>
+											</div>
+											<div class="node-statics">
+												<span class="node-static-badge">C5b</span><span class="node-static-badge">C6a</span>
+											</div>
+										</div>
+									</div>
+								</div>
+							</foreignObject>
+
+							<!-- HS exit -->
+							<foreignObject x="122" y="382" width="176" height="56" style="opacity: 0.85">
+								<div xmlns="http://www.w3.org/1999/xhtml">
+									<div class="sys-node" style="border-color: #4ade8044">
+										<div class="node-accent" style="
+												background: linear-gradient(90deg, #4ade80, #4ade8044);
+											"></div>
+										<div class="node-body">
+											<div class="node-header">
+												<span class="node-class-badge" style="color: #4ade80; background: #4ade8018">HS</span><span class="node-name">Jita</span>
+											</div>
+										</div>
+									</div>
+								</div>
+							</foreignObject>
+
+							<!-- J999 — existed 1hr ago, now collapsed/gone — shown with dashed border -->
+							<foreignObject x="480" y="418" width="176" height="56" style="opacity: 0.6">
+								<div xmlns="http://www.w3.org/1999/xhtml">
+									<div class="sys-node" style="
+											border-color: #34d39944;
+											border-style: dashed;
+											border-width: 2px;
+										">
+										<div class="node-accent" style="
+												background: linear-gradient(90deg, #34d399, #34d39944);
+											"></div>
+										<div class="node-body">
+											<div class="node-header">
+												<span class="node-class-badge" style="color: #34d399; background: #34d39918">C2</span><span class="node-name">J999000</span>
+											</div>
+										</div>
+									</div>
+								</div>
+							</foreignObject>
+						</svg>
+
+						<!-- Scrubber rail -->
+						<!--
+          DESIGN NOTE — Scrubber
+          The track represents the full event history for this map,
+          oldest at top, newest (now) at bottom.
+          The thumb position determines the reconstructed timestamp.
+          Tick labels show relative offsets from now.
+          The scrubber is driven by replaying the server-side event log;
+          no separate snapshot storage is required.
+        -->
+						<div class="history-scrubber">
+							<div class="scrubber-label">time</div>
+							<div class="scrubber-track" style="height: calc(100% - 80px)">
+								<!-- fill from bottom up to thumb = how far back we are -->
+								<div class="scrubber-fill" style="height: 60%"></div>
+								<!-- thumb sits at ~65% from top = ~1h back -->
+								<div class="scrubber-thumb" style="bottom: 60%"></div>
+
+								<!-- tick marks -->
+								<div class="scrubber-tick" style="bottom: 100%">now</div>
+								<div class="scrubber-tick" style="bottom: 80%">−30m</div>
+								<div class="scrubber-tick highlighted" style="bottom: 60%">
+									−1hr
+								</div>
+								<div class="scrubber-tick" style="bottom: 40%">−4hr</div>
+								<div class="scrubber-tick" style="bottom: 20%">−12h</div>
+								<div class="scrubber-tick" style="bottom: 0%">oldest</div>
+							</div>
+							<div class="scrubber-now">live</div>
+						</div>
+
+						<!-- Callouts -->
+						<div class="callout" style="top: 58px; left: 16px; max-width: 210px">
+							<strong>Historical state</strong><br>
+							Map reconstructed from event log at −1h 2m.<br>
+							Canvas is read-only — no edits allowed.
+						</div>
+
+						<div class="callout" style="bottom: 100px; left: 16px; max-width: 220px">
+							<strong>Ghost system (dashed)</strong><br>
+							J999000 existed at this point but has since been removed from the
+							map.
+						</div>
+
+						<div class="callout" style="top: 58px; right: 68px; max-width: 200px">
+							<strong>Scrubber</strong><br>
+							Drag thumb or click track to move through history. Tick labels
+							show offset from now.
+						</div>
+					</div>
+					<!-- /canvas-wrap -->
+				</div>
+				<!-- /content -->
+			</div>
+			<!-- /shell -->
+		</div>
+		<!-- /view-history -->
+
+		<!-- ═══════════════════════════════════════════════════════════════
+     VIEW 4 — Tab interaction states
+════════════════════════════════════════════════════════════════ -->
+		<div id="view-tabui" class="view">
+			<div class="shell">
+				<header class="global-header">
+					<a href="#" class="brand">
+						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+							<circle cx="12" cy="12" r="3"></circle>
+							<path d="M12 2v4M12 18v4M2 12h4M18 12h4"></path>
+							<path d="M5.6 5.6l2.8 2.8M15.6 15.6l2.8 2.8M18.4 5.6l-2.8 2.8M8.4 15.6l-2.8 2.8"></path>
+						</svg>
+						<span class="brand-name">E-R BRIDGE</span>
+					</a>
+					<div class="header-spacer"></div>
+				</header>
+
+				<!-- Full-page annotation layout for tab states -->
+				<div style="
+						flex: 1;
+						overflow-y: auto;
+						padding: 32px 48px;
+						background: var(--space-950);
+					">
+					<div style="max-width: 860px; margin: 0 auto">
+						<h1 style="
+								font-size: 14px;
+								font-weight: 600;
+								color: var(--slate-200);
+								letter-spacing: 0.1em;
+								text-transform: uppercase;
+								margin-bottom: 4px;
+							">
+							Tab Bar — Interaction States
+						</h1>
+						<p style="
+								font-size: 11px;
+								color: var(--slate-500);
+								margin-bottom: 32px;
+							">
+							Each state below shows a specific tab bar scenario with
+							annotations.
+						</p>
+
+						<!-- State 1: single default tab -->
+						<div style="margin-bottom: 40px">
+							<div style="
+									font-size: 10px;
+									font-weight: 700;
+									letter-spacing: 0.15em;
+									text-transform: uppercase;
+									color: #fbbf24aa;
+									margin-bottom: 10px;
+								">
+								State A · Single tab, default root *
+							</div>
+							<div class="tab-bar" style="
+									position: relative;
+									border: 1px solid var(--space-600);
+									border-radius: 6px 6px 0 0;
+								">
+								<div class="tab active" style="min-width: 200px">
+									<span class="tab-label">My map</span>
+									<div class="tab-root wildcard">
+										<svg class="tab-root-icon" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+											<circle cx="12" cy="12" r="3"></circle>
+											<path d="M12 2v4M12 18v4M2 12h4M18 12h4"></path>
+										</svg>
+										*
+									</div>
+									<!-- close hidden on last tab -->
+								</div>
+								<button class="tab-add">+</button>
+							</div>
+							<div style="
+									background: var(--space-800);
+									border: 1px solid var(--space-600);
+									border-top: none;
+									border-radius: 0 0 6px 6px;
+									padding: 12px 16px;
+									font-size: 11px;
+									color: var(--slate-500);
+								">
+								On first load: one tab, root =
+								<code style="
+										background: var(--space-700);
+										border-radius: 3px;
+										padding: 0 4px;
+										color: var(--violet);
+									">*</code>, all systems shown. Close button omitted when only one tab
+								exists.
+							</div>
+						</div>
+
+						<!-- State 2: root edit in-progress -->
+						<div style="margin-bottom: 40px">
+							<div style="
+									font-size: 10px;
+									font-weight: 700;
+									letter-spacing: 0.15em;
+									text-transform: uppercase;
+									color: #fbbf24aa;
+									margin-bottom: 10px;
+								">
+								State B · Root field being edited (click on root pill)
+							</div>
+							<div class="tab-bar" style="
+									border: 1px solid var(--space-600);
+									border-radius: 6px 6px 0 0;
+								">
+								<div class="tab active" style="min-width: 240px; gap: 6px">
+									<span class="tab-label">Home chain</span>
+									<!-- root pill replaced by inline input -->
+									<input type="text" value="J123456" style="
+											width: 80px;
+											height: 20px;
+											background: var(--space-700);
+											border: 1px solid var(--sky);
+											border-radius: 3px;
+											padding: 0 6px;
+											font-family: inherit;
+											font-size: 10px;
+											color: var(--violet);
+											outline: none;
+										" placeholder="system or *">
+									<button class="tab-close">×</button>
+								</div>
+								<div class="tab" style="min-width: 200px">
+									<span class="tab-label">All systems</span>
+									<div class="tab-root wildcard">
+										<svg class="tab-root-icon" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+											<circle cx="12" cy="12" r="3"></circle>
+											<path d="M12 2v4M12 18v4M2 12h4M18 12h4"></path>
+										</svg>
+										*
+									</div>
+									<button class="tab-close">×</button>
+								</div>
+								<button class="tab-add">+</button>
+							</div>
+							<div style="
+									background: var(--space-800);
+									border: 1px solid var(--space-600);
+									border-top: none;
+									border-radius: 0 0 6px 6px;
+									padding: 12px 16px;
+									font-size: 11px;
+									color: var(--slate-500);
+								">
+								Clicking the root pill swaps it for an inline text input. Enter
+								confirms; Escape cancels. Accepts a system name or
+								<code style="
+										background: var(--space-700);
+										border-radius: 3px;
+										padding: 0 4px;
+										color: var(--violet);
+									">*</code>. Canvas re-filters on confirm.
+							</div>
+						</div>
+
+						<!-- State 3: tab label being renamed -->
+						<div style="margin-bottom: 40px">
+							<div style="
+									font-size: 10px;
+									font-weight: 700;
+									letter-spacing: 0.15em;
+									text-transform: uppercase;
+									color: #fbbf24aa;
+									margin-bottom: 10px;
+								">
+								State C · Tab label rename (double-click label)
+							</div>
+							<div class="tab-bar" style="
+									border: 1px solid var(--space-600);
+									border-radius: 6px 6px 0 0;
+								">
+								<div class="tab active" style="min-width: 240px; gap: 6px">
+									<!-- label replaced by inline input -->
+									<input type="text" value="Home chain" style="
+											flex: 1;
+											height: 20px;
+											background: var(--space-700);
+											border: 1px solid var(--sky);
+											border-radius: 3px;
+											padding: 0 6px;
+											font-family: inherit;
+											font-size: 11px;
+											color: var(--slate-100);
+											outline: none;
+											min-width: 0;
+										">
+									<div class="tab-root named">
+										<svg class="tab-root-icon" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+											<circle cx="12" cy="12" r="3"></circle>
+											<path d="M12 2v4M12 18v4M2 12h4M18 12h4"></path>
+										</svg>
+										J123456
+									</div>
+									<button class="tab-close">×</button>
+								</div>
+								<button class="tab-add">+</button>
+							</div>
+							<div style="
+									background: var(--space-800);
+									border: 1px solid var(--space-600);
+									border-top: none;
+									border-radius: 0 0 6px 6px;
+									padding: 12px 16px;
+									font-size: 11px;
+									color: var(--slate-500);
+								">
+								Double-clicking the tab label enters rename mode. Enter/blur
+								confirms; Escape restores original name. Tab names are stored in
+								<code style="
+										background: var(--space-700);
+										border-radius: 3px;
+										padding: 0 4px;
+										color: var(--violet);
+									">localStorage</code>
+								per map slug.
+							</div>
+						</div>
+
+						<!-- State 4: many tabs, overflow -->
+						<div style="margin-bottom: 40px">
+							<div style="
+									font-size: 10px;
+									font-weight: 700;
+									letter-spacing: 0.15em;
+									text-transform: uppercase;
+									color: #fbbf24aa;
+									margin-bottom: 10px;
+								">
+								State D · Many tabs (horizontal scroll)
+							</div>
+							<div class="tab-bar" style="
+									border: 1px solid var(--space-600);
+									border-radius: 6px 6px 0 0;
+								">
+								<div class="tab active" style="min-width: 160px">
+									<span class="tab-label">Home chain</span>
+									<div class="tab-root named">
+										<svg class="tab-root-icon" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+											<circle cx="12" cy="12" r="3"></circle>
+											<path d="M12 2v4M12 18v4M2 12h4M18 12h4"></path></svg>J123456
+									</div>
+									<button class="tab-close">×</button>
+								</div>
+								<div class="tab" style="min-width: 160px">
+									<span class="tab-label">All systems</span>
+									<div class="tab-root wildcard">
+										<svg class="tab-root-icon" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+											<circle cx="12" cy="12" r="3"></circle>
+											<path d="M12 2v4M12 18v4M2 12h4M18 12h4"></path></svg>*
+									</div>
+									<button class="tab-close">×</button>
+								</div>
+								<div class="tab" style="min-width: 160px">
+									<span class="tab-label">Deep C5 chain</span>
+									<div class="tab-root named">
+										<svg class="tab-root-icon" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+											<circle cx="12" cy="12" r="3"></circle>
+											<path d="M12 2v4M12 18v4M2 12h4M18 12h4"></path></svg>J234567
+									</div>
+									<button class="tab-close">×</button>
+								</div>
+								<div class="tab" style="min-width: 160px">
+									<span class="tab-label">Scout view</span>
+									<div class="tab-root wildcard">
+										<svg class="tab-root-icon" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+											<circle cx="12" cy="12" r="3"></circle>
+											<path d="M12 2v4M12 18v4M2 12h4M18 12h4"></path></svg>*
+									</div>
+									<button class="tab-close">×</button>
+								</div>
+								<button class="tab-add">+</button>
+							</div>
+							<div style="
+									background: var(--space-800);
+									border: 1px solid var(--space-600);
+									border-top: none;
+									border-radius: 0 0 6px 6px;
+									padding: 12px 16px;
+									font-size: 11px;
+									color: var(--slate-500);
+								">
+								Tab bar scrolls horizontally (no scrollbar shown). All tab state
+								(labels, root values, order) persists to
+								<code style="
+										background: var(--space-700);
+										border-radius: 3px;
+										padding: 0 4px;
+										color: var(--violet);
+									">localStorage</code>
+								keyed by map slug.
+							</div>
+						</div>
+
+						<!-- localStorage note -->
+						<div style="
+								background: var(--space-800);
+								border: 1px solid var(--space-600);
+								border-radius: 6px;
+								padding: 16px 20px;
+								font-size: 11px;
+								color: var(--slate-400);
+								line-height: 1.8;
+							">
+							<div style="
+									font-size: 10px;
+									font-weight: 700;
+									letter-spacing: 0.12em;
+									text-transform: uppercase;
+									color: var(--slate-500);
+									margin-bottom: 8px;
+								">
+								localStorage persistence contract
+							</div>
+							Key:
+							<code style="
+									background: var(--space-700);
+									border-radius: 3px;
+									padding: 0 4px;
+									color: var(--violet);
+								">erbridge:map:{slug}:tabs</code><br>
+							Value: JSON array of
+							<code style="
+									background: var(--space-700);
+									border-radius: 3px;
+									padding: 0 4px;
+									color: var(--violet);
+								">{ id, label, root }</code><br><br>
+							Key:
+							<code style="
+									background: var(--space-700);
+									border-radius: 3px;
+									padding: 0 4px;
+									color: var(--violet);
+								">erbridge:map:{slug}:positions</code><br>
+							Value: JSON object of
+							<code style="
+									background: var(--space-700);
+									border-radius: 3px;
+									padding: 0 4px;
+									color: var(--violet);
+								">{ [nodeId]: { x, y } }</code><br><br>
+							<span style="color: var(--slate-500)">Neither key is written to the database. Lost on browser data
+								clear — acceptable; mappers re-drag as needed.</span>
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+		<!-- /view-tabui -->
+
+		<script>
+			function showView(name) {
+				document
+					.querySelectorAll(".view")
+					.forEach((v) => v.classList.remove("active"));
+				document.getElementById("view-" + name).classList.add("active");
+				document.querySelectorAll(".vt-btn").forEach((b, i) => {
+					b.classList.toggle(
+						"active",
+						["chain", "wild", "history", "tabui"][i] === name,
+					);
+				});
+			}
+
+			// Collapse/expand the whole sidebar
+			function toggleSidebar(id) {
+				document.getElementById(id).classList.toggle("collapsed");
+			}
+
+			// Auto-layout slide-out
+			function togglePopover(slideoutId) {
+				const slideout = document.getElementById(slideoutId);
+				const isOpen = slideout.classList.contains("open");
+				document
+					.querySelectorAll(".layout-slideout.open")
+					.forEach((s) => s.classList.remove("open"));
+				if (!isOpen) slideout.classList.add("open");
+			}
+			document.addEventListener("click", (e) => {
+				if (
+					!e.target.closest('.ctrl-btn[title="Auto layout"]') &&
+					!e.target.closest(".layout-slideout")
+				) {
+					document
+						.querySelectorAll(".layout-slideout.open")
+						.forEach((s) => s.classList.remove("open"));
+				}
+			});
+
+			// Collapse/expand an individual section
+			function toggleSection(headerBtn) {
+				const section = headerBtn.closest(".sidebar-section");
+				const body = section.querySelector(".section-body");
+				const chevron = headerBtn.querySelector(".chevron");
+				if (!body) return;
+				const isOpen = body.style.display !== "none";
+				body.style.display = isOpen ? "none" : "";
+				if (chevron) chevron.classList.toggle("open", !isOpen);
+			}
+		</script>
+	
+
+<protonpass-root-34c5 data-protonpass-role="root" data-protonpass-theme="dark"></protonpass-root-34c5></body></html>
