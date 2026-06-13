@@ -87,6 +87,23 @@
 		return perms[key] ?? 'read';
 	}
 
+	// Reset the per-result selections whenever a new search's results arrive, so a
+	// permission picked for a row in one search doesn't leak onto a same-keyed row
+	// in an unrelated later search. The identity signal is the concatenation of the
+	// current result ids; when it changes, the result set changed.
+	let resultsKey = $derived(
+		[
+			...characters.map((c) => `char-${c.id}`),
+			...corporations.map((o) => `corp-${o.eve_entity_id}`),
+			...alliances.map((o) => `ally-${o.eve_entity_id}`)
+		].join('|')
+	);
+	$effect(() => {
+		// Touch resultsKey so this effect re-runs when the result set changes.
+		resultsKey;
+		perms = {};
+	});
+
 	function permLabel(p: Permission): string {
 		switch (p) {
 			case 'read':
@@ -293,8 +310,17 @@
 		align-items: center;
 		gap: 12px;
 		margin: 0;
-		padding: 0;
+		padding: 4px 8px;
 		border: 0;
+		border-radius: 4px;
+	}
+	/* Keyboard focus anywhere in the radio group highlights the whole group, so a
+	   human user can see at a glance that the scope selector is active — clearer
+	   than a ring on a single small native radio. */
+	.scope:focus-within {
+		outline: 2px solid var(--sky);
+		outline-offset: 1px;
+		background: var(--space-900);
 	}
 	.scope legend {
 		float: left;

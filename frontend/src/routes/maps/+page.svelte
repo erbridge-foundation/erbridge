@@ -293,6 +293,12 @@
 	}
 	.checkbox input {
 		margin-top: 2px;
+		accent-color: var(--sky);
+		cursor: pointer;
+	}
+	.checkbox input:focus-visible {
+		outline: 2px solid var(--sky);
+		outline-offset: 2px;
 	}
 	.checkbox-label {
 		display: block;

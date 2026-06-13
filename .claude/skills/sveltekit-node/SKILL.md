@@ -281,6 +281,44 @@ Wrap responses in the same `{ data: … }` envelope used by the backend where it
 
 ---
 
+## Accessibility — the UI is for humans
+
+Every screen here is operated by a **human being** — with a keyboard, sometimes with a screen reader, sometimes with reduced-motion or other preferences set. This is a tool people use for hours; treat keyboard operability and assistive-tech support as correctness requirements, not polish. The small known userbase does **not** lower this bar — these are real people, and at least one may rely on a screen reader or keyboard-only navigation.
+
+Build it right the first time so a manual pass *confirms* accessibility rather than *discovering* its absence.
+
+### Keyboard operability
+
+- **Everything interactive is reachable and operable by keyboard alone.** No mouse-only controls. If you add `onclick`, the element must be a `<button>`/`<a>` (or have a role + `onkeydown`), not a bare `<div>`.
+- **Focus must always be visible.** Every focusable control needs a visible focus indicator. Native controls (`<input type="checkbox|radio|search">`, `<select>`) do **not** get an adequate ring for free in this dark theme — `accent-color` colours the control, it does not indicate focus. Add an explicit `:focus-visible` outline (`outline: 2px solid var(--sky); outline-offset: 2px;`).
+  - For a small native control where a hugging ring reads poorly (e.g. a radio against its blue `accent-color`), highlight the **enclosing group or label** instead — `.group:focus-within { outline … }` — so the indicator is unmistakable. A radio-group, a labelled checkbox row, and a segmented control are all candidates for group-level focus highlighting.
+- **Tab order follows visual/reading order.** Don't reorder with positive `tabindex`. Use `tabindex="-1"` only to remove something from the tab sequence deliberately.
+
+### Dialogs and focus management
+
+- A modal dialog **traps focus** while open (Tab/Shift+Tab cycle within it, computed at interaction time so conditionally-rendered fields participate), moves focus **in** on open, **restores** focus to the opener on close, and dismisses on **Escape** and backdrop click. `Modal.svelte` and `ConfirmDialog.svelte` are the reference implementations — reuse them rather than hand-rolling a dialog.
+- Dialogs carry `role="dialog"` (or `alertdialog` for destructive confirmations), `aria-modal="true"`, and `aria-labelledby` pointing at the title; describe the body with `aria-describedby` where there is body text.
+
+### Screen-reader & semantic requirements
+
+- **Use native semantic elements first** — `<button>`, `<a href>`, `<nav>`, `<fieldset>`/`<legend>`, `<label>` wired to its control. ARIA is a fallback for when no native element fits, not a substitute for using the right one.
+- **Every control has an accessible name.** A labelled `<label>`, or `aria-label`/`aria-labelledby`. Icon-only buttons **must** have an `aria-label`.
+- **Decorative images** (portraits/logos derivable from an id) use `alt=""`; informative images get real alt text.
+- **Status and error regions are announced** — `role="status"` / `aria-live="polite"` for transient hints (searching, "no matches"), `role="alert"` for errors. The maps/ACLs pages already follow this; match it.
+- **All user-facing strings go through paraglide (`m.*`)** — including `aria-label`s and status text, so assistive tech is localised too. No hardcoded English in markup.
+
+### Motion
+
+- Honour the reduced-motion preference at both layers: the JS tri-state (`data-reduce-motion` override → OS `prefers-reduced-motion`) used by the dialogs, and a `@media (prefers-reduced-motion: reduce)` CSS guard as defence-in-depth. Copy the pattern from `ConfirmDialog.svelte`; don't add unconditional transitions.
+
+### Verifying accessibility
+
+- `svelte-check` flags some a11y issues (missing `alt`, label associations) — treat its a11y warnings as errors, don't suppress them.
+- Keyboard behaviour (focus trap, wrap, restore) is **unit-testable** with `@testing-library/svelte` — write those tests; don't defer them to a manual pass.
+- The manual keyboard + screen-reader pass is the **final confirmation**, not the first time accessibility is considered. If a manual pass surfaces a missing focus ring or unlabelled control, that's a gap that should have been caught at authoring time — fix it and consider whether the skill needs another rule.
+
+---
+
 ## Svelte Flow
 
 Use `@xyflow/svelte` for any graph, canvas, or flow diagram UI.
@@ -550,6 +588,11 @@ test('unauthenticated visit redirects to /login', async ({ page }) => {
 - [ ] Mutations use form actions (preferred) or `+server.ts`
 - [ ] `use:enhance` on all `<form>` elements
 - [ ] Styles use CSS custom properties — no hardcoded colours or spacing values
+- [ ] Every interactive control is keyboard-operable with a visible `:focus-visible` indicator (native checkbox/radio/select included — group-highlight where a per-control ring reads poorly)
+- [ ] Modals reuse `Modal.svelte` / `ConfirmDialog.svelte` (focus trap, focus-in/restore, Escape, backdrop, dialog ARIA) — not hand-rolled
+- [ ] Every control has an accessible name; icon-only buttons have `aria-label`; decorative images use `alt=""`
+- [ ] Status/error regions use `role="status"` / `role="alert"`; all strings (incl. `aria-label`s) go through paraglide `m.*`
+- [ ] Reduced-motion honoured at JS + CSS layers; keyboard behaviour has Vitest coverage
 - [ ] Svelte Flow custom nodes are separate components, not inline label markup
 - [ ] Flow state persisted via debounced save, not on every change event
 - [ ] `$env/dynamic/private` for runtime secrets

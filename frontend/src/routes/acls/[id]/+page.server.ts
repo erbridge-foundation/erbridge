@@ -7,9 +7,9 @@ import {
 	updateAclMember,
 	removeAclMember,
 	searchEntities,
-	ApiError,
 	type AddMemberRequest
 } from '$lib/api';
+import { failFrom } from '$lib/form-errors';
 import type { PageServerLoad, Actions } from './$types';
 
 const MIN_SEARCH_LEN = 3;
@@ -65,10 +65,7 @@ export const actions: Actions = {
 				unavailable: page.unavailable
 			};
 		} catch (e) {
-			if (e instanceof ApiError) {
-				return fail(e.status, { action: 'search', code: e.code, message: e.message });
-			}
-			return fail(500, { action: 'search', code: 'internal_error', message: 'An unexpected error occurred' });
+			return failFrom('search', e);
 		}
 	},
 
@@ -117,10 +114,7 @@ export const actions: Actions = {
 		try {
 			await addAclMember(fetch, backend_internal_url(), params.id, body, cookie);
 		} catch (e) {
-			if (e instanceof ApiError) {
-				return fail(e.status, { action: 'addMember', code: e.code, message: e.message });
-			}
-			return fail(500, { action: 'addMember', code: 'internal_error', message: 'An unexpected error occurred' });
+			return failFrom('addMember', e);
 		}
 	},
 
@@ -141,10 +135,7 @@ export const actions: Actions = {
 		try {
 			await updateAclMember(fetch, backend_internal_url(), params.id, memberId, { permission }, cookie);
 		} catch (e) {
-			if (e instanceof ApiError) {
-				return fail(e.status, { action: 'updateMember', code: e.code, message: e.message, memberId });
-			}
-			return fail(500, { action: 'updateMember', code: 'internal_error', message: 'An unexpected error occurred', memberId });
+			return failFrom('updateMember', e, { memberId });
 		}
 	},
 
@@ -159,10 +150,7 @@ export const actions: Actions = {
 		try {
 			await removeAclMember(fetch, backend_internal_url(), params.id, memberId, cookie);
 		} catch (e) {
-			if (e instanceof ApiError) {
-				return fail(e.status, { action: 'removeMember', code: e.code, message: e.message, memberId });
-			}
-			return fail(500, { action: 'removeMember', code: 'internal_error', message: 'An unexpected error occurred', memberId });
+			return failFrom('removeMember', e, { memberId });
 		}
 	}
 };

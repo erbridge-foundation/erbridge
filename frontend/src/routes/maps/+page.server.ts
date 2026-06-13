@@ -1,14 +1,7 @@
 import { fail } from '@sveltejs/kit';
 import { backend_internal_url } from '$lib/server/env';
-import {
-	listMaps,
-	createMap,
-	deleteMap,
-	createAcl,
-	addAclMember,
-	getMe,
-	ApiError
-} from '$lib/api';
+import { listMaps, createMap, deleteMap, createAcl, addAclMember, getMe } from '$lib/api';
+import { failFrom } from '$lib/form-errors';
 import type { PageServerLoad, Actions } from './$types';
 
 export const load: PageServerLoad = async ({ fetch, request }) => {
@@ -81,10 +74,7 @@ export const actions: Actions = {
 				cookie
 			);
 		} catch (e) {
-			if (e instanceof ApiError) {
-				return fail(e.status, { action: 'create', code: e.code, message: e.message });
-			}
-			return fail(500, { action: 'create', code: 'internal_error', message: 'An unexpected error occurred' });
+			return failFrom('create', e);
 		}
 	},
 
@@ -99,10 +89,7 @@ export const actions: Actions = {
 		try {
 			await deleteMap(fetch, backend_internal_url(), id, cookie);
 		} catch (e) {
-			if (e instanceof ApiError) {
-				return fail(e.status, { action: 'delete', code: e.code, message: e.message, id });
-			}
-			return fail(500, { action: 'delete', code: 'internal_error', message: 'An unexpected error occurred', id });
+			return failFrom('delete', e, { id });
 		}
 	}
 };

@@ -1,6 +1,7 @@
 import { error, fail } from '@sveltejs/kit';
 import { backend_internal_url } from '$lib/server/env';
-import { listMaps, listAcls, updateMap, attachAcl, detachAcl, ApiError } from '$lib/api';
+import { listMaps, listAcls, updateMap, attachAcl, detachAcl } from '$lib/api';
+import { failFrom } from '$lib/form-errors';
 import type { PageServerLoad, Actions } from './$types';
 
 export const load: PageServerLoad = async ({ fetch, request, params }) => {
@@ -52,10 +53,7 @@ export const actions: Actions = {
 				cookie
 			);
 		} catch (e) {
-			if (e instanceof ApiError) {
-				return fail(e.status, { action: 'edit', code: e.code, message: e.message });
-			}
-			return fail(500, { action: 'edit', code: 'internal_error', message: 'An unexpected error occurred' });
+			return failFrom('edit', e);
 		}
 	},
 
@@ -71,10 +69,7 @@ export const actions: Actions = {
 		try {
 			await attachAcl(fetch, backend_internal_url(), mapId, aclId, cookie);
 		} catch (e) {
-			if (e instanceof ApiError) {
-				return fail(e.status, { action: 'attach', code: e.code, message: e.message });
-			}
-			return fail(500, { action: 'attach', code: 'internal_error', message: 'An unexpected error occurred' });
+			return failFrom('attach', e);
 		}
 	},
 
@@ -95,10 +90,7 @@ export const actions: Actions = {
 		try {
 			await detachAcl(fetch, backend_internal_url(), mapId, aclId, cookie);
 		} catch (e) {
-			if (e instanceof ApiError) {
-				return fail(e.status, { action: 'detach', code: e.code, message: e.message, aclId });
-			}
-			return fail(500, { action: 'detach', code: 'internal_error', message: 'An unexpected error occurred', aclId });
+			return failFrom('detach', e, { aclId });
 		}
 	}
 };

@@ -147,6 +147,37 @@ describe('MemberPicker search scope', () => {
 	});
 });
 
+describe('MemberPicker per-result permission state', () => {
+	it('resets selected permissions when a new result set arrives', async () => {
+		const { container, rerender } = render(MemberPicker, {
+			props: { characters: [aCharacter], searched: true }
+		});
+
+		// Pick a non-default permission on the first result set.
+		const select = row(container, 'Wasp 223').querySelector('select') as HTMLSelectElement;
+		await fireEvent.change(select, { target: { value: 'admin' } });
+		expect(select.value).toBe('admin');
+
+		// A new search returns a different character; the picker must not carry the
+		// previous selection over — the new row defaults back to 'read'.
+		const other = { id: 'char-uuid-2', eve_character_id: 8, name: 'Hornet 9' };
+		await rerender({ characters: [other], searched: true });
+
+		const newSelect = row(container, 'Hornet 9').querySelector('select') as HTMLSelectElement;
+		expect(newSelect.value).toBe('read');
+	});
+
+	it('defaults to read for every fresh result row', () => {
+		const { container } = render(MemberPicker, {
+			props: { characters: [aCharacter], corporations: [aCorp], searched: true }
+		});
+		const charSelect = row(container, 'Wasp 223').querySelector('select') as HTMLSelectElement;
+		const corpSelect = row(container, 'Test Corp').querySelector('select') as HTMLSelectElement;
+		expect(charSelect.value).toBe('read');
+		expect(corpSelect.value).toBe('read');
+	});
+});
+
 describe('MemberPicker unavailable vs empty', () => {
 	it('renders a distinct "search unavailable" notice', () => {
 		render(MemberPicker, { props: { unavailable: true, searched: true } });

@@ -62,11 +62,61 @@
 		}
 	});
 
+	// Selector for the focusable set. Recomputed on every Tab (not cached) so
+	// fields added or removed by conditional rendering always participate.
+	const FOCUSABLE =
+		'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+	function isVisible(el: HTMLElement): boolean {
+		// Exclude elements hidden via the `hidden` attribute or a display:none /
+		// visibility:hidden ancestor. We avoid offsetParent here because jsdom (and
+		// position:fixed contexts) report it null even for visible elements.
+		if (el.hidden) return false;
+		if (typeof getComputedStyle !== 'function') return true;
+		const style = getComputedStyle(el);
+		return style.display !== 'none' && style.visibility !== 'hidden';
+	}
+
+	function focusableElements(): HTMLElement[] {
+		if (!dialogEl) return [];
+		return Array.from(dialogEl.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(isVisible);
+	}
+
 	function onKeydown(event: KeyboardEvent) {
 		if (event.key === 'Escape') {
 			event.preventDefault();
 			onClose();
+			return;
 		}
+
+		if (event.key !== 'Tab') {
+			return;
+		}
+
+		// Focus trap: cycle within the dialog's focusable elements. The set is
+		// computed at keypress time so conditionally rendered fields are included.
+		const focusables = focusableElements();
+		if (focusables.length === 0) {
+			// Nothing focusable inside; keep focus on the dialog itself.
+			event.preventDefault();
+			dialogEl?.focus();
+			return;
+		}
+
+		const first = focusables[0];
+		const last = focusables[focusables.length - 1];
+		const active = document.activeElement;
+
+		if (event.shiftKey) {
+			if (active === first || active === dialogEl) {
+				event.preventDefault();
+				last.focus();
+			}
+		} else if (active === last) {
+			event.preventDefault();
+			first.focus();
+		}
+		// Otherwise let the browser move focus normally within the dialog.
 	}
 
 	function onBackdropPointerDown(event: PointerEvent) {
