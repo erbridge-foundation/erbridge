@@ -1,9 +1,7 @@
 ## Purpose
 
 EVE ESI OAuth2 authentication flow — `GET /auth/login`, `GET /auth/callback`, `POST /auth/logout`, `GET /auth/characters/add` — plus the Postgres-backed session store, sliding 7-day expiry, session-cookie JWT, ESI scope handling, and ESI discovery-document caching that support it.
-
 ## Requirements
-
 ### Requirement: Login redirects to EVE SSO
 The system SHALL redirect the browser to the EVE ESI authorization endpoint when `GET /auth/login` is requested. The authorization URL SHALL be derived from the ESI discovery document fetched at startup, never hardcoded. The redirect SHALL include all required OAuth2 parameters: `response_type=code`, `client_id`, `redirect_uri` (`{APP_URL}/auth/callback`), `scope` (the full required scope list), and a `state` parameter for CSRF protection.
 
@@ -57,7 +55,7 @@ On success the backend SHALL:
 2. If the resolved account has no character flagged `is_main = TRUE` after the row is written/claimed, the same transaction SHALL set `is_main = TRUE` on the just-written character. There SHALL always be exactly one main per account that has any characters.
 3. If the resolved `account.status` is `'soft_deleted'`, atomically reactivate it: `status = 'active'`, `delete_requested_at = NULL`.
 4. Set `account.last_login = now()` for the resolved account.
-5. Establish or update a session: insert (or update, in add-character mode) a row in the Postgres `session` table keyed by session ID, with `account_id` set to the resolved account, `csrf_state` and `add_character_mode` carried from the in-flight OAuth2 record, `created_at = now()` for new rows, `last_seen_at = now()`, and `expires_at = now() + interval '7 days'`. The row does NOT hold token material; tokens live only in `eve_character`.
+5. Establish or update a session: insert (or update, in add-character mode) a row in the Postgres `session` table keyed by session ID, with `account_id` set to the resolved account, `created_at = now()` for new rows, `last_seen_at = now()`, and `expires_at = now() + interval '7 days'`. The row does NOT hold token material; tokens live only in `eve_character`. (The in-flight OAuth2 record's transient fields are consumed by the callback itself and are not persisted onto the session row.)
 6. Set the session cookie (`httpOnly`, `SameSite=Lax`) carrying a signed HS256 JWT whose `exp` claim is 7 days out, and redirect to the validated `return_to` path stashed in the in-flight OAuth2 record, or to `/` when none was stashed.
 
 #### Scenario: Valid callback creates session and redirects home
@@ -90,7 +88,7 @@ On success the backend SHALL:
 
 #### Scenario: Session row holds no token material
 - **WHEN** any row in the `session` table is inspected
-- **THEN** the row holds only `session_id`, `account_id`, `csrf_state`, `add_character_mode`, `created_at`, `last_seen_at`, and `expires_at`; it does NOT hold the access or refresh token
+- **THEN** the row holds only `session_id`, `account_id`, `created_at`, `last_seen_at`, and `expires_at`; it does NOT hold the access or refresh token
 
 #### Scenario: Invalid or missing state parameter
 - **WHEN** `/auth/callback` is called with a missing or mismatched `state` parameter
@@ -352,3 +350,4 @@ The rejection SHALL emit a `BlockedLoginRejected { eve_character_id }` audit eve
 #### Scenario: Block check precedes account creation
 - **WHEN** a never-before-seen blocked `eve_character_id` completes SSO
 - **THEN** the block is detected before any `account` row would be created, so no orphaned account results from the rejected login
+

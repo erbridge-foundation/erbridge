@@ -1,9 +1,7 @@
 ## Purpose
 
 Monorepo layout (`/frontend`, `/backend`), Docker Compose stack (frontend, backend, Traefik v3, Postgres 16), Traefik path-prefix routing, environment-variable configuration, frontend SvelteKit + Svelte 5 baseline, the `/login` page, the project-wide design system, and the backend's Rust idiom rules.
-
 ## Requirements
-
 ### Requirement: Monorepo directory structure
 The repository SHALL contain a `/frontend` directory with the SvelteKit application and a `/backend` directory with the Rust/Axum application. Each SHALL have its own `Dockerfile`. Common configuration (`.env.example`, `docker-compose.yml`) SHALL live at the repository root.
 
@@ -51,7 +49,6 @@ Required variables:
 #### Scenario: Missing ENCRYPTION_SECRET causes startup failure
 - **WHEN** the backend starts without `ENCRYPTION_SECRET` set
 - **THEN** the process exits with a non-zero status and a clear error message
-
 
 #### Scenario: Missing ENCRYPTION_SECRET causes startup failure
 - **WHEN** the backend starts without `ESI_CLIENT_ID` set
@@ -173,3 +170,23 @@ The backend SHALL use latest stable Rust. Error handling SHALL use `thiserror` f
 #### Scenario: Compilation succeeds with no warnings
 - **WHEN** `cargo build --release` is run in the `backend/` directory
 - **THEN** the build succeeds with zero compiler warnings
+
+### Requirement: Backend service lifecycle and request limits
+
+The backend SHALL shut down gracefully on SIGTERM and SIGINT: stop accepting new connections, allow in-flight requests to complete, then exit — a routine deploy MUST NOT sever requests mid-flight. The backend SHALL bound request duration with a timeout layer (30 seconds) so a stalled upstream cannot hold connections open indefinitely. The listen address SHALL be configurable via a `BIND_ADDR` environment variable, defaulting to `0.0.0.0:3000` so existing deployments need no configuration change.
+
+#### Scenario: SIGTERM drains in-flight requests
+
+- **WHEN** the process receives SIGTERM while a request is in flight
+- **THEN** that request completes and receives its response, no new connections are accepted, and the process then exits
+
+#### Scenario: A hung request is terminated by the timeout
+
+- **WHEN** a request's handler does not produce a response within the timeout
+- **THEN** the connection receives an error response rather than hanging indefinitely
+
+#### Scenario: Default bind address is unchanged
+
+- **WHEN** the backend starts with no `BIND_ADDR` set
+- **THEN** it listens on `0.0.0.0:3000` exactly as before
+
