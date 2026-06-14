@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO system_static (system_id, static_code)\n            SELECT $1, code FROM UNNEST($2::text[]) AS code\n            ON CONFLICT (system_id, static_code) DO NOTHING\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e8c52eada7a379131d9ab3c0a615dd5914628dbc2720568ea100ea309537da33"
+}

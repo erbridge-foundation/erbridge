@@ -59,6 +59,51 @@ impl RateLimitConfig {
 /// no deployment change is required for the common case.
 pub const DEFAULT_BIND_ADDR: &str = "0.0.0.0:3000";
 
+/// EVE system-catalog source URLs and the anoikis User-Agent. Defaults baked in;
+/// overridable via env so tests can point them at fixtures/mirrors. The anoikis
+/// fetch sends an explicit, identifying User-Agent as a good-citizen courtesy
+/// (the host does not currently reject the default, but it future-proofs us).
+pub const DEFAULT_SYSTEMS_URL: &str = "https://api.eve-scout.com/v2/public/systems";
+pub const DEFAULT_WORMHOLE_TYPES_URL: &str = "https://api.eve-scout.com/v2/public/wormholetypes";
+pub const DEFAULT_STATICS_URL: &str = "https://anoikis.info/data/wh-statics.json";
+pub const DEFAULT_CATALOG_USER_AGENT: &str =
+    "erbridge-wormhole-mapper (+https://github.com/erbridge)";
+
+/// Sources and identity for the daily EVE system-catalog sync.
+#[derive(Clone, Debug)]
+pub struct CatalogConfig {
+    pub systems_url: String,
+    pub wormhole_types_url: String,
+    pub statics_url: String,
+    pub user_agent: String,
+}
+
+impl CatalogConfig {
+    fn from_env() -> Self {
+        Self {
+            systems_url: std::env::var("CATALOG_SYSTEMS_URL")
+                .unwrap_or_else(|_| DEFAULT_SYSTEMS_URL.to_string()),
+            wormhole_types_url: std::env::var("CATALOG_WORMHOLE_TYPES_URL")
+                .unwrap_or_else(|_| DEFAULT_WORMHOLE_TYPES_URL.to_string()),
+            statics_url: std::env::var("CATALOG_STATICS_URL")
+                .unwrap_or_else(|_| DEFAULT_STATICS_URL.to_string()),
+            user_agent: std::env::var("CATALOG_USER_AGENT")
+                .unwrap_or_else(|_| DEFAULT_CATALOG_USER_AGENT.to_string()),
+        }
+    }
+}
+
+impl Default for CatalogConfig {
+    fn default() -> Self {
+        Self {
+            systems_url: DEFAULT_SYSTEMS_URL.to_string(),
+            wormhole_types_url: DEFAULT_WORMHOLE_TYPES_URL.to_string(),
+            statics_url: DEFAULT_STATICS_URL.to_string(),
+            user_agent: DEFAULT_CATALOG_USER_AGENT.to_string(),
+        }
+    }
+}
+
 pub struct Config {
     pub app_url: String,
     pub encryption_secret: String,
@@ -68,6 +113,7 @@ pub struct Config {
     /// Socket address to bind, `BIND_ADDR` (default [`DEFAULT_BIND_ADDR`]).
     pub bind_addr: String,
     pub rate_limit: RateLimitConfig,
+    pub catalog: CatalogConfig,
 }
 
 impl Config {
@@ -85,6 +131,7 @@ impl Config {
                 .context("DATABASE_URL environment variable is required")?,
             bind_addr: std::env::var("BIND_ADDR").unwrap_or_else(|_| DEFAULT_BIND_ADDR.to_string()),
             rate_limit: RateLimitConfig::from_env()?,
+            catalog: CatalogConfig::from_env(),
         })
     }
 }

@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO wormhole_type (identifier, type_id, target_system_class,\n                 max_jump_mass, max_stable_mass, max_stable_time, mass_regeneration,\n                 possible_static, wandering_only, signature_level, source)\n               VALUES ('OLD', 1, 'ns', 1, 1, 1, 0, true, false, '{}', '{}')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "b550ec230febc4fb248621e096588b229509fabee05782f5cfb137846daaae47"
+}

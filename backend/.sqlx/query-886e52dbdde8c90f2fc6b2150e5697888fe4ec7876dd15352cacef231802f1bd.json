@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO eve_system (system_id, name, class, region_id, region_name,\n                 security_status, jove_observatory)\n               VALUES (99, 'OldSystem', 'hs', 1, 'R', 0.5, false)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "886e52dbdde8c90f2fc6b2150e5697888fe4ec7876dd15352cacef231802f1bd"
+}

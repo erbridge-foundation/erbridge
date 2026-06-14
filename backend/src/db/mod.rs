@@ -4,6 +4,7 @@ pub mod acl_member;
 pub mod api_keys;
 pub mod blocks;
 pub mod characters;
+pub mod eve_system;
 pub mod map;
 pub mod map_acl;
 pub mod preferences;

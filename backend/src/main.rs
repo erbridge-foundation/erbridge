@@ -82,6 +82,18 @@ async fn main() -> anyhow::Result<()> {
         encryption_secret: state.config.encryption_secret.clone(),
     });
 
+    // Start the daily EVE system-catalog sync: refreshes the system spine,
+    // wormhole-type dictionary, and per-system statics from eve-scout + anoikis.
+    // Cloned handles so the task outlives `state`.
+    backend::services::eve_system_sync::spawn(backend::services::eve_system_sync::SyncContext {
+        pool: state.db.clone(),
+        http: state.http_client.clone(),
+        systems_url: state.config.catalog.systems_url.clone(),
+        wormhole_types_url: state.config.catalog.wormhole_types_url.clone(),
+        statics_url: state.config.catalog.statics_url.clone(),
+        user_agent: state.config.catalog.user_agent.clone(),
+    });
+
     let bind_addr = state.config.bind_addr.clone();
     let app = backend::build_router(state);
 

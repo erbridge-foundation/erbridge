@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO system_static (system_id, static_code) VALUES (99, 'OLD')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "96c72811269fb3357587ae7445991828da9e082706a86b715ec9b61c072912b4"
+}

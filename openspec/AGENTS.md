@@ -57,8 +57,12 @@ services hold business logic; db holds sqlx queries. Layering is enforced by
   `maps`, `entities`, `preferences`, `admin`.
 
 ### Services (`services/`)
-`account`, `acl`, `admin`, `api_keys`, `auth`, `entity_search`, `health`, `map`,
-`preferences`, `token_sweep` (daily ESI token-refresh sweep / token_status).
+`account`, `acl`, `admin`, `api_keys`, `auth`, `entity_search`, `eve_system_sync`,
+`health`, `map`, `preferences`, `token_sweep` (daily ESI token-refresh sweep / token_status).
+- `eve_system_sync` — daily background catalog refresh (`spawn`/`run_once`, modelled on
+  `token_sweep`): fetch-all-then-write of `eve_system` / `wormhole_type` / `system_static`
+  from eve-scout (`/systems`, `/wormholetypes`) + anoikis (`wh-statics`), merged on
+  J-code = `eve_system.name`, with a pre-write sanity floor and a single atomic upsert txn.
 - `auth` — SSO completion (`complete_sso_callback`). The bind decision consults the
   SSO `owner` hash: a presented hash differing from a non-null stored hash is a
   CCP-confirmed **transfer**, so the character is detached from the seller and
@@ -69,8 +73,8 @@ services hold business logic; db holds sqlx queries. Layering is enforced by
   user-facing soft-delete.
 
 ### DB (`db/`)
-`accounts`, `acl`, `acl_member`, `api_keys`, `blocks`, `characters`, `map`, `map_acl`,
-`preferences`, `sessions`. `test_helpers.rs` for test fixtures. Schema lives in
+`accounts`, `acl`, `acl_member`, `api_keys`, `blocks`, `characters`, `eve_system`, `map`,
+`map_acl`, `preferences`, `sessions`. `test_helpers.rs` for test fixtures. Schema lives in
 `backend/migrations/*.sql` (sequential; sqlx offline cache in `.sqlx/` must be regenerated
 and committed when queries change).
 - `account.status` ∈ {`active`, `soft_deleted`, `orphaned`} (CHECK-enforced).
@@ -80,11 +84,17 @@ and committed when queries change).
   emptied account stays nameable. FK fallout on account delete: `eve_character`/`session`/
   `api_key` CASCADE; `map`/`acl` owner + `audit_log` actor + `blocked_eve_character`
   blocker SET NULL.
+- `eve_system` — the EVE reference catalog: `eve_system` (system spine, PK `system_id`,
+  `name` indexed; J-code = `name`), `wormhole_type` (type dictionary, PK `identifier`),
+  `system_static` (join `(system_id, static_code)` → both FKs). Free-text `class` /
+  `target_system_class` (no enum). Written only by the `eve_system_sync` service.
 
 ### ESI (`esi/`)
 EVE Swagger Interface client: `token` (OAuth tokens + refresh), `jwt` + `jwks` (ESI JWT
 signature verification vs SSO JWKS — note JWKS is **mixed-type**, skip non-RSA keys),
-`public_info`, `search`, `rate_limit` (outbound dual-limiter), `test_support`.
+`public_info`, `search`, `rate_limit` (outbound dual-limiter), `test_support`,
+`eve_scout` (typed fetches for the system-catalog sources — eve-scout `/systems` +
+`/wormholetypes`, anoikis `wh-statics` with its required non-default User-Agent).
 
 ### DTOs (`dto/`)
 `account`, `acl`, `admin`, `entity`, `health`, `keys`, `map`, `preferences`.

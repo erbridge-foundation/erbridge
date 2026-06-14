@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO eve_system (\n            system_id, name, class, region_id, region_name,\n            security_status, jove_observatory\n        )\n        SELECT * FROM UNNEST(\n            $1::bigint[], $2::text[], $3::text[], $4::bigint[],\n            $5::text[], $6::real[], $7::bool[]\n        )\n        ON CONFLICT (system_id) DO UPDATE SET\n            name             = excluded.name,\n            class            = excluded.class,\n            region_id        = excluded.region_id,\n            region_name      = excluded.region_name,\n            security_status  = excluded.security_status,\n            jove_observatory = excluded.jove_observatory\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8Array",
+        "TextArray",
+        "TextArray",
+        "Int8Array",
+        "TextArray",
+        "Float4Array",
+        "BoolArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "970e7811afcb9397ada734819fdf78cf99c29867830e91ffd7468f867a6d7a85"
+}

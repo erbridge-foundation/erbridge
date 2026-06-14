@@ -1,3 +1,4 @@
+pub mod eve_scout;
 pub mod jwks;
 pub mod jwt;
 pub mod public_info;

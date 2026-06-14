@@ -41,6 +41,7 @@ fn build_state(pool: PgPool) -> AppState {
             database_url: String::new(),
             bind_addr: "0.0.0.0:3000".to_string(),
             rate_limit: Default::default(),
+            catalog: Default::default(),
         }),
         db: pool.clone(),
         esi_metadata: Arc::new(EsiMetadata {

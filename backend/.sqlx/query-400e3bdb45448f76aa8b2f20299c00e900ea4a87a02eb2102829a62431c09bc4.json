@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM system_static WHERE system_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "400e3bdb45448f76aa8b2f20299c00e900ea4a87a02eb2102829a62431c09bc4"
+}
