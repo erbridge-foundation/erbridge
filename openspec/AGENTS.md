@@ -59,12 +59,27 @@ services hold business logic; db holds sqlx queries. Layering is enforced by
 ### Services (`services/`)
 `account`, `acl`, `admin`, `api_keys`, `auth`, `entity_search`, `health`, `map`,
 `preferences`, `token_sweep` (daily ESI token-refresh sweep / token_status).
+- `auth` — SSO completion (`complete_sso_callback`). The bind decision consults the
+  SSO `owner` hash: a presented hash differing from a non-null stored hash is a
+  CCP-confirmed **transfer**, so the character is detached from the seller and
+  rebound to the authenticating owner (login: fresh account; add-char: session
+  account); the emptied seller becomes `account.status = 'orphaned'`.
+- `admin` — also owns the irreversible **hard-delete** (`DELETE FROM account` behind
+  `AdminAccount` + last-admin guard + blast-radius preview), distinct from the
+  user-facing soft-delete.
 
 ### DB (`db/`)
 `accounts`, `acl`, `acl_member`, `api_keys`, `blocks`, `characters`, `map`, `map_acl`,
 `preferences`, `sessions`. `test_helpers.rs` for test fixtures. Schema lives in
 `backend/migrations/*.sql` (sequential; sqlx offline cache in `.sqlx/` must be regenerated
 and committed when queries change).
+- `account.status` ∈ {`active`, `soft_deleted`, `orphaned`} (CHECK-enforced).
+  `orphaned` = zero characters, unreachable, never login-reactivated (distinct from
+  owner-recoverable `soft_deleted`). `account.last_known_main_character_{id,name}` is a
+  denormalized identity snapshot (NOT an FK), written in-tx at every `is_main` flip so an
+  emptied account stays nameable. FK fallout on account delete: `eve_character`/`session`/
+  `api_key` CASCADE; `map`/`acl` owner + `audit_log` actor + `blocked_eve_character`
+  blocker SET NULL.
 
 ### ESI (`esi/`)
 EVE Swagger Interface client: `token` (OAuth tokens + refresh), `jwt` + `jwks` (ESI JWT

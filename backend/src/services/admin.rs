@@ -231,6 +231,79 @@ pub async fn unblock_character(
     Ok(())
 }
 
+/// Re-exported so the handler maps a DTO from a service-owned type.
+pub use crate::db::accounts::HardDeletePreview;
+
+/// Returns the hard-delete blast-radius preview for `account_id`. `NotFound`
+/// (404) when the account does not exist, so the admin UI never previews a ghost.
+pub async fn hard_delete_preview(
+    pool: &PgPool,
+    account_id: Uuid,
+) -> Result<HardDeletePreview, AppError> {
+    if !accounts::account_exists(pool, account_id).await? {
+        return Err(AppError::NotFound);
+    }
+    Ok(accounts::hard_delete_preview(pool, account_id).await?)
+}
+
+/// Irreversibly hard-deletes `account_id` (`DELETE FROM account`), behind the
+/// `AdminAccount` extractor at the handler. `NotFound` (404) for a missing
+/// account. The last-server-admin guard runs INSIDE the transaction: if the
+/// target is an active server admin and deleting it would leave no other active
+/// admin, the request is refused with `CannotRemoveLastServerAdmin` (409) and
+/// nothing is deleted. Emits `AccountHardDeleted` (actored by `actor`, carrying
+/// the deleted account's `last_known_main_character_name` snapshot) in the same
+/// transaction, before the delete, so the actor/snapshot resolve while the row
+/// still exists. The FK graph enacts the blast radius (characters/sessions/keys
+/// CASCADE away; maps/ACLs/audit/blocks SET NULL). Returns the preview counts.
+pub async fn hard_delete_account(
+    pool: &PgPool,
+    actor: Uuid,
+    account_id: Uuid,
+) -> Result<HardDeletePreview, AppError> {
+    let account = accounts::get_account(pool, account_id)
+        .await?
+        .ok_or(AppError::NotFound)?;
+
+    // Snapshot the blast radius before the delete for the response + so the admin
+    // sees what was removed even if they skipped the preview endpoint.
+    let preview = accounts::hard_delete_preview(pool, account_id).await?;
+
+    let mut tx = pool.begin().await?;
+
+    // Last-admin guard, inside the tx, before the delete. `count_server_admins_tx`
+    // FOR UPDATE-locks every active admin so concurrent admin removals serialise;
+    // a count <= 1 with the target itself being that admin means deleting it would
+    // leave zero. Mirrors `services::account::delete_account`.
+    if account.is_server_admin {
+        let admin_count = accounts::count_server_admins_tx(&mut tx).await?;
+        if admin_count <= 1 {
+            return Err(AppError::Conflict(
+                ConflictKind::CannotRemoveLastServerAdmin,
+            ));
+        }
+    }
+
+    // Capture the snapshot name in-tx, then emit the audit BEFORE the delete so
+    // the actor main + target snapshot resolve while rows still exist.
+    let last_known_main_name = accounts::get_last_known_main_name(&mut tx, account_id).await?;
+    audit::record_in_tx(
+        &mut tx,
+        Some(actor),
+        None,
+        AuditEvent::AccountHardDeleted {
+            account_id,
+            last_known_main_name,
+        },
+    )
+    .await?;
+
+    accounts::hard_delete(&mut tx, account_id).await?;
+    tx.commit().await?;
+
+    Ok(preview)
+}
+
 /// An account with its characters, as surfaced by the admin accounts list.
 /// Re-exported from the db layer so the DTO maps from a service-owned type.
 pub use crate::db::accounts::AccountWithCharacters as AdminAccountInfo;
@@ -438,7 +511,7 @@ mod tests {
         )
         .await
         .unwrap();
-        char_db::promote_if_no_main(&mut tx, account_id, char_id)
+        char_db::promote_if_no_main(&mut tx, account_id, char_id, eve_id, name)
             .await
             .unwrap();
         tx.commit().await.unwrap();
@@ -454,6 +527,177 @@ mod tests {
         .await
         .unwrap()
         .c
+    }
+
+    // ── hard delete + preview ───────────────────────────────────────────────
+
+    async fn account_exists_row(pool: &PgPool, id: Uuid) -> bool {
+        sqlx::query!(
+            r#"SELECT EXISTS(SELECT 1 FROM account WHERE id = $1) AS "e!""#,
+            id
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap()
+        .e
+    }
+
+    #[sqlx::test]
+    async fn hard_delete_preview_counts_removed_and_unowned(pool: PgPool) {
+        let admin = account_with_main(&pool, 1, "Admin", true).await;
+        let target = account_with_main(&pool, 2, "Target", false).await;
+        // One session, one api key (removed); one map, one acl (unowned).
+        sqlx::query!(
+            "INSERT INTO session (session_id, account_id, expires_at)
+             VALUES ('s', $1, now() + interval '7 days')",
+            target
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query!(
+            "INSERT INTO api_key (scope, account_id, name, key_hash)
+             VALUES ('account', $1, 'k', 'h')",
+            target
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query!(
+            "INSERT INTO map (name, slug, owner_account_id) VALUES ('M', 'm', $1)",
+            target
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query!(
+            "INSERT INTO acl (name, owner_account_id) VALUES ('A', $1)",
+            target
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let preview = hard_delete_preview(&pool, target).await.unwrap();
+        assert_eq!(preview.characters, 1);
+        assert_eq!(preview.sessions, 1);
+        assert_eq!(preview.api_keys, 1);
+        assert_eq!(preview.owned_maps, 1);
+        assert_eq!(preview.owned_acls, 1);
+        let _ = admin;
+    }
+
+    #[sqlx::test]
+    async fn hard_delete_preview_404_for_missing(pool: PgPool) {
+        let err = hard_delete_preview(&pool, Uuid::new_v4())
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AppError::NotFound));
+    }
+
+    #[sqlx::test]
+    async fn hard_delete_cascades_private_and_set_nulls_co_owned(pool: PgPool) {
+        let admin = account_with_main(&pool, 1, "Admin", true).await;
+        let target = account_with_main(&pool, 2, "Target", false).await;
+        sqlx::query!(
+            "INSERT INTO session (session_id, account_id, expires_at)
+             VALUES ('s', $1, now() + interval '7 days')",
+            target
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let map_id = sqlx::query!(
+            "INSERT INTO map (name, slug, owner_account_id) VALUES ('M', 'm', $1) RETURNING id",
+            target
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+        .id;
+        let acl_id = sqlx::query!(
+            "INSERT INTO acl (name, owner_account_id) VALUES ('A', $1) RETURNING id",
+            target
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+        .id;
+        // An audit row actored by the target, to assert SET NULL preserves it.
+        audit::record_in_tx(
+            &mut pool.begin().await.unwrap(),
+            None,
+            None,
+            AuditEvent::AccountReactivated { account_id: target },
+        )
+        .await
+        .ok();
+
+        hard_delete_account(&pool, admin, target).await.unwrap();
+
+        // Account + its private rows gone.
+        assert!(!account_exists_row(&pool, target).await);
+        let chars =
+            sqlx::query!("SELECT COUNT(*) AS \"c!\" FROM eve_character WHERE eve_character_id = 2")
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+                .c;
+        assert_eq!(chars, 0, "character cascaded away");
+        let sessions =
+            sqlx::query!("SELECT COUNT(*) AS \"c!\" FROM session WHERE session_id = 's'")
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+                .c;
+        assert_eq!(sessions, 0, "session cascaded away");
+
+        // Co-owned rows survive, unowned.
+        let map_owner = sqlx::query!("SELECT owner_account_id FROM map WHERE id = $1", map_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+            .owner_account_id;
+        assert_eq!(map_owner, None, "map survives, unowned");
+        let acl_owner = sqlx::query!("SELECT owner_account_id FROM acl WHERE id = $1", acl_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+            .owner_account_id;
+        assert_eq!(acl_owner, None, "acl survives, unowned");
+
+        // The hard-delete is audited.
+        assert_eq!(audit_count(&pool, "account_hard_deleted").await, 1);
+    }
+
+    #[sqlx::test]
+    async fn hard_delete_last_admin_guard_rejects(pool: PgPool) {
+        // A lone admin cannot be hard-deleted (would leave zero admins).
+        let only = account_with_main(&pool, 1, "Only", true).await;
+        let err = hard_delete_account(&pool, only, only).await.unwrap_err();
+        assert!(matches!(
+            err,
+            AppError::Conflict(ConflictKind::CannotRemoveLastServerAdmin)
+        ));
+        assert!(account_exists_row(&pool, only).await, "nothing deleted");
+        assert_eq!(audit_count(&pool, "account_hard_deleted").await, 0);
+    }
+
+    #[sqlx::test]
+    async fn hard_delete_admin_allowed_when_another_admin_exists(pool: PgPool) {
+        let a = account_with_main(&pool, 1, "A", true).await;
+        let b = account_with_main(&pool, 2, "B", true).await;
+        hard_delete_account(&pool, a, b).await.unwrap();
+        assert!(!account_exists_row(&pool, b).await);
+    }
+
+    #[sqlx::test]
+    async fn hard_delete_404_for_missing(pool: PgPool) {
+        let admin = account_with_main(&pool, 1, "Admin", true).await;
+        let err = hard_delete_account(&pool, admin, Uuid::new_v4())
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AppError::NotFound));
     }
 
     #[sqlx::test]
@@ -718,7 +962,7 @@ mod tests {
         )
         .await
         .unwrap();
-        char_db::promote_if_no_main(&mut tx, account_id, char_id)
+        char_db::promote_if_no_main(&mut tx, account_id, char_id, eve_id, "Expired")
             .await
             .unwrap();
         tx.commit().await.unwrap();

@@ -12,14 +12,14 @@ use crate::{
     dto::admin::{
         AdminAccountDto, AuditLogEntryDto, AuditLogPageDto, BlockCharacterRequest,
         BlockedCharacterDto, CharacterSearchResultDto, EsiCharacterSearchPageDto,
-        EsiCharacterSearchResultDto,
+        EsiCharacterSearchResultDto, HardDeletePreviewDto,
     },
     error::{AppError, ErrorEnvelope},
     esi::{public_info, search},
     handlers::middleware::AdminAccount,
     response::{
         AdminAccountListResponse, ApiResponse, AuditLogPageResponse, BlockListResponse,
-        CharacterSearchResponse, EsiCharacterSearchResponse,
+        CharacterSearchResponse, EsiCharacterSearchResponse, HardDeletePreviewResponse,
     },
     services::admin::{self as svc, EsiSearchContext, EsiSearchOutcome},
 };
@@ -180,6 +180,51 @@ pub async fn revoke_admin(
 ) -> Result<StatusCode, AppError> {
     svc::revoke_admin(&state.db, admin_id, target).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/admin/accounts/{id}/hard-delete-preview",
+    params(("id" = Uuid, Path, description = "Target account id")),
+    responses(
+        (status = 200, description = "Blast-radius preview for the hard-delete", body = HardDeletePreviewResponse),
+        (status = 401, description = "Unauthenticated", body = ErrorEnvelope),
+        (status = 403, description = "Server admin required", body = ErrorEnvelope),
+        (status = 404, description = "Account not found", body = ErrorEnvelope),
+    ),
+    security(("session_cookie" = [])),
+    tag = "admin",
+)]
+pub async fn hard_delete_preview(
+    State(state): State<AppState>,
+    _admin: AdminAccount,
+    Path(target): Path<Uuid>,
+) -> Result<Json<ApiResponse<HardDeletePreviewDto>>, AppError> {
+    let preview = svc::hard_delete_preview(&state.db, target).await?;
+    Ok(Json(ApiResponse::data(HardDeletePreviewDto::from(preview))))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/admin/accounts/{id}/hard-delete",
+    params(("id" = Uuid, Path, description = "Target account id")),
+    responses(
+        (status = 200, description = "Account hard-deleted; returns the blast radius removed", body = HardDeletePreviewResponse),
+        (status = 401, description = "Unauthenticated", body = ErrorEnvelope),
+        (status = 403, description = "Server admin required", body = ErrorEnvelope),
+        (status = 404, description = "Account not found", body = ErrorEnvelope),
+        (status = 409, description = "Cannot remove the last server admin", body = ErrorEnvelope),
+    ),
+    security(("session_cookie" = [])),
+    tag = "admin",
+)]
+pub async fn hard_delete_account(
+    State(state): State<AppState>,
+    AdminAccount(admin_id): AdminAccount,
+    Path(target): Path<Uuid>,
+) -> Result<Json<ApiResponse<HardDeletePreviewDto>>, AppError> {
+    let preview = svc::hard_delete_account(&state.db, admin_id, target).await?;
+    Ok(Json(ApiResponse::data(HardDeletePreviewDto::from(preview))))
 }
 
 #[utoipa::path(

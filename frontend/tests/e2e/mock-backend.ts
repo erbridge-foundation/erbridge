@@ -248,6 +248,7 @@ type AdminAccount = {
 	status: string;
 	is_server_admin: boolean;
 	created_at: string;
+	last_known_main_character_name: string | null;
 	characters: {
 		eve_character_id: number;
 		name: string;
@@ -255,12 +256,13 @@ type AdminAccount = {
 		token_status: 'active' | 'expired' | 'owner_mismatch';
 	}[];
 };
-const adminAccounts: AdminAccount[] = [
+let adminAccounts: AdminAccount[] = [
 	{
 		id: 'acc1',
 		status: 'active',
 		is_server_admin: true,
 		created_at: '2025-01-01T00:00:00Z',
+		last_known_main_character_name: 'Main Pilot',
 		characters: [
 			{ eve_character_id: 1001, name: 'Main Pilot', is_main: true, token_status: 'active' },
 			// A transferred alt, so the Characters-tab filter has something to surface.
@@ -272,7 +274,18 @@ const adminAccounts: AdminAccount[] = [
 		status: 'active',
 		is_server_admin: false,
 		created_at: '2025-02-01T00:00:00Z',
+		last_known_main_character_name: 'Promote Me',
 		characters: [{ eve_character_id: 2001, name: 'Promote Me', is_main: true, token_status: 'active' }]
+	},
+	{
+		// An orphaned (zero-character) account, nameable only via its last-known
+		// main — the hard-delete e2e target.
+		id: 'acc3',
+		status: 'orphaned',
+		is_server_admin: false,
+		created_at: '2025-03-01T00:00:00Z',
+		last_known_main_character_name: 'Ghost Seller',
+		characters: []
 	}
 ];
 let blocks: {
@@ -437,6 +450,52 @@ const server = http.createServer(async (req, res) => {
 			}
 			acc.is_server_admin = false;
 			noContent(res);
+			return;
+		}
+
+		const previewMatch = url.match(
+			/^\/api\/v1\/admin\/accounts\/([^/]+)\/hard-delete-preview$/
+		);
+		if (method === 'GET' && previewMatch) {
+			const acc = adminAccounts.find((a) => a.id === previewMatch[1]);
+			if (!acc) {
+				json(res, 404, { error: { code: 'not_found', message: 'Account not found' } });
+				return;
+			}
+			json(res, 200, {
+				data: {
+					characters: acc.characters.length,
+					sessions: 0,
+					api_keys: 0,
+					owned_maps: 0,
+					owned_acls: 0
+				}
+			});
+			return;
+		}
+
+		const hardDeleteMatch = url.match(/^\/api\/v1\/admin\/accounts\/([^/]+)\/hard-delete$/);
+		if (method === 'POST' && hardDeleteMatch) {
+			const acc = adminAccounts.find((a) => a.id === hardDeleteMatch[1]);
+			if (!acc) {
+				json(res, 404, { error: { code: 'not_found', message: 'Account not found' } });
+				return;
+			}
+			if (adminAccounts.filter((a) => a.is_server_admin).length <= 1 && acc.is_server_admin) {
+				json(res, 409, {
+					error: { code: 'cannot_remove_last_server_admin', message: 'last admin' }
+				});
+				return;
+			}
+			const removed = {
+				characters: acc.characters.length,
+				sessions: 0,
+				api_keys: 0,
+				owned_maps: 0,
+				owned_acls: 0
+			};
+			adminAccounts = adminAccounts.filter((a) => a.id !== acc.id);
+			json(res, 200, { data: removed });
 			return;
 		}
 

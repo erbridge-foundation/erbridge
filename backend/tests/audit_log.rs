@@ -386,10 +386,12 @@ async fn test_add_character_bound_elsewhere_is_refused(pool: PgPool) {
         .await
         .unwrap();
 
-    // Account B presents A's already-bound character. With a DIFFERENT owner
-    // hash and tokens, so any errant write to A's row would show up below.
+    // Account B presents A's already-bound character. The presented owner hash
+    // MATCHES A's stored hash (the shared default) — so this is NOT a transfer
+    // (a differing hash would be CCP-confirmed proof of sale and would rebind);
+    // it is the conservative bound-elsewhere conflict. Different tokens/name so
+    // any errant write to A's row would show up below.
     let mut conflicting = sso_input(Some(account_b), 30001, "A Alt Renamed");
-    conflicting.owner_hash = "different-owner-hash";
     conflicting.access_token = "intruder.access.token";
     conflicting.refresh_token = "intruder.refresh.token";
     let outcome = complete_sso_callback(&pool, conflicting).await.unwrap();

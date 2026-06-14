@@ -7,7 +7,9 @@ use crate::{
     audit::AuditLogEntry,
     db::blocks::BlockedEveCharacter,
     dto::account::TokenStatus,
-    services::admin::{AdminAccountInfo, AdminCharacterSearchResult, EsiCharacterSearchResult},
+    services::admin::{
+        AdminAccountInfo, AdminCharacterSearchResult, EsiCharacterSearchResult, HardDeletePreview,
+    },
 };
 
 // ── accounts list ──────────────────────────────────────────────────────────────
@@ -31,6 +33,9 @@ pub struct AdminAccountDto {
     pub status: String,
     pub is_server_admin: bool,
     pub created_at: DateTime<Utc>,
+    /// The denormalized last-known main name, so an `orphaned` (zero-character)
+    /// account is still nameable in the admin list. `None` when never observed.
+    pub last_known_main_character_name: Option<String>,
     pub characters: Vec<AdminAccountCharacterDto>,
 }
 
@@ -41,6 +46,7 @@ impl From<AdminAccountInfo> for AdminAccountDto {
             status: a.account.status,
             is_server_admin: a.account.is_server_admin,
             created_at: a.account.created_at,
+            last_known_main_character_name: a.account.last_known_main_character_name,
             characters: a
                 .characters
                 .into_iter()
@@ -143,6 +149,33 @@ impl From<BlockedEveCharacter> for BlockedCharacterDto {
             reason: b.reason,
             blocked_by: b.blocked_by,
             blocked_at: b.blocked_at,
+        }
+    }
+}
+
+// ── hard delete ──────────────────────────────────────────────────────────────
+
+/// Blast-radius preview for an account hard-delete: rows that will be **removed**
+/// (characters, sessions, API keys) and rows that will become **unowned but are
+/// NOT deleted** (owned maps, owned ACLs). Audit history is preserved and is
+/// deliberately absent here — the UI copy must not describe audit as lost.
+#[derive(Serialize, ToSchema)]
+pub struct HardDeletePreviewDto {
+    pub characters: i64,
+    pub sessions: i64,
+    pub api_keys: i64,
+    pub owned_maps: i64,
+    pub owned_acls: i64,
+}
+
+impl From<HardDeletePreview> for HardDeletePreviewDto {
+    fn from(p: HardDeletePreview) -> Self {
+        Self {
+            characters: p.characters,
+            sessions: p.sessions,
+            api_keys: p.api_keys,
+            owned_maps: p.owned_maps,
+            owned_acls: p.owned_acls,
         }
     }
 }

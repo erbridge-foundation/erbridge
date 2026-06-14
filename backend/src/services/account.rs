@@ -498,9 +498,15 @@ mod tests {
     async fn insert_main_character(pool: &PgPool, account_id: Uuid, eve_character_id: i64) -> Uuid {
         let id = insert_test_character_with_tokens(pool, account_id, eve_character_id).await;
         let mut tx = pool.begin().await.unwrap();
-        characters::promote_if_no_main(&mut tx, account_id, id)
-            .await
-            .unwrap();
+        characters::promote_if_no_main(
+            &mut tx,
+            account_id,
+            id,
+            eve_character_id,
+            &format!("Pilot {eve_character_id}"),
+        )
+        .await
+        .unwrap();
         tx.commit().await.unwrap();
         id
     }

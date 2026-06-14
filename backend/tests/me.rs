@@ -145,7 +145,7 @@ async fn get_me_returns_db_fields_and_token_status(pool: PgPool) {
     )
     .await
     .unwrap();
-    characters::promote_if_no_main(&mut tx, account_id, char_active_id)
+    characters::promote_if_no_main(&mut tx, account_id, char_active_id, 10001, "Active Pilot")
         .await
         .unwrap();
     tx.commit().await.unwrap();

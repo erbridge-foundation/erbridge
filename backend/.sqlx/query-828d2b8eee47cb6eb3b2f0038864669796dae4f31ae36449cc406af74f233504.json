@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT last_known_main_character_id, last_known_main_character_name\n             FROM account WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "last_known_main_character_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "last_known_main_character_name",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      true,
+      true
+    ]
+  },
+  "hash": "828d2b8eee47cb6eb3b2f0038864669796dae4f31ae36449cc406af74f233504"
+}

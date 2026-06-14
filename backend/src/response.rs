@@ -6,7 +6,7 @@ use crate::dto::{
     acl::{AclDto, AclMemberDto},
     admin::{
         AdminAccountDto, AuditLogPageDto, BlockedCharacterDto, CharacterSearchResultDto,
-        EsiCharacterSearchPageDto,
+        EsiCharacterSearchPageDto, HardDeletePreviewDto,
     },
     entity::EntitySearchPageDto,
     keys::{CreatedKeyDto, KeyMetadataDto},
@@ -80,6 +80,11 @@ pub struct BlockListResponse {
 #[derive(Serialize, ToSchema)]
 pub struct AuditLogPageResponse {
     pub data: AuditLogPageDto,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct HardDeletePreviewResponse {
+    pub data: HardDeletePreviewDto,
 }
 
 #[derive(Serialize, ToSchema)]

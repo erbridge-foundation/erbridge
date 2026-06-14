@@ -164,6 +164,14 @@ pub fn build_router(state: AppState) -> Router {
             "/accounts/{id}/revoke-admin",
             post(handlers::api::v1::admin::revoke_admin),
         )
+        .route(
+            "/accounts/{id}/hard-delete-preview",
+            get(handlers::api::v1::admin::hard_delete_preview),
+        )
+        .route(
+            "/accounts/{id}/hard-delete",
+            post(handlers::api::v1::admin::hard_delete_account),
+        )
         .route("/blocks", get(handlers::api::v1::admin::list_blocks))
         .route("/blocks", post(handlers::api::v1::admin::block_character))
         .route(
@@ -288,6 +296,14 @@ pub fn registered_admin_routes() -> Vec<(String, String)> {
         ),
         (
             "/api/v1/admin/accounts/{id}/revoke-admin".to_string(),
+            "post".to_string(),
+        ),
+        (
+            "/api/v1/admin/accounts/{id}/hard-delete-preview".to_string(),
+            "get".to_string(),
+        ),
+        (
+            "/api/v1/admin/accounts/{id}/hard-delete".to_string(),
             "post".to_string(),
         ),
         ("/api/v1/admin/blocks".to_string(), "get".to_string()),

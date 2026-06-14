@@ -319,6 +319,67 @@ async fn grant_then_revoke_admin(pool: PgPool) {
 }
 
 #[sqlx::test]
+async fn hard_delete_preview_then_delete(pool: PgPool) {
+    let state = build_state(pool);
+    let (_admin, cookie) = session_for(&state, true).await;
+    let target = accounts::create_account(&state.db).await.unwrap();
+
+    // Preview reports the (zero-everything) blast radius for the bare account.
+    let preview = backend::build_router(state.clone())
+        .oneshot(req(
+            Method::GET,
+            &format!("/api/v1/admin/accounts/{target}/hard-delete-preview"),
+            Some(&cookie),
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(preview.status(), StatusCode::OK);
+    let body = json_body(preview).await;
+    assert_eq!(body["data"]["characters"], 0);
+    assert_eq!(body["data"]["owned_maps"], 0);
+
+    // Execute the hard-delete.
+    let del = backend::build_router(state.clone())
+        .oneshot(req(
+            Method::POST,
+            &format!("/api/v1/admin/accounts/{target}/hard-delete"),
+            Some(&cookie),
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(del.status(), StatusCode::OK);
+
+    // The account is gone.
+    assert!(
+        accounts::get_account(&state.db, target)
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[sqlx::test]
+async fn hard_delete_preview_404_for_missing(pool: PgPool) {
+    let state = build_state(pool);
+    let (_admin, cookie) = session_for(&state, true).await;
+    let resp = backend::build_router(state)
+        .oneshot(req(
+            Method::GET,
+            &format!(
+                "/api/v1/admin/accounts/{}/hard-delete-preview",
+                Uuid::new_v4()
+            ),
+            Some(&cookie),
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[sqlx::test]
 async fn grant_admin_404_for_missing_account(pool: PgPool) {
     let state = build_state(pool);
     let (_admin, cookie) = session_for(&state, true).await;

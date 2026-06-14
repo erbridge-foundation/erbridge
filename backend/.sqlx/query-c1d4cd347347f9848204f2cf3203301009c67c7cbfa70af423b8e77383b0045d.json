@@ -1,0 +1,50 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT account_id, is_main, token_status, owner_hash, name, scopes\n             FROM eve_character WHERE eve_character_id = 70001",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "account_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "is_main",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 2,
+        "name": "token_status",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "owner_hash",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "scopes",
+        "type_info": "TextArray"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      true,
+      false,
+      false,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "c1d4cd347347f9848204f2cf3203301009c67c7cbfa70af423b8e77383b0045d"
+}

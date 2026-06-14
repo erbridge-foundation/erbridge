@@ -15,6 +15,7 @@ type Account = {
 	status: string;
 	is_server_admin: boolean;
 	created_at: string;
+	last_known_main_character_name?: string | null;
 	characters: Char[];
 };
 
@@ -50,6 +51,16 @@ const noMain: Account = {
 		{ eve_character_id: 20, name: 'Zeta', is_main: false, token_status: 'active' },
 		{ eve_character_id: 21, name: 'Alpha', is_main: false, token_status: 'active' }
 	]
+};
+
+// Orphaned account: zero characters, nameable only via the last-known main.
+const orphaned: Account = {
+	id: 'a4',
+	status: 'orphaned',
+	is_server_admin: false,
+	created_at: '2021-01-01T00:00:00Z',
+	last_known_main_character_name: 'GhostPilot',
+	characters: []
 };
 
 function props(accounts: Account[]): ComponentProps<typeof CharactersPage> {
@@ -177,6 +188,47 @@ describe('admin/characters grid', () => {
 			.map((r) => r.querySelector('.account-cell')?.textContent?.trim())
 			.filter(Boolean);
 		expect(labels).toEqual(['MainPilot', 'CleanCaptain']);
+	});
+
+	it('names an orphaned (zero-character) account via its last-known main and badges it', () => {
+		render(CharactersPage, { props: props([orphaned]) });
+		// Nameable despite having no characters.
+		expect(screen.getByText('GhostPilot')).toBeInTheDocument();
+		// And carries the orphaned badge (scoped to the badge span, since the raw
+		// status cell also reads "orphaned").
+		const badge = document.querySelector('.badge-orphaned');
+		expect(badge).not.toBeNull();
+		expect(badge?.textContent?.trim()).toBe('orphaned');
+	});
+
+	it('opens the hard-delete confirmation when delete is clicked', async () => {
+		render(CharactersPage, { props: props([clean]) });
+		// No dialog until the per-row delete button is activated.
+		expect(screen.queryByRole('alertdialog')).toBeNull();
+
+		await fireEvent.click(
+			screen.getByRole('button', { name: /hard-delete CleanCaptain/i })
+		);
+
+		const dialog = screen.getByRole('alertdialog');
+		expect(dialog).toBeInTheDocument();
+		// The confirm button uses the irreversible-delete label.
+		expect(
+			within(dialog).getByRole('button', { name: /delete permanently/i })
+		).toBeInTheDocument();
+		// Before the preview resolves, the loading line is shown (status region).
+		expect(within(dialog).getByText(/loading the deletion preview/i)).toBeInTheDocument();
+	});
+
+	it('offers a shared cancel control on the hard-delete confirmation', async () => {
+		// The dialog's out-transition keeps the node in jsdom on close (the rest of
+		// the admin suite tests open-state content rather than teardown for the same
+		// reason), so assert the cancel affordance is present and wired to the
+		// shared `dialog_cancel` label rather than asserting DOM removal.
+		render(CharactersPage, { props: props([clean]) });
+		await fireEvent.click(screen.getByRole('button', { name: /hard-delete CleanCaptain/i }));
+		const dialog = screen.getByRole('alertdialog');
+		expect(within(dialog).getByRole('button', { name: /^cancel$/i })).toBeInTheDocument();
 	});
 
 	it('sorts by issue severity (transferred outranks clean)', async () => {

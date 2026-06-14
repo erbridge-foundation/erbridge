@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use sqlx::PgPool;
+use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
 use crate::{
@@ -91,6 +91,34 @@ pub async fn complete_sso_callback(
 
     let mut tx = pool.begin().await.map_err(anyhow::Error::from)?;
 
+    // Transfer detection FIRST, inside the bind transaction. Look up the existing
+    // row's (account_id, owner_hash) once, before any resolve/bind decision. A
+    // character is *transferred* iff the presented owner hash is present, the
+    // stored hash is non-null, and the two differ — CCP's canonical proof the
+    // character changed EVE accounts. Anything else (absent presented hash, null
+    // stored hash, matching hashes) is not a transfer and falls through to the
+    // normal resolve/bind path below. A matching hash on the same account stays a
+    // normal self-heal; the conservative path never detaches on unprovable
+    // evidence.
+    let existing_binding =
+        characters::find_binding_and_owner_hash(&mut tx, input.eve_character_id).await?;
+    if let Some((Some(former_account_id), Some(stored_hash))) = &existing_binding {
+        let presented = input.owner_hash;
+        let is_transfer = !presented.is_empty() && stored_hash.as_str() != presented;
+        if is_transfer {
+            // The destination differs only by mode: the session's account in
+            // add-character mode (`Some`), or a freshly-minted account in login
+            // mode (`None` → minted in `complete_transfer`). When the existing row
+            // is *already* bound to the destination (re-auth of one's own
+            // just-transferred-to-self character), there is nothing to detach —
+            // fall through to the normal path.
+            let destination = input.add_character_account_id;
+            if destination != Some(*former_account_id) {
+                return complete_transfer(tx, &input, *former_account_id, destination).await;
+            }
+        }
+    }
+
     let (account_id, outcome) = accounts::resolve_or_create(
         &mut tx,
         input.add_character_account_id,
@@ -162,7 +190,14 @@ pub async fn complete_sso_callback(
     )
     .await?;
 
-    characters::promote_if_no_main(&mut tx, account_id, character_id).await?;
+    characters::promote_if_no_main(
+        &mut tx,
+        account_id,
+        character_id,
+        input.eve_character_id,
+        input.character_name,
+    )
+    .await?;
 
     // Stamp the account-level login clock the daily sweep's idle waterfall reads.
     accounts::set_last_login(&mut tx, account_id).await?;
@@ -255,4 +290,310 @@ pub async fn complete_sso_callback(
 
     tx.commit().await.map_err(anyhow::Error::from)?;
     Ok(SsoOutcome::Authenticated(account_id))
+}
+
+/// Completes a detected-transfer bind inside the already-open SSO-completion
+/// `tx`. Mints a fresh destination account in login mode (`destination == None`)
+/// or uses the session account in add-character mode (`destination == Some`),
+/// detaches+rebinds the character to it, runs the seller-side fixup on the former
+/// account (re-promote a remaining character or orphan it when emptied), emits a
+/// `CharacterTransferred` audit event actored by the destination, reactivates the
+/// destination if it was soft-deleted, stamps its `last_login`, and commits.
+/// Returns `Authenticated(destination)`.
+async fn complete_transfer(
+    mut tx: Transaction<'_, Postgres>,
+    input: &SsoCompletionInput<'_>,
+    former_account_id: Uuid,
+    destination: Option<Uuid>,
+) -> Result<SsoOutcome, AppError> {
+    // Resolve the destination account: the session's in add-character mode, or a
+    // freshly-minted one in login mode (NOT `resolve_or_create`, which would
+    // return the seller's account for this still-bound eve_character_id).
+    let destination_account_id = match destination {
+        Some(account_id) => account_id,
+        None => accounts::create_fresh_account(&mut tx).await?.0,
+    };
+
+    // Snapshot the former account's display name BEFORE the seller-side fixup may
+    // re-promote and overwrite its last_known_main_* (so the audit names the
+    // account as it was at transfer time, fail-soft to None).
+    let former_account_name =
+        accounts::get_last_known_main_name(&mut tx, former_account_id).await?;
+
+    // Detach the transferred row from the seller and rebind it to the destination,
+    // overwriting tokens/owner-hash/scopes/public-info and stamping it valid. The
+    // returned id is the rebound row (now is_main = FALSE on the destination).
+    let rebound = characters::detach_and_rebind(
+        &mut tx,
+        destination_account_id,
+        input.eve_character_id,
+        input.character_name,
+        input.corporation_id,
+        input.corporation_name,
+        input.alliance_id,
+        input.alliance_name,
+        input.esi_client_id,
+        input.access_token,
+        input.refresh_token,
+        input.access_token_expires_at,
+        input.scopes,
+        input.owner_hash,
+        input.encryption_key,
+    )
+    .await?;
+
+    // Destination-side: if it had no main, the rebound character becomes it.
+    characters::promote_if_no_main(
+        &mut tx,
+        destination_account_id,
+        rebound.id,
+        input.eve_character_id,
+        input.character_name,
+    )
+    .await?;
+
+    // Seller-side fixup: re-promote a remaining character if the seller lost its
+    // main, or orphan the seller when it now has zero characters.
+    let remaining = characters::count_for_account_in_tx(&mut tx, former_account_id).await?;
+    if remaining == 0 {
+        accounts::mark_orphaned(&mut tx, former_account_id).await?;
+    } else {
+        characters::promote_any_remaining_main(&mut tx, former_account_id).await?;
+    }
+
+    // A transferred character authenticating into a soft-deleted destination
+    // reactivates it, mirroring the normal callback's self-heal.
+    accounts::reactivate_if_soft_deleted(&mut tx, destination_account_id).await?;
+
+    audit::record_in_tx(
+        &mut tx,
+        Some(destination_account_id),
+        None,
+        AuditEvent::CharacterTransferred {
+            destination_account_id,
+            eve_character_id: input.eve_character_id,
+            character_name: input.character_name.to_string(),
+            former_account_id,
+            former_account_name,
+        },
+    )
+    .await?;
+
+    accounts::set_last_login(&mut tx, destination_account_id).await?;
+
+    tx.commit().await.map_err(anyhow::Error::from)?;
+    Ok(SsoOutcome::Authenticated(destination_account_id))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::characters as char_db;
+
+    const KEY: &[u8] = &[0u8; 32];
+
+    /// Seeds an account owning a main character (by `eve_id`) with `owner` hash.
+    /// Returns the account id.
+    async fn seller_with_main(pool: &PgPool, eve_id: i64, name: &str, owner: &str) -> Uuid {
+        let account_id = accounts::create_account(pool).await.unwrap();
+        let mut tx = pool.begin().await.unwrap();
+        let char_id = char_db::upsert_tokens(
+            &mut tx,
+            account_id,
+            eve_id,
+            name,
+            1,
+            "Corp",
+            None,
+            None,
+            "client",
+            "old-access",
+            "old-refresh",
+            Utc::now() + chrono::Duration::hours(1),
+            &[],
+            owner,
+            KEY,
+        )
+        .await
+        .unwrap();
+        char_db::promote_if_no_main(&mut tx, account_id, char_id, eve_id, name)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        account_id
+    }
+
+    /// Adds a non-main character `eve_id` to `account_id`.
+    async fn add_alt(pool: &PgPool, account_id: Uuid, eve_id: i64, owner: &str) {
+        let mut tx = pool.begin().await.unwrap();
+        char_db::upsert_tokens(
+            &mut tx,
+            account_id,
+            eve_id,
+            "Alt",
+            1,
+            "Corp",
+            None,
+            None,
+            "client",
+            "a",
+            "r",
+            Utc::now() + chrono::Duration::hours(1),
+            &[],
+            owner,
+            KEY,
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+    }
+
+    /// Builds an `SsoCompletionInput` presenting `owner` for `eve_id`.
+    fn input<'a>(
+        add_character_account_id: Option<Uuid>,
+        eve_id: i64,
+        name: &'a str,
+        owner: &'a str,
+    ) -> SsoCompletionInput<'a> {
+        SsoCompletionInput {
+            add_character_account_id,
+            eve_character_id: eve_id,
+            character_name: name,
+            corporation_id: 1,
+            corporation_name: "Corp",
+            alliance_id: None,
+            alliance_name: None,
+            esi_client_id: "client",
+            access_token: "new-access",
+            refresh_token: "new-refresh",
+            access_token_expires_at: Utc::now() + chrono::Duration::hours(1),
+            scopes: &[],
+            owner_hash: owner,
+            encryption_key: KEY,
+        }
+    }
+
+    async fn account_id_of(pool: &PgPool, eve_id: i64) -> Option<Uuid> {
+        sqlx::query!(
+            "SELECT account_id FROM eve_character WHERE eve_character_id = $1",
+            eve_id
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap()
+        .account_id
+    }
+
+    #[sqlx::test]
+    async fn login_transfer_lands_in_fresh_account_not_seller(pool: PgPool) {
+        let seller = seller_with_main(&pool, 1000, "Sold", "owner-old").await;
+
+        // The buyer logs in fresh; the presented hash differs from the stored one.
+        let outcome = complete_sso_callback(&pool, input(None, 1000, "Sold", "owner-new"))
+            .await
+            .unwrap();
+        let dest = match outcome {
+            SsoOutcome::Authenticated(id) => id,
+            other => panic!("expected Authenticated, got {other:?}"),
+        };
+        assert_ne!(dest, seller, "must NOT land in the seller's account");
+        assert_eq!(account_id_of(&pool, 1000).await, Some(dest));
+
+        // The seller is emptied → orphaned, its snapshot retained.
+        let seller_acc = accounts::get_account(&pool, seller).await.unwrap().unwrap();
+        assert_eq!(seller_acc.status, "orphaned");
+
+        // The transfer is audited.
+        let n = sqlx::query!(
+            "SELECT COUNT(*) AS \"c!\" FROM audit_log WHERE event_type = 'character_transferred'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+        .c;
+        assert_eq!(n, 1);
+    }
+
+    #[sqlx::test]
+    async fn add_character_transfer_rebinds_to_session_account(pool: PgPool) {
+        let seller = seller_with_main(&pool, 2000, "Sold", "owner-old").await;
+        let buyer = seller_with_main(&pool, 2001, "Buyer Main", "buyer-hash").await;
+
+        // Buyer's session adds the transferred character (differing hash) → rebind,
+        // never bound-elsewhere.
+        let outcome = complete_sso_callback(&pool, input(Some(buyer), 2000, "Sold", "owner-new"))
+            .await
+            .unwrap();
+        assert_eq!(outcome, SsoOutcome::Authenticated(buyer));
+        assert_eq!(account_id_of(&pool, 2000).await, Some(buyer));
+
+        // Seller emptied → orphaned.
+        let seller_acc = accounts::get_account(&pool, seller).await.unwrap().unwrap();
+        assert_eq!(seller_acc.status, "orphaned");
+    }
+
+    #[sqlx::test]
+    async fn transfer_repromotes_seller_main_when_alt_remains(pool: PgPool) {
+        let seller = seller_with_main(&pool, 3000, "Sold Main", "owner-old").await;
+        add_alt(&pool, seller, 3001, "owner-old").await;
+
+        complete_sso_callback(&pool, input(None, 3000, "Sold Main", "owner-new"))
+            .await
+            .unwrap();
+
+        // Seller kept the alt, was re-promoted, not orphaned.
+        let seller_acc = accounts::get_account(&pool, seller).await.unwrap().unwrap();
+        assert_eq!(seller_acc.status, "active");
+        let chars = char_db::list_for_account(&pool, seller).await.unwrap();
+        assert_eq!(chars.len(), 1);
+        assert_eq!(chars[0].eve_character_id, 3001);
+        assert!(chars[0].is_main);
+    }
+
+    #[sqlx::test]
+    async fn matching_hash_login_is_normal_self_heal_no_transfer(pool: PgPool) {
+        let seller = seller_with_main(&pool, 4000, "Mine", "same-hash").await;
+
+        // Same hash on the same account → normal re-login, no detach/transfer.
+        let outcome = complete_sso_callback(&pool, input(None, 4000, "Mine", "same-hash"))
+            .await
+            .unwrap();
+        assert_eq!(outcome, SsoOutcome::Authenticated(seller));
+        assert_eq!(account_id_of(&pool, 4000).await, Some(seller));
+
+        let n = sqlx::query!(
+            "SELECT COUNT(*) AS \"c!\" FROM audit_log WHERE event_type = 'character_transferred'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+        .c;
+        assert_eq!(n, 0, "matching hash is not a transfer");
+    }
+
+    #[sqlx::test]
+    async fn null_stored_hash_add_character_is_not_a_transfer(pool: PgPool) {
+        // A seller character with NULL stored owner_hash (legacy / never observed).
+        let seller = accounts::create_account(&pool).await.unwrap();
+        char_db::create_orphan(&pool, 5000, "Legacy", 1, "Corp", None, None)
+            .await
+            .unwrap();
+        sqlx::query!(
+            "UPDATE eve_character SET account_id = $1, owner_hash = NULL WHERE eve_character_id = 5000",
+            seller
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let buyer = seller_with_main(&pool, 5001, "Buyer", "buyer-hash").await;
+
+        // Null stored hash → not a transfer → the existing bound-elsewhere
+        // rejection applies (the character is bound to the seller, not the buyer).
+        let outcome = complete_sso_callback(&pool, input(Some(buyer), 5000, "Legacy", "presented"))
+            .await
+            .unwrap();
+        assert_eq!(outcome, SsoOutcome::BoundElsewhere);
+        assert_eq!(account_id_of(&pool, 5000).await, Some(seller), "unchanged");
+    }
 }

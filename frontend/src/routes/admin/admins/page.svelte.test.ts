@@ -18,6 +18,7 @@ function adminAccount(id: string, name: string): AdminAccountDto {
 		status: 'active',
 		is_server_admin: true,
 		created_at: '2024-01-01T00:00:00Z',
+		last_known_main_character_name: name,
 		characters: [
 			{ eve_character_id: 1, name, is_main: true, token_status: 'active' }
 		]

@@ -128,6 +128,14 @@ pub enum AuditEvent {
     AccountPurged {
         account_id: Uuid,
     },
+    /// Emitted by the admin hard-delete action: a real `DELETE FROM account`.
+    /// Actored by the admin. Carries the deleted account's id and its
+    /// `last_known_main_character_name` snapshot into `details` so the event stays
+    /// meaningful after the account row (and its main lookup) is gone.
+    AccountHardDeleted {
+        account_id: Uuid,
+        last_known_main_name: Option<String>,
+    },
     CharacterAdded {
         account_id: Uuid,
         eve_character_id: i64,
@@ -206,6 +214,22 @@ pub enum AuditEvent {
         account_id: Uuid,
         eve_character_id: i64,
         character_name: String,
+    },
+    /// Emitted by the SSO callback when a presented owner hash differs from the
+    /// non-null stored hash (CCP-confirmed transfer): the character was detached
+    /// from its former (seller's) account and rebound to the authenticating owner.
+    /// Actored by the destination account; the former account's id + last-known
+    /// main name are snapshotted into `details` so the row stays meaningful even
+    /// after the former account is later orphaned or hard-deleted.
+    CharacterTransferred {
+        /// The destination (authenticating owner's) account — the audit actor.
+        destination_account_id: Uuid,
+        eve_character_id: i64,
+        character_name: String,
+        /// The prior (seller's) account the character was detached from.
+        former_account_id: Uuid,
+        /// The former account's last-known main name, snapshotted for readability.
+        former_account_name: Option<String>,
     },
     MapCreated {
         account_id: Uuid,
@@ -303,6 +327,7 @@ impl AuditEvent {
             Self::AccountDeletionRequested { .. } => "account_deletion_requested",
             Self::AccountReactivated { .. } => "account_reactivated",
             Self::AccountPurged { .. } => "account_purged",
+            Self::AccountHardDeleted { .. } => "account_hard_deleted",
             Self::CharacterAdded { .. } => "character_added",
             Self::CharacterRemoved { .. } => "character_removed",
             Self::CharacterSetMain { .. } => "character_set_main",
@@ -318,6 +343,7 @@ impl AuditEvent {
                 "character_add_rejected_bound_elsewhere"
             }
             Self::CharacterOwnerMismatch { .. } => "character_owner_mismatch",
+            Self::CharacterTransferred { .. } => "character_transferred",
             Self::MapCreated { .. } => "map_created",
             Self::MapDeleted { .. } => "map_deleted",
             Self::AclCreated { .. } => "acl_created",
@@ -355,6 +381,15 @@ impl AuditEvent {
             Self::AccountReactivated { account_id } => json!({ "account_id": account_id }),
             // actor is NULL for purge — include account_id.
             Self::AccountPurged { account_id } => json!({ "account_id": account_id }),
+            // actor == the admin. The account is being deleted, so carry its id +
+            // last-known main name here to stay meaningful after the row is gone.
+            Self::AccountHardDeleted {
+                account_id,
+                last_known_main_name,
+            } => json!({
+                "account_id": account_id,
+                "last_known_main_name": last_known_main_name,
+            }),
             Self::CharacterAdded {
                 eve_character_id,
                 character_name,
@@ -453,6 +488,22 @@ impl AuditEvent {
                 "account_id": account_id,
                 "eve_character_id": eve_character_id,
                 "character_name": character_name,
+            }),
+            // actor == the destination account (actor column). The subject
+            // character (id + name) and the former account (id + snapshotted
+            // name) are carried so the row is self-contained after the former
+            // account is orphaned or deleted.
+            Self::CharacterTransferred {
+                eve_character_id,
+                character_name,
+                former_account_id,
+                former_account_name,
+                ..
+            } => json!({
+                "eve_character_id": eve_character_id,
+                "character_name": character_name,
+                "former_account_id": former_account_id,
+                "former_account_name": former_account_name,
             }),
             Self::MapCreated { map_id, name, .. } => json!({
                 "map_id": map_id,
@@ -580,6 +631,21 @@ impl AuditEvent {
             | Self::ServerAdminGranted { account_id, .. }
             | Self::ServerAdminRevoked { account_id } => AuditTarget::account(*account_id),
 
+            // Hard-delete targets the (about-to-be-deleted) account, named from
+            // the carried snapshot rather than a main lookup that would fail once
+            // the row is gone.
+            Self::AccountHardDeleted {
+                account_id,
+                last_known_main_name,
+            } => AuditTarget {
+                target_type: "account",
+                target_id: account_id.to_string(),
+                name: match last_known_main_name {
+                    Some(n) => AuditTargetName::Known(n.clone()),
+                    None => AuditTargetName::None,
+                },
+            },
+
             // Character targets carrying an always-present name.
             Self::OrphanCharacterClaimed {
                 eve_character_id,
@@ -602,6 +668,11 @@ impl AuditEvent {
                 ..
             }
             | Self::CharacterOwnerMismatch {
+                eve_character_id,
+                character_name,
+                ..
+            }
+            | Self::CharacterTransferred {
                 eve_character_id,
                 character_name,
                 ..
@@ -940,6 +1011,31 @@ mod tests {
     }
 
     #[test]
+    fn account_hard_deleted_serialises_and_targets_with_snapshot_name() {
+        let id = test_uuid();
+        let event = AuditEvent::AccountHardDeleted {
+            account_id: id,
+            last_known_main_name: Some("Gone Pilot".into()),
+        };
+        assert_eq!(event.event_type(), "account_hard_deleted");
+        let d = event.details();
+        assert_eq!(d["account_id"], id.to_string());
+        assert_eq!(d["last_known_main_name"], "Gone Pilot");
+        // Target is the account, named from the carried snapshot (no lookup).
+        assert_named_target(&event, "account", &id.to_string(), "Gone Pilot");
+    }
+
+    #[test]
+    fn account_hard_deleted_without_name_targets_nameless() {
+        let id = test_uuid();
+        let event = AuditEvent::AccountHardDeleted {
+            account_id: id,
+            last_known_main_name: None,
+        };
+        assert_nameless_target(&event, "account", &id.to_string());
+    }
+
+    #[test]
     fn character_added_serialises_correctly() {
         let id = test_uuid();
         let event = AuditEvent::CharacterAdded {
@@ -982,6 +1078,39 @@ mod tests {
         assert_eq!(event.details()["account_id"], serde_json::json!(id));
         assert_eq!(event.details()["eve_character_id"], 555i64);
         assert_eq!(event.details()["character_name"], "Transferred Pilot");
+    }
+
+    #[test]
+    fn character_transferred_serialises_correctly() {
+        let dest = test_uuid();
+        let former = other_uuid();
+        let event = AuditEvent::CharacterTransferred {
+            destination_account_id: dest,
+            eve_character_id: 909,
+            character_name: "Bought Pilot".into(),
+            former_account_id: former,
+            former_account_name: Some("Seller Main".into()),
+        };
+        assert_eq!(event.event_type(), "character_transferred");
+        let d = event.details();
+        // The destination is the actor (actor column), so it is NOT in details.
+        assert!(d.get("destination_account_id").is_none());
+        assert_eq!(d["eve_character_id"], 909i64);
+        assert_eq!(d["character_name"], "Bought Pilot");
+        assert_eq!(d["former_account_id"], former.to_string());
+        assert_eq!(d["former_account_name"], "Seller Main");
+    }
+
+    #[test]
+    fn character_transferred_targets_the_character() {
+        let event = AuditEvent::CharacterTransferred {
+            destination_account_id: test_uuid(),
+            eve_character_id: 909,
+            character_name: "Bought Pilot".into(),
+            former_account_id: other_uuid(),
+            former_account_name: None,
+        };
+        assert_named_target(&event, "character", "909", "Bought Pilot");
     }
 
     #[test]
@@ -1786,7 +1915,7 @@ mod tests {
         )
         .await
         .unwrap();
-        char_db::promote_if_no_main(&mut tx, account_id, char_id)
+        char_db::promote_if_no_main(&mut tx, account_id, char_id, eve_id, name)
             .await
             .unwrap();
         tx.commit().await.unwrap();

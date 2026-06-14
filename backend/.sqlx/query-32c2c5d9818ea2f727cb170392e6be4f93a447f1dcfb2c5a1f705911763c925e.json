@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, status, delete_requested_at, is_server_admin, created_at, updated_at\n         FROM account ORDER BY created_at DESC",
+  "query": "SELECT id, status, delete_requested_at, is_server_admin,\n                last_known_main_character_name, created_at, updated_at\n         FROM account ORDER BY created_at DESC",
   "describe": {
     "columns": [
       {
@@ -25,11 +25,16 @@
       },
       {
         "ordinal": 4,
+        "name": "last_known_main_character_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
         "name": "created_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 5,
+        "ordinal": 6,
         "name": "updated_at",
         "type_info": "Timestamptz"
       }
@@ -42,9 +47,10 @@
       false,
       true,
       false,
+      true,
       false,
       false
     ]
   },
-  "hash": "7573c9ce983f3dd1b17d7e42d7652bf4f7817c2d2036de40c7976f4380f3195d"
+  "hash": "32c2c5d9818ea2f727cb170392e6be4f93a447f1dcfb2c5a1f705911763c925e"
 }

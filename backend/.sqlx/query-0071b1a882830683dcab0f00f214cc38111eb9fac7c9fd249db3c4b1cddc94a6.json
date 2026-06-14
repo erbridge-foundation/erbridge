@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE eve_character SET is_main = TRUE\n        WHERE id = (\n            SELECT id FROM eve_character\n            WHERE account_id = $1\n            ORDER BY created_at ASC, id ASC\n            LIMIT 1\n        )\n        AND NOT EXISTS (\n            SELECT 1 FROM eve_character\n            WHERE account_id = $1 AND is_main = TRUE\n        )\n        RETURNING eve_character_id, name\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "eve_character_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "0071b1a882830683dcab0f00f214cc38111eb9fac7c9fd249db3c4b1cddc94a6"
+}

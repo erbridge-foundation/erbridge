@@ -333,7 +333,7 @@ mod tests {
         )
         .await
         .unwrap();
-        char_db::promote_if_no_main(&mut tx, account_id, char_id)
+        char_db::promote_if_no_main(&mut tx, account_id, char_id, eve_id, "Searcher")
             .await
             .unwrap();
         tx.commit().await.unwrap();

@@ -51,8 +51,8 @@ beforeEach(() => {
 describe('admin/admins load', () => {
 	it('returns only the admin accounts', async () => {
 		vi.mocked(listAdminAccounts).mockResolvedValue([
-			{ id: 'a1', status: 'active', is_server_admin: true, created_at: 'now', characters: [] },
-			{ id: 'a2', status: 'active', is_server_admin: false, created_at: 'now', characters: [] }
+			{ id: 'a1', status: 'active', is_server_admin: true, created_at: 'now', last_known_main_character_name: null, characters: [] },
+			{ id: 'a2', status: 'active', is_server_admin: false, created_at: 'now', last_known_main_character_name: null, characters: [] }
 		]);
 		const result = (await load(makeLoadEvent()))!;
 		expect(result.admins).toHaveLength(1);

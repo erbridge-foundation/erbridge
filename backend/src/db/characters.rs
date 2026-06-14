@@ -102,10 +102,107 @@ pub async fn upsert_tokens(
     Ok(row.id)
 }
 
+/// Promotes `just_written_character_id` to main iff the account currently has no
+/// main. Returns `true` when it promoted. The caller passes the promoted
+/// character's `eve_character_id` + `name` so that, on promotion, the account's
+/// `last_known_main_*` snapshot is written in the same tx (this function returns
+/// only a bool, so it cannot read the row back like `set_main` does).
+/// The result of a detach-and-rebind: the internal row `id`, and whether the
+/// row had been the seller account's main *before* the rebind. The caller uses
+/// `was_main_on_former_account` to decide whether the seller needs a re-promote.
+pub struct DetachRebindResult {
+    pub id: Uuid,
+    pub was_main_on_former_account: bool,
+}
+
+/// Detaches a transferred character from its prior account and rebinds it to
+/// `destination_account_id`, overwriting tokens, owner hash, scopes, and
+/// public-info, stamping `token_status = 'valid'`, clearing `is_main` (the
+/// rebound character does not displace the destination's existing main — the
+/// caller promotes it via `promote_if_no_main` if the destination had none), and
+/// bumping `updated_at`. Keyed on `eve_character_id`. Returns the row id and its
+/// pre-rebind `is_main` (the seller-side fixup needs to know whether the seller
+/// just lost its main). This is the transfer-detection counterpart to
+/// `upsert_tokens`, whose `ON CONFLICT` deliberately refuses to move a row bound
+/// to a different account.
+#[allow(clippy::too_many_arguments)]
+pub async fn detach_and_rebind(
+    tx: &mut Transaction<'_, Postgres>,
+    destination_account_id: Uuid,
+    eve_character_id: i64,
+    name: &str,
+    corporation_id: i64,
+    corporation_name: &str,
+    alliance_id: Option<i64>,
+    alliance_name: Option<&str>,
+    esi_client_id: &str,
+    access_token_plaintext: &str,
+    refresh_token_plaintext: &str,
+    access_token_expires_at: DateTime<Utc>,
+    scopes: &[String],
+    owner_hash: &str,
+    encryption_key: &[u8],
+) -> Result<DetachRebindResult> {
+    let encrypted_access = crypto::encrypt_token(access_token_plaintext, encryption_key)
+        .context("failed to encrypt access token")?;
+    let encrypted_refresh = crypto::encrypt_token(refresh_token_plaintext, encryption_key)
+        .context("failed to encrypt refresh token")?;
+
+    let row = sqlx::query!(
+        r#"
+        WITH prev AS (
+            SELECT id, is_main FROM eve_character WHERE eve_character_id = $2
+        )
+        UPDATE eve_character SET
+            account_id = $1,
+            name = $3,
+            corporation_id = $4,
+            corporation_name = $5,
+            alliance_id = $6,
+            alliance_name = $7,
+            esi_client_id = $8,
+            encrypted_access_token = $9,
+            encrypted_refresh_token = $10,
+            access_token_expires_at = $11,
+            scopes = $12,
+            owner_hash = $13,
+            token_status = 'valid',
+            is_main = FALSE,
+            updated_at = now()
+        FROM prev
+        WHERE eve_character.eve_character_id = $2
+        RETURNING eve_character.id, prev.is_main AS was_main
+        "#,
+        destination_account_id,
+        eve_character_id,
+        name,
+        corporation_id,
+        corporation_name,
+        alliance_id,
+        alliance_name,
+        esi_client_id,
+        encrypted_access.as_slice(),
+        encrypted_refresh.as_slice(),
+        access_token_expires_at,
+        scopes,
+        owner_hash,
+    )
+    .fetch_one(&mut **tx)
+    .await
+    .context("failed to detach and rebind character")?;
+
+    Ok(DetachRebindResult {
+        id: row.id,
+        was_main_on_former_account: row.was_main,
+    })
+}
+
 pub async fn promote_if_no_main(
     tx: &mut Transaction<'_, Postgres>,
     account_id: Uuid,
     just_written_character_id: Uuid,
+    eve_character_id: i64,
+    name: &str,
 ) -> Result<bool> {
     let result = sqlx::query!(
         r#"
@@ -123,7 +220,51 @@ pub async fn promote_if_no_main(
     .await
     .context("failed to promote character to main")?;
 
-    Ok(result.rows_affected() > 0)
+    let promoted = result.rows_affected() > 0;
+    if promoted {
+        crate::db::accounts::set_last_known_main(tx, account_id, eve_character_id, name).await?;
+    }
+    Ok(promoted)
+}
+
+/// Promotes any remaining character of `account_id` to main when the account has
+/// no `is_main = TRUE` character, picking the oldest-created one deterministically.
+/// Updates the account's `last_known_main_*` snapshot in the same tx on promotion.
+/// Returns `true` when it promoted, `false` when the account already had a main or
+/// has no characters. Drives the seller-side fixup after a transferred character —
+/// which may have been the seller's main — is detached.
+pub async fn promote_any_remaining_main(
+    tx: &mut Transaction<'_, Postgres>,
+    account_id: Uuid,
+) -> Result<bool> {
+    let row = sqlx::query!(
+        r#"
+        UPDATE eve_character SET is_main = TRUE
+        WHERE id = (
+            SELECT id FROM eve_character
+            WHERE account_id = $1
+            ORDER BY created_at ASC, id ASC
+            LIMIT 1
+        )
+        AND NOT EXISTS (
+            SELECT 1 FROM eve_character
+            WHERE account_id = $1 AND is_main = TRUE
+        )
+        RETURNING eve_character_id, name
+        "#,
+        account_id,
+    )
+    .fetch_optional(&mut **tx)
+    .await
+    .context("failed to promote a remaining character to main")?;
+
+    if let Some(r) = row {
+        crate::db::accounts::set_last_known_main(tx, account_id, r.eve_character_id, &r.name)
+            .await?;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
 }
 
 pub async fn create_orphan(
@@ -276,6 +417,13 @@ pub async fn set_main(
     .await
     .context("failed to set new main")?;
 
+    // Maintain the account's last-known-main snapshot in the same tx, so the
+    // account stays nameable if this character is later detached/removed.
+    if let Some(r) = &row {
+        crate::db::accounts::set_last_known_main(tx, account_id, r.eve_character_id, &r.name)
+            .await?;
+    }
+
     Ok(row.map(|r| Character {
         id: r.id,
         account_id: r.account_id,
@@ -374,6 +522,26 @@ pub async fn find_account_id_for_eve_character(
     .context("failed to look up eve_character account_id")?;
 
     Ok(row.map(|r| r.account_id))
+}
+
+/// The existing binding for an `eve_character_id`: `(account_id, owner_hash)`,
+/// both nullable independently. `None` means no row exists at all. Used by the
+/// SSO callback's transfer-detection predicate, which needs the stored owner hash
+/// *and* the prior account in one in-tx read, before any write. Distinct from
+/// `find_account_id_for_eve_character` (which returns only the account binding).
+pub async fn find_binding_and_owner_hash(
+    tx: &mut Transaction<'_, Postgres>,
+    eve_character_id: i64,
+) -> Result<Option<(Option<Uuid>, Option<String>)>> {
+    let row = sqlx::query!(
+        "SELECT account_id, owner_hash FROM eve_character WHERE eve_character_id = $1",
+        eve_character_id
+    )
+    .fetch_optional(&mut **tx)
+    .await
+    .context("failed to look up eve_character binding and owner hash")?;
+
+    Ok(row.map(|r| (r.account_id, r.owner_hash)))
 }
 
 /// A character matched by the admin name search, carrying its owning account so
@@ -1031,7 +1199,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let promoted = promote_if_no_main(&mut tx, account_id, char_id)
+        let promoted = promote_if_no_main(&mut tx, account_id, char_id, 99003, "Main Pilot")
             .await
             .unwrap();
         tx.commit().await.unwrap();
@@ -1064,7 +1232,7 @@ mod tests {
         )
         .await
         .unwrap();
-        promote_if_no_main(&mut tx, account_id, char1)
+        promote_if_no_main(&mut tx, account_id, char1, 99004, "First")
             .await
             .unwrap();
         let char2 = upsert_tokens(
@@ -1086,7 +1254,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let promoted = promote_if_no_main(&mut tx, account_id, char2)
+        let promoted = promote_if_no_main(&mut tx, account_id, char2, 99005, "Second")
             .await
             .unwrap();
         tx.commit().await.unwrap();
@@ -1096,6 +1264,111 @@ mod tests {
         let main_count = chars.iter().filter(|c| c.is_main).count();
         assert_eq!(main_count, 1);
         assert_eq!(chars.iter().find(|c| c.is_main).unwrap().id, char1);
+    }
+
+    /// Reads an account's `last_known_main_*` snapshot.
+    async fn last_known_main(pool: &PgPool, account_id: Uuid) -> (Option<i64>, Option<String>) {
+        let r = sqlx::query!(
+            "SELECT last_known_main_character_id, last_known_main_character_name
+             FROM account WHERE id = $1",
+            account_id
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        (
+            r.last_known_main_character_id,
+            r.last_known_main_character_name,
+        )
+    }
+
+    #[sqlx::test]
+    async fn promote_if_no_main_writes_account_snapshot(pool: PgPool) {
+        let account_id = accounts::create_account(&pool).await.unwrap();
+        let mut tx = pool.begin().await.unwrap();
+        let char_id = upsert_tokens(
+            &mut tx,
+            account_id,
+            55_001,
+            "Snapshot Main",
+            1,
+            "Corp",
+            None,
+            None,
+            "c",
+            "a",
+            "r",
+            chrono::Utc::now() + chrono::Duration::hours(1),
+            &[],
+            "owner-hash",
+            &test_key(),
+        )
+        .await
+        .unwrap();
+        promote_if_no_main(&mut tx, account_id, char_id, 55_001, "Snapshot Main")
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+
+        assert_eq!(
+            last_known_main(&pool, account_id).await,
+            (Some(55_001), Some("Snapshot Main".to_string()))
+        );
+    }
+
+    #[sqlx::test]
+    async fn set_main_writes_account_snapshot(pool: PgPool) {
+        let account_id = accounts::create_account(&pool).await.unwrap();
+        let mut tx = pool.begin().await.unwrap();
+        let first = upsert_tokens(
+            &mut tx,
+            account_id,
+            55_010,
+            "First Main",
+            1,
+            "Corp",
+            None,
+            None,
+            "c",
+            "a",
+            "r",
+            chrono::Utc::now() + chrono::Duration::hours(1),
+            &[],
+            "owner-hash",
+            &test_key(),
+        )
+        .await
+        .unwrap();
+        promote_if_no_main(&mut tx, account_id, first, 55_010, "First Main")
+            .await
+            .unwrap();
+        let second = upsert_tokens(
+            &mut tx,
+            account_id,
+            55_011,
+            "Second Main",
+            1,
+            "Corp",
+            None,
+            None,
+            "c",
+            "a",
+            "r",
+            chrono::Utc::now() + chrono::Duration::hours(1),
+            &[],
+            "owner-hash",
+            &test_key(),
+        )
+        .await
+        .unwrap();
+        // Explicitly promoting the second character updates the snapshot.
+        set_main(&mut tx, account_id, second).await.unwrap();
+        tx.commit().await.unwrap();
+
+        assert_eq!(
+            last_known_main(&pool, account_id).await,
+            (Some(55_011), Some("Second Main".to_string()))
+        );
     }
 
     #[sqlx::test]
@@ -1121,7 +1394,9 @@ mod tests {
         )
         .await
         .unwrap();
-        promote_if_no_main(&mut tx, account_id, id).await.unwrap();
+        promote_if_no_main(&mut tx, account_id, id, 99006, "To Delete")
+            .await
+            .unwrap();
 
         let deleted = delete_character_owned_in_tx(&mut tx, account_id, id)
             .await
@@ -1231,7 +1506,7 @@ mod tests {
         )
         .await
         .unwrap();
-        promote_if_no_main(&mut tx, account_id, with_tokens)
+        promote_if_no_main(&mut tx, account_id, with_tokens, 99100, "Has Tokens")
             .await
             .unwrap();
         let without_tokens = upsert_tokens(
@@ -1394,7 +1669,7 @@ mod tests {
         )
         .await
         .unwrap();
-        promote_if_no_main(&mut tx, account_id, main_char)
+        promote_if_no_main(&mut tx, account_id, main_char, 42_000, "Main Pilot")
             .await
             .unwrap();
         // A second, non-main character should not be returned.
@@ -1691,5 +1966,280 @@ mod tests {
         assert_eq!(token_state(&pool, 7201).await.0, "token_expired");
         assert_eq!(token_state(&pool, 7202).await.0, "owner_mismatch"); // untouched
         assert_eq!(token_state(&pool, 7203).await.0, "valid"); // other account untouched
+    }
+
+    // ── detach / rebind / seller-fixup ──────────────────────────────────────
+
+    /// Reads an account's `last_known_main_*` snapshot.
+    async fn account_snapshot(pool: &PgPool, account_id: Uuid) -> (Option<i64>, Option<String>) {
+        let r = sqlx::query!(
+            "SELECT last_known_main_character_id, last_known_main_character_name
+             FROM account WHERE id = $1",
+            account_id
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        (
+            r.last_known_main_character_id,
+            r.last_known_main_character_name,
+        )
+    }
+
+    /// Detach-and-rebinds character `eve_id` to `dest`, returning the result.
+    #[allow(clippy::too_many_arguments)]
+    async fn rebind(pool: &PgPool, dest: Uuid, eve_id: i64, owner: &str) -> DetachRebindResult {
+        let mut tx = pool.begin().await.unwrap();
+        let res = detach_and_rebind(
+            &mut tx,
+            dest,
+            eve_id,
+            "Rebound Pilot",
+            1,
+            "Corp",
+            None,
+            None,
+            "client",
+            "fresh-access",
+            "fresh-refresh",
+            chrono::Utc::now() + chrono::Duration::hours(1),
+            &["scope.new".to_string()],
+            owner,
+            &test_key(),
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+        res
+    }
+
+    #[sqlx::test]
+    async fn detach_and_rebind_moves_row_and_overwrites_fields(pool: PgPool) {
+        let seller = accounts::create_account(&pool).await.unwrap();
+        let buyer = accounts::create_account(&pool).await.unwrap();
+        // The seller owns the character as its main, with an old owner hash.
+        let mut tx = pool.begin().await.unwrap();
+        let char_id = upsert_tokens(
+            &mut tx,
+            seller,
+            70_001,
+            "Sold Pilot",
+            1,
+            "Corp",
+            None,
+            None,
+            "client",
+            "old-access",
+            "old-refresh",
+            chrono::Utc::now() + chrono::Duration::hours(1),
+            &["scope.old".to_string()],
+            "owner-old",
+            &test_key(),
+        )
+        .await
+        .unwrap();
+        promote_if_no_main(&mut tx, seller, char_id, 70_001, "Sold Pilot")
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+
+        let res = rebind(&pool, buyer, 70_001, "owner-new").await;
+        assert_eq!(res.id, char_id, "same physical row, rebound");
+        assert!(res.was_main_on_former_account, "it was the seller's main");
+
+        // The row now belongs to the buyer, is not main, valid, new owner hash.
+        let row = sqlx::query!(
+            "SELECT account_id, is_main, token_status, owner_hash, name, scopes
+             FROM eve_character WHERE eve_character_id = 70001"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(row.account_id, Some(buyer));
+        assert!(!row.is_main);
+        assert_eq!(row.token_status, "valid");
+        assert_eq!(row.owner_hash.as_deref(), Some("owner-new"));
+        assert_eq!(row.name, "Rebound Pilot");
+        assert_eq!(row.scopes, vec!["scope.new".to_string()]);
+    }
+
+    #[sqlx::test]
+    async fn seller_snapshot_persists_after_detach_when_emptied(pool: PgPool) {
+        let seller = accounts::create_account(&pool).await.unwrap();
+        let buyer = accounts::create_account(&pool).await.unwrap();
+        let mut tx = pool.begin().await.unwrap();
+        let only = upsert_tokens(
+            &mut tx,
+            seller,
+            71_001,
+            "Only Pilot",
+            1,
+            "Corp",
+            None,
+            None,
+            "client",
+            "a",
+            "r",
+            chrono::Utc::now() + chrono::Duration::hours(1),
+            &[],
+            "owner-old",
+            &test_key(),
+        )
+        .await
+        .unwrap();
+        promote_if_no_main(&mut tx, seller, only, 71_001, "Only Pilot")
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+
+        rebind(&pool, buyer, 71_001, "owner-new").await;
+
+        // Seller now has zero characters; orphan it and assert the snapshot stays.
+        let mut tx = pool.begin().await.unwrap();
+        let remaining = count_for_account_in_tx(&mut tx, seller).await.unwrap();
+        assert_eq!(remaining, 0);
+        accounts::mark_orphaned(&mut tx, seller).await.unwrap();
+        tx.commit().await.unwrap();
+
+        let account = accounts::get_account(&pool, seller).await.unwrap().unwrap();
+        assert_eq!(account.status, "orphaned");
+        // The snapshot still names the seller after its character left.
+        assert_eq!(
+            account_snapshot(&pool, seller).await,
+            (Some(71_001), Some("Only Pilot".to_string()))
+        );
+    }
+
+    #[sqlx::test]
+    async fn promote_any_remaining_main_repromotes_when_main_stripped(pool: PgPool) {
+        let seller = accounts::create_account(&pool).await.unwrap();
+        let buyer = accounts::create_account(&pool).await.unwrap();
+        let mut tx = pool.begin().await.unwrap();
+        // Main (will be transferred away) + a remaining alt.
+        let main = upsert_tokens(
+            &mut tx,
+            seller,
+            72_001,
+            "Main",
+            1,
+            "Corp",
+            None,
+            None,
+            "client",
+            "a",
+            "r",
+            chrono::Utc::now() + chrono::Duration::hours(1),
+            &[],
+            "owner-old",
+            &test_key(),
+        )
+        .await
+        .unwrap();
+        promote_if_no_main(&mut tx, seller, main, 72_001, "Main")
+            .await
+            .unwrap();
+        upsert_tokens(
+            &mut tx,
+            seller,
+            72_002,
+            "Remaining Alt",
+            1,
+            "Corp",
+            None,
+            None,
+            "client",
+            "a",
+            "r",
+            chrono::Utc::now() + chrono::Duration::hours(1),
+            &[],
+            "owner-old",
+            &test_key(),
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+
+        // Transfer the main away; the seller keeps the alt but lost its main.
+        let res = rebind(&pool, buyer, 72_001, "owner-new").await;
+        assert!(res.was_main_on_former_account);
+
+        let mut tx = pool.begin().await.unwrap();
+        let promoted = promote_any_remaining_main(&mut tx, seller).await.unwrap();
+        tx.commit().await.unwrap();
+        assert!(promoted);
+
+        // The alt is now the main and the snapshot tracks it.
+        let chars = list_for_account(&pool, seller).await.unwrap();
+        assert_eq!(chars.len(), 1);
+        assert_eq!(chars[0].eve_character_id, 72_002);
+        assert!(chars[0].is_main);
+        assert_eq!(
+            account_snapshot(&pool, seller).await,
+            (Some(72_002), Some("Remaining Alt".to_string()))
+        );
+    }
+
+    #[sqlx::test]
+    async fn promote_any_remaining_main_noop_when_main_intact(pool: PgPool) {
+        // Detaching a non-main leaves the seller's main untouched; the re-promote
+        // helper is a no-op.
+        let seller = accounts::create_account(&pool).await.unwrap();
+        let buyer = accounts::create_account(&pool).await.unwrap();
+        let mut tx = pool.begin().await.unwrap();
+        let main = upsert_tokens(
+            &mut tx,
+            seller,
+            73_001,
+            "Kept Main",
+            1,
+            "Corp",
+            None,
+            None,
+            "client",
+            "a",
+            "r",
+            chrono::Utc::now() + chrono::Duration::hours(1),
+            &[],
+            "owner-old",
+            &test_key(),
+        )
+        .await
+        .unwrap();
+        promote_if_no_main(&mut tx, seller, main, 73_001, "Kept Main")
+            .await
+            .unwrap();
+        upsert_tokens(
+            &mut tx,
+            seller,
+            73_002,
+            "Sold Alt",
+            1,
+            "Corp",
+            None,
+            None,
+            "client",
+            "a",
+            "r",
+            chrono::Utc::now() + chrono::Duration::hours(1),
+            &[],
+            "owner-old",
+            &test_key(),
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+
+        let res = rebind(&pool, buyer, 73_002, "owner-new").await;
+        assert!(!res.was_main_on_former_account, "the alt was not main");
+
+        let mut tx = pool.begin().await.unwrap();
+        let promoted = promote_any_remaining_main(&mut tx, seller).await.unwrap();
+        tx.commit().await.unwrap();
+        assert!(!promoted, "main intact → no re-promote");
+
+        let chars = list_for_account(&pool, seller).await.unwrap();
+        assert_eq!(chars.len(), 1);
+        assert_eq!(chars[0].eve_character_id, 73_001);
+        assert!(chars[0].is_main);
     }
 }

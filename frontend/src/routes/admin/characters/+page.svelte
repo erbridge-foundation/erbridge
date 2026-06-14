@@ -1,9 +1,66 @@
 <script lang="ts">
+	import { enhance } from '$app/forms';
+	import { invalidateAll } from '$app/navigation';
 	import { m } from '$lib/paraglide/messages';
-	import type { AdminAccountDto, AdminAccountCharacterDto, TokenStatus } from '$lib/api';
+	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
+	import type {
+		AdminAccountDto,
+		AdminAccountCharacterDto,
+		HardDeletePreviewDto,
+		TokenStatus
+	} from '$lib/api';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
+
+	// Hard-delete flow state. `deleteTarget` is the account whose deletion is
+	// being confirmed; `deletePreview` holds the fetched blast radius (null until
+	// the preview action returns). `deleting` guards a double-submit.
+	let deleteOpen = $state(false);
+	let deleteTarget = $state<AdminAccountDto | null>(null);
+	let deletePreview = $state<HardDeletePreviewDto | null>(null);
+	let deleteError = $state(false);
+	let previewFormEl = $state<HTMLFormElement | null>(null);
+	let previewAccountInput = $state<HTMLInputElement | null>(null);
+	let deleteFormEl = $state<HTMLFormElement | null>(null);
+	let deleteAccountInput = $state<HTMLInputElement | null>(null);
+	let pendingPreviewId = $state<string | null>(null);
+
+	function openDelete(account: AdminAccountDto) {
+		deleteTarget = account;
+		deletePreview = null;
+		deleteError = false;
+		pendingPreviewId = account.id;
+		deleteOpen = true;
+		// Write the id imperatively right before submitting so the posted value is
+		// never a stale render (the reactive input value may not have flushed to
+		// the DOM yet). Fetch the preview; the dialog opens immediately and shows a
+		// loading line until the counts arrive. requestSubmit is unavailable in
+		// some test environments (jsdom) — guard so the dialog still opens there.
+		if (previewAccountInput) previewAccountInput.value = account.id;
+		try {
+			previewFormEl?.requestSubmit();
+		} catch {
+			// no-op — the dialog stays in its loading state.
+		}
+	}
+
+	function submitDelete() {
+		if (deleteTarget && deleteAccountInput) deleteAccountInput.value = deleteTarget.id;
+		try {
+			deleteFormEl?.requestSubmit();
+		} catch {
+			deleteError = true;
+		}
+	}
+
+	function closeDelete() {
+		deleteOpen = false;
+		deleteTarget = null;
+		deletePreview = null;
+		deleteError = false;
+		pendingPreviewId = null;
+	}
 
 	type StatusFilter = 'all' | 'problems' | 'expired' | 'transferred';
 	type SortColumn = 'account' | 'status' | 'admin' | 'issues' | 'created';
@@ -19,11 +76,18 @@
 	}
 
 	// The main character's name identifies an account; fall back to the first
-	// character by name, then a generic label for an account with no characters.
+	// character by name, then the denormalized last-known main (so an orphaned,
+	// zero-character account stays nameable), then a generic label.
 	function accountLabel(account: AdminAccountDto): string {
 		const main = account.characters.find((c) => c.is_main);
 		const named = main ?? [...account.characters].sort((a, b) => a.name.localeCompare(b.name))[0];
-		return named?.name ?? m.admin_characters_no_account();
+		return (
+			named?.name ?? account.last_known_main_character_name ?? m.admin_characters_no_account()
+		);
+	}
+
+	function isOrphaned(account: AdminAccountDto): boolean {
+		return account.status === 'orphaned';
 	}
 
 	function altCount(account: AdminAccountDto): number {
@@ -224,6 +288,7 @@
 							{m.admin_characters_col_created()}
 						</button>
 					</th>
+					<th>{m.admin_characters_col_actions()}</th>
 				</tr>
 			</thead>
 			<tbody>
@@ -245,7 +310,14 @@
 								{expanded_ ? '▾' : '▸'}
 							</button>
 						</td>
-						<td class="account-cell">{accountLabel(account)}</td>
+						<td class="account-cell">
+							{accountLabel(account)}
+							{#if isOrphaned(account)}
+								<span class="badge-orphaned" title={m.admin_characters_orphaned_hint({ name: accountLabel(account) })}>
+									{m.admin_characters_orphaned_label()}
+								</span>
+							{/if}
+						</td>
 						<td class="muted">{account.status}</td>
 						<td>
 							{#if account.is_server_admin}
@@ -280,11 +352,21 @@
 							{/if}
 						</td>
 						<td class="muted">{new Date(account.created_at).toLocaleDateString()}</td>
+						<td class="actions-cell">
+							<button
+								type="button"
+								class="delete-btn"
+								aria-label={m.admin_characters_delete_aria({ name: accountLabel(account) })}
+								onclick={() => openDelete(account)}
+							>
+								{m.admin_characters_delete()}
+							</button>
+						</td>
 					</tr>
 					{#if expanded_}
 						<tr class="detail-row">
 							<td></td>
-							<td colspan="6">
+							<td colspan="7">
 								<table class="char-table">
 									<thead>
 										<tr>
@@ -319,6 +401,80 @@
 		</table>
 	{/if}
 </section>
+
+<!-- Preview form: fetches the blast radius for the targeted account. The
+     account id is bound to the current delete target. -->
+<form
+	bind:this={previewFormEl}
+	method="POST"
+	action="?/preview"
+	use:enhance={() =>
+		async ({ result }) => {
+			if (result.type === 'success' && result.data?.action === 'preview') {
+				// Only apply if this is still the account we are confirming.
+				if (result.data.accountId === pendingPreviewId) {
+					deletePreview = result.data.preview as HardDeletePreviewDto;
+				}
+			} else if (result.type === 'failure') {
+				deleteError = true;
+			}
+		}}
+>
+	<input bind:this={previewAccountInput} type="hidden" name="account_id" value="" />
+</form>
+
+<!-- Delete form: dispatched on confirm. On success refreshes the grid so the
+     deleted account disappears. -->
+<form
+	bind:this={deleteFormEl}
+	method="POST"
+	action="?/delete"
+	use:enhance={() =>
+		async ({ result }) => {
+			if (result.type === 'success' && result.data?.action === 'delete') {
+				closeDelete();
+				await invalidateAll();
+			} else if (result.type === 'failure') {
+				deleteError = true;
+			}
+		}}
+>
+	<input bind:this={deleteAccountInput} type="hidden" name="account_id" value="" />
+</form>
+
+<ConfirmDialog
+	open={deleteOpen}
+	tone="danger"
+	onCancel={closeDelete}
+	onConfirm={submitDelete}
+>
+	{#snippet title()}
+		{m.admin_characters_delete_title({ name: deleteTarget ? accountLabel(deleteTarget) : '' })}
+	{/snippet}
+	{#snippet body()}
+		{#if deleteError}
+			<span class="dialog-error" role="alert">{m.admin_characters_delete_error()}</span>
+		{:else if deletePreview === null}
+			<span role="status">{m.admin_characters_delete_loading()}</span>
+		{:else}
+			{m.admin_characters_delete_intro()}
+			{' '}
+			{m.admin_characters_delete_removed({
+				characters: deletePreview.characters,
+				sessions: deletePreview.sessions,
+				api_keys: deletePreview.api_keys
+			})}
+			{' '}
+			{m.admin_characters_delete_unowned({
+				maps: deletePreview.owned_maps,
+				acls: deletePreview.owned_acls
+			})}
+			{' '}
+			{m.admin_characters_delete_audit_preserved()}
+		{/if}
+	{/snippet}
+	{#snippet confirmLabel()}{m.admin_characters_delete_confirm()}{/snippet}
+</ConfirmDialog>
 
 <style>
 	.page-heading {
@@ -509,6 +665,46 @@
 		font-size: 0.625rem;
 		font-weight: 500;
 		letter-spacing: 0.05em;
+	}
+
+	.badge-orphaned {
+		display: inline-flex;
+		align-items: center;
+		margin-left: 8px;
+		padding: 1px 6px;
+		border-radius: 4px;
+		background: rgba(245, 158, 11, 0.1);
+		border: 1px solid rgba(245, 158, 11, 0.35);
+		color: var(--amber);
+		font-size: 0.625rem;
+		font-weight: 500;
+		letter-spacing: 0.05em;
+	}
+
+	.actions-cell {
+		white-space: nowrap;
+	}
+	.delete-btn {
+		padding: 3px 10px;
+		background: transparent;
+		border: 1px solid var(--space-700);
+		border-radius: 4px;
+		color: var(--slate-400);
+		font: inherit;
+		font-size: 0.6875rem;
+		cursor: pointer;
+	}
+	.delete-btn:hover {
+		border-color: var(--red);
+		color: var(--red);
+	}
+	.delete-btn:focus-visible {
+		outline: 2px solid var(--red);
+		outline-offset: 2px;
+	}
+
+	.dialog-error {
+		color: var(--red);
 	}
 
 	.issues-cell {

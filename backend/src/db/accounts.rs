@@ -8,6 +8,7 @@ pub struct Account {
     pub status: String,
     pub delete_requested_at: Option<DateTime<Utc>>,
     pub is_server_admin: bool,
+    pub last_known_main_character_name: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -22,7 +23,8 @@ pub async fn create_account(pool: &PgPool) -> Result<Uuid> {
 
 pub async fn get_account(pool: &PgPool, id: Uuid) -> Result<Option<Account>> {
     let row = sqlx::query!(
-        "SELECT id, status, delete_requested_at, is_server_admin, created_at, updated_at
+        "SELECT id, status, delete_requested_at, is_server_admin,
+                last_known_main_character_name, created_at, updated_at
          FROM account WHERE id = $1",
         id
     )
@@ -35,6 +37,7 @@ pub async fn get_account(pool: &PgPool, id: Uuid) -> Result<Option<Account>> {
         status: r.status,
         delete_requested_at: r.delete_requested_at,
         is_server_admin: r.is_server_admin,
+        last_known_main_character_name: r.last_known_main_character_name,
         created_at: r.created_at,
         updated_at: r.updated_at,
     }))
@@ -57,6 +60,69 @@ pub async fn reactivate_if_soft_deleted(
     .await
     .context("failed to reactivate account")?;
     Ok(result.rows_affected() > 0)
+}
+
+/// Writes the denormalized last-known-main identity snapshot
+/// (`last_known_main_character_id` + `last_known_main_character_name`) onto an
+/// account, in the caller's transaction. Called at the two `is_main = TRUE`
+/// writers (`characters::set_main`, `characters::promote_if_no_main`) and the
+/// seller-side re-promotion, so an account stays nameable after the snapshotted
+/// character is later detached or removed. This is a snapshot, never a join key —
+/// `eve_character_id` is the durable EVE id, not the internal UUID.
+pub async fn set_last_known_main(
+    tx: &mut Transaction<'_, Postgres>,
+    account_id: Uuid,
+    eve_character_id: i64,
+    name: &str,
+) -> Result<()> {
+    sqlx::query!(
+        "UPDATE account
+         SET last_known_main_character_id = $2,
+             last_known_main_character_name = $3,
+             updated_at = now()
+         WHERE id = $1",
+        account_id,
+        eve_character_id,
+        name,
+    )
+    .execute(&mut **tx)
+    .await
+    .context("failed to set account last-known-main snapshot")?;
+    Ok(())
+}
+
+/// Reads an account's `last_known_main_character_name` snapshot in the caller's
+/// transaction (the durable display name even after the account is emptied).
+/// Used to snapshot the former account's name into a character-transferred audit
+/// event. `None` when the account has no row or has never had a main.
+pub async fn get_last_known_main_name(
+    tx: &mut Transaction<'_, Postgres>,
+    id: Uuid,
+) -> Result<Option<String>> {
+    let row = sqlx::query!(
+        "SELECT last_known_main_character_name FROM account WHERE id = $1",
+        id
+    )
+    .fetch_optional(&mut **tx)
+    .await
+    .context("failed to read account last-known-main name")?;
+    Ok(row.and_then(|r| r.last_known_main_character_name))
+}
+
+/// Transitions an account to the terminal `status = 'orphaned'` in the caller's
+/// transaction. Reached when an account's last character is detached (transfer
+/// detection): the account is unreachable (zero characters, no SSO login can
+/// resolve to it) but the row — and its `last_known_main_*` snapshot and owned
+/// resources — is retained, never deleted.
+pub async fn mark_orphaned(tx: &mut Transaction<'_, Postgres>, id: Uuid) -> Result<()> {
+    sqlx::query!(
+        "UPDATE account SET status = 'orphaned', updated_at = now() WHERE id = $1",
+        id
+    )
+    .execute(&mut **tx)
+    .await
+    .context("failed to mark account orphaned")?;
+    Ok(())
 }
 
 pub async fn soft_delete(tx: &mut Transaction<'_, Postgres>, id: Uuid) -> Result<()> {
@@ -157,6 +223,16 @@ pub async fn resolve_or_create(
     ))
 }
 
+/// Creates a fresh account in the caller's transaction, bootstrapping it to
+/// server admin iff it is the first-ever account. Returns `(id,
+/// bootstrapped_admin)`. Public wrapper over `create_account_with_bootstrap` for
+/// the SSO callback's login-transfer branch, which mints a brand-new account for
+/// a transferred character (it cannot reuse `resolve_or_create`, whose
+/// eve_character_id lookup would return the *seller's* account).
+pub async fn create_fresh_account(tx: &mut Transaction<'_, Postgres>) -> Result<(Uuid, bool)> {
+    create_account_with_bootstrap(tx).await
+}
+
 /// Inserts a new `account` row, auto-promoting it to server admin iff no
 /// other account row exists. Returns `(id, bootstrapped_admin)`.
 async fn create_account_with_bootstrap(tx: &mut Transaction<'_, Postgres>) -> Result<(Uuid, bool)> {
@@ -237,11 +313,68 @@ pub async fn account_exists(pool: &PgPool, account_id: Uuid) -> Result<bool> {
     Ok(row.exists)
 }
 
+/// Blast-radius counts for an account hard-delete preview: rows that will be
+/// **removed** by FK CASCADE (characters, sessions, API keys) and rows that will
+/// become **unowned** by FK SET NULL (owned maps, owned ACLs). Audit history is
+/// preserved (SET NULL on the actor, self-contained snapshots) and so is not a
+/// count here.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HardDeletePreview {
+    pub characters: i64,
+    pub sessions: i64,
+    pub api_keys: i64,
+    pub owned_maps: i64,
+    pub owned_acls: i64,
+}
+
+/// Computes the hard-delete blast radius for `account_id` in a single query. The
+/// counts reflect current state; the actual delete relies on the FK graph
+/// (CASCADE / SET NULL) to enact them.
+pub async fn hard_delete_preview(pool: &PgPool, account_id: Uuid) -> Result<HardDeletePreview> {
+    let row = sqlx::query!(
+        r#"
+        SELECT
+            (SELECT COUNT(*) FROM eve_character WHERE account_id = $1) AS "characters!",
+            (SELECT COUNT(*) FROM session       WHERE account_id = $1) AS "sessions!",
+            (SELECT COUNT(*) FROM api_key        WHERE account_id = $1) AS "api_keys!",
+            (SELECT COUNT(*) FROM map            WHERE owner_account_id = $1) AS "owned_maps!",
+            (SELECT COUNT(*) FROM acl            WHERE owner_account_id = $1) AS "owned_acls!"
+        "#,
+        account_id
+    )
+    .fetch_one(pool)
+    .await
+    .context("failed to compute hard-delete preview")?;
+
+    Ok(HardDeletePreview {
+        characters: row.characters,
+        sessions: row.sessions,
+        api_keys: row.api_keys,
+        owned_maps: row.owned_maps,
+        owned_acls: row.owned_acls,
+    })
+}
+
+/// Hard-deletes an `account` row in the caller's transaction (`DELETE FROM
+/// account`), relying on the FK graph: `eve_character` / `session` / `api_key`
+/// CASCADE away; `map` / `acl` owner, `audit_log.actor`, `blocked_eve_character`
+/// blocker SET NULL (rows survive, unowned). Returns the number of rows deleted
+/// (0 when the account does not exist). The last-server-admin guard is the
+/// caller's responsibility (evaluated in the same tx).
+pub async fn hard_delete(tx: &mut Transaction<'_, Postgres>, id: Uuid) -> Result<u64> {
+    let result = sqlx::query!("DELETE FROM account WHERE id = $1", id)
+        .execute(&mut **tx)
+        .await
+        .context("failed to hard-delete account")?;
+    Ok(result.rows_affected())
+}
+
 /// Every account, newest first. Backs the admin accounts list; the service
 /// layer assembles each account's characters separately.
 pub async fn list_accounts_admin(pool: &PgPool) -> Result<Vec<Account>> {
     let rows = sqlx::query!(
-        "SELECT id, status, delete_requested_at, is_server_admin, created_at, updated_at
+        "SELECT id, status, delete_requested_at, is_server_admin,
+                last_known_main_character_name, created_at, updated_at
          FROM account ORDER BY created_at DESC"
     )
     .fetch_all(pool)
@@ -255,6 +388,7 @@ pub async fn list_accounts_admin(pool: &PgPool) -> Result<Vec<Account>> {
             status: r.status,
             delete_requested_at: r.delete_requested_at,
             is_server_admin: r.is_server_admin,
+            last_known_main_character_name: r.last_known_main_character_name,
             created_at: r.created_at,
             updated_at: r.updated_at,
         })
@@ -277,7 +411,7 @@ pub async fn list_accounts_with_characters(pool: &PgPool) -> Result<Vec<AccountW
     let rows = sqlx::query!(
         r#"
         SELECT a.id, a.status, a.delete_requested_at, a.is_server_admin,
-               a.created_at, a.updated_at,
+               a.last_known_main_character_name, a.created_at, a.updated_at,
                c.eve_character_id AS "eve_character_id?",
                c.name AS "character_name?",
                c.is_main AS "is_main?",
@@ -303,6 +437,7 @@ pub async fn list_accounts_with_characters(pool: &PgPool) -> Result<Vec<AccountW
                     status: r.status,
                     delete_requested_at: r.delete_requested_at,
                     is_server_admin: r.is_server_admin,
+                    last_known_main_character_name: r.last_known_main_character_name,
                     created_at: r.created_at,
                     updated_at: r.updated_at,
                 },

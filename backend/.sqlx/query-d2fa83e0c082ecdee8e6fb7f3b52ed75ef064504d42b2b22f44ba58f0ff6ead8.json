@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        WITH prev AS (\n            SELECT id, is_main FROM eve_character WHERE eve_character_id = $2\n        )\n        UPDATE eve_character SET\n            account_id = $1,\n            name = $3,\n            corporation_id = $4,\n            corporation_name = $5,\n            alliance_id = $6,\n            alliance_name = $7,\n            esi_client_id = $8,\n            encrypted_access_token = $9,\n            encrypted_refresh_token = $10,\n            access_token_expires_at = $11,\n            scopes = $12,\n            owner_hash = $13,\n            token_status = 'valid',\n            is_main = FALSE,\n            updated_at = now()\n        FROM prev\n        WHERE eve_character.eve_character_id = $2\n        RETURNING eve_character.id, prev.is_main AS was_main\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "was_main",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int8",
+        "Text",
+        "Int8",
+        "Text",
+        "Int8",
+        "Text",
+        "Text",
+        "Bytea",
+        "Bytea",
+        "Timestamptz",
+        "TextArray",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "d2fa83e0c082ecdee8e6fb7f3b52ed75ef064504d42b2b22f44ba58f0ff6ead8"
+}

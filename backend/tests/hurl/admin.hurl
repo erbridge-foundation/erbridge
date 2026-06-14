@@ -51,6 +51,16 @@ HTTP 401
 [Asserts]
 jsonpath "$.error.code" == "unauthenticated"
 
+GET {{base_url}}/api/v1/admin/accounts/00000000-0000-0000-0000-000000000000/hard-delete-preview
+HTTP 401
+[Asserts]
+jsonpath "$.error.code" == "unauthenticated"
+
+POST {{base_url}}/api/v1/admin/accounts/00000000-0000-0000-0000-000000000000/hard-delete
+HTTP 401
+[Asserts]
+jsonpath "$.error.code" == "unauthenticated"
+
 GET {{base_url}}/api/v1/admin/blocks
 HTTP 401
 [Asserts]
@@ -104,6 +114,12 @@ HTTP 403
 [Asserts]
 jsonpath "$.error.code" == "forbidden_admin_required"
 
+POST {{base_url}}/api/v1/admin/accounts/{{grant_target_id}}/hard-delete
+Cookie: session={{non_admin_session}}
+HTTP 403
+[Asserts]
+jsonpath "$.error.code" == "forbidden_admin_required"
+
 # ── 4. Admin lists accounts → 200 (each with characters) ─────────────────────
 
 GET {{base_url}}/api/v1/admin/accounts
@@ -114,6 +130,22 @@ jsonpath "$.data" isCollection
 jsonpath "$.data[0].id" isString
 jsonpath "$.data[0].is_server_admin" isBoolean
 jsonpath "$.data[0].characters" isCollection
+jsonpath "$.error" not exists
+
+# ── 4b. Hard-delete PREVIEW for the admin's own account → 200 (read-only) ─────
+# Preview is non-mutating, so it is safe to run against the admin account. The
+# execute (POST .../hard-delete) is intentionally NOT exercised here — it is an
+# irreversible mutation covered by the Rust integration + service tests.
+
+GET {{base_url}}/api/v1/admin/accounts/{{admin_account_id}}/hard-delete-preview
+Cookie: session={{admin_session}}
+HTTP 200
+[Asserts]
+jsonpath "$.data.characters" isInteger
+jsonpath "$.data.sessions" isInteger
+jsonpath "$.data.api_keys" isInteger
+jsonpath "$.data.owned_maps" isInteger
+jsonpath "$.data.owned_acls" isInteger
 jsonpath "$.error" not exists
 
 # ── 5. Character search → 200, results carry owning account_id ───────────────

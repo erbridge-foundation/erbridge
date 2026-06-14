@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE eve_character SET account_id = $1, owner_hash = NULL WHERE eve_character_id = 5000",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "2102dbb8d82dfd19886b0d9d791488e151ff15e19130b7464b9694bb1276cb70"
+}

@@ -1,9 +1,7 @@
 ## Purpose
 
 Server-wide administration for the instance: managing the set of server admins (grant/revoke with a last-admin guard), and a character block list that bans a pilot — and, by extension, their whole account — from the server. Provides the `AdminAccount` extractor (session-cookie auth only), the admin-only endpoints under `/api/v1/admin/*`, the `blocked_eve_character` table, the derived account-blocked rule, and the block-enforcement model that mirrors soft-delete. Also covers the admin audit browser and the server-side-gated `/admin` frontend route group.
-
 ## Requirements
-
 ### Requirement: AdminAccount extractor gates admin endpoints (cookie-only, fail-closed)
 
 The system SHALL provide an `AdminAccount(Uuid)` Axum extractor that resolves the authenticated account ID **only** when that account has `is_server_admin = TRUE`. The extractor SHALL authenticate via the session cookie only; it SHALL NOT accept `Authorization: Bearer erb_…` API-key authentication. A leaked API key must never confer admin power.
@@ -423,3 +421,28 @@ The admin revoke flow (`/admin/admins`) SHALL display a prominent warning in the
 #### Scenario: Revoking another account shows no self-warning
 - **WHEN** an admin opens the revoke confirmation for an account that is not their own
 - **THEN** the dialog shows no self-revoke warning
+
+### Requirement: Admin can hard-delete an account with a deletion preview
+
+The admin surface SHALL expose a hard-delete action for an account, gated by the `AdminAccount` extractor, that performs the irreversible `DELETE FROM account` defined by the `account-hard-delete` capability. This is distinct from the user-facing soft-delete: it removes the account row outright (cascading its characters, sessions, and API keys) rather than flipping a status.
+
+The action SHALL be preceded by a server-provided deletion preview reporting the blast radius: counts of characters, sessions, and API keys that will be **removed**, and counts of maps and ACLs that will become **unowned** (owner reference nulled, rows retained). The preview SHALL convey that audit history is preserved. The admin UI SHALL render the preview alongside an explicit, irreversible-action confirmation before dispatching the delete. The last-server-admin guard SHALL apply (HTTP 409 `cannot_remove_last_server_admin`).
+
+This action is the operator's resolution for an unreachable duplicate account — notably the account a buyer accidentally creates by logging in fresh with a transferred character (see the `eve-sso-auth` known limitation): the admin hard-deletes the spare account, after which the human adds the character to their original account normally.
+
+#### Scenario: Admin sees a preview before hard-deleting
+- **WHEN** an admin selects an account for hard-deletion
+- **THEN** the UI shows a preview of how many characters/sessions/API keys will be removed and how many maps/ACLs will become unowned, plus an explicit "this cannot be undone" confirmation
+
+#### Scenario: Admin confirms and the account is hard-deleted
+- **WHEN** an admin confirms the hard-delete
+- **THEN** the backend deletes the `account` row (cascading characters/sessions/keys, nulling map/ACL/audit/block owner references), emits an audit event, and the account no longer appears in the account list
+
+#### Scenario: Hard-delete respects the last-admin guard
+- **WHEN** an admin attempts to hard-delete an account that would leave no other active server admin
+- **THEN** the request is refused with HTTP 409 `cannot_remove_last_server_admin` and nothing is deleted
+
+#### Scenario: Hard-delete action is admin-only
+- **WHEN** a non-admin attempts to reach the hard-delete action or endpoint
+- **THEN** it is rejected fail-closed by the `AdminAccount` extractor
+

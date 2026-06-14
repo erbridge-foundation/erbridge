@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO map (name, slug, owner_account_id) VALUES ('M', 'm', $1)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "da49453a5f088e35bb3667a63d3680380dcc751d9ce37f3ea20d7f1aa73af247"
+}

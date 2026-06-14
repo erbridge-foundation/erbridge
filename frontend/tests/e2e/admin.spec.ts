@@ -127,6 +127,30 @@ test.describe('/admin (admin session)', () => {
 		await expect(page.locator('tr.account-row', { hasText: 'Main Pilot' })).toBeVisible();
 	});
 
+	test('characters tab: orphaned account is nameable and hard-deletable with a preview', async ({
+		page
+	}) => {
+		await page.goto('/admin/characters');
+
+		// The orphaned (zero-character) account is listed, nameable via its
+		// last-known main, and badged "orphaned".
+		const row = page.locator('tr.account-row', { hasText: 'Ghost Seller' });
+		await expect(row.locator('.account-cell')).toContainText('Ghost Seller');
+		await expect(row.locator('.badge-orphaned')).toHaveText('orphaned');
+
+		// Open the irreversible hard-delete confirmation; the preview loads.
+		await row.getByRole('button', { name: /hard-delete Ghost Seller/i }).click();
+		const dialog = page.getByRole('alertdialog');
+		await expect(dialog).toBeVisible();
+		await expect(dialog).toContainText('cannot be undone');
+		// Audit history must be described as preserved, never lost.
+		await expect(dialog).toContainText('Audit history is preserved.');
+
+		// Confirm: the account is deleted and disappears from the grid.
+		await dialog.getByRole('button', { name: /delete permanently/i }).click();
+		await expect(page.locator('tr.account-row', { hasText: 'Ghost Seller' })).toHaveCount(0);
+	});
+
 	test('block via local search → unblock flow', async ({ page }) => {
 		await page.goto('/admin/blocks');
 		await expect(page.getByText('No blocked characters.')).toBeVisible();

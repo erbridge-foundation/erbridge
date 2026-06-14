@@ -75,7 +75,20 @@ export interface AdminAccountDto {
 	status: string;
 	is_server_admin: boolean;
 	created_at: string;
+	/** Denormalized last-known main name, so an `orphaned` (zero-character)
+	 * account is still nameable. `null` when never observed. */
+	last_known_main_character_name: string | null;
 	characters: AdminAccountCharacterDto[];
+}
+
+/** Blast-radius preview for an account hard-delete. Rows that will be removed
+ * (characters/sessions/api_keys) and rows that become unowned (maps/acls). */
+export interface HardDeletePreviewDto {
+	characters: number;
+	sessions: number;
+	api_keys: number;
+	owned_maps: number;
+	owned_acls: number;
 }
 
 export interface CharacterSearchResultDto {
@@ -446,6 +459,32 @@ export function revokeAdmin(
 		method: 'POST',
 		headers: { cookie }
 	});
+}
+
+export function hardDeletePreview(
+	fetch: typeof globalThis.fetch,
+	backendUrl: string,
+	accountId: string,
+	cookie: string
+): Promise<HardDeletePreviewDto> {
+	return request<HardDeletePreviewDto>(
+		fetch,
+		`${backendUrl}/api/v1/admin/accounts/${accountId}/hard-delete-preview`,
+		{ headers: { cookie } }
+	);
+}
+
+export function hardDeleteAccount(
+	fetch: typeof globalThis.fetch,
+	backendUrl: string,
+	accountId: string,
+	cookie: string
+): Promise<HardDeletePreviewDto> {
+	return request<HardDeletePreviewDto>(
+		fetch,
+		`${backendUrl}/api/v1/admin/accounts/${accountId}/hard-delete`,
+		{ method: 'POST', headers: { cookie } }
+	);
 }
 
 export function listBlocks(

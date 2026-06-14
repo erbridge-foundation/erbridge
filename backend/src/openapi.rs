@@ -10,7 +10,7 @@ use crate::{
         admin::{
             AdminAccountCharacterDto, AdminAccountDto, AuditLogEntryDto, AuditLogPageDto,
             BlockCharacterRequest, BlockedCharacterDto, CharacterSearchResultDto,
-            EsiCharacterSearchPageDto, EsiCharacterSearchResultDto,
+            EsiCharacterSearchPageDto, EsiCharacterSearchResultDto, HardDeletePreviewDto,
         },
         entity::{EntityCharacterDto, EntityOrgDto, EntitySearchPageDto},
         health::{ComponentHealth, ComponentStatus, HealthResponse, HealthStatus},
@@ -23,8 +23,8 @@ use crate::{
         AclListResponse, AclMemberListResponse, AclMemberResponse, AclResponse,
         AdminAccountListResponse, AuditLogPageResponse, BlockListResponse, CharacterResponse,
         CharacterSearchResponse, CreatedKeyResponse, EntitySearchResponse,
-        EsiCharacterSearchResponse, KeyListResponse, MapListResponse, MapResponse, MeResponse,
-        PreferencesResponse,
+        EsiCharacterSearchResponse, HardDeletePreviewResponse, KeyListResponse, MapListResponse,
+        MapResponse, MeResponse, PreferencesResponse,
     },
 };
 
@@ -49,6 +49,8 @@ use crate::{
         crate::handlers::api::v1::admin::esi_search_characters,
         crate::handlers::api::v1::admin::grant_admin,
         crate::handlers::api::v1::admin::revoke_admin,
+        crate::handlers::api::v1::admin::hard_delete_preview,
+        crate::handlers::api::v1::admin::hard_delete_account,
         crate::handlers::api::v1::admin::list_blocks,
         crate::handlers::api::v1::admin::block_character,
         crate::handlers::api::v1::admin::unblock_character,
@@ -105,6 +107,8 @@ use crate::{
         BlockListResponse,
         BlockedCharacterDto,
         BlockCharacterRequest,
+        HardDeletePreviewResponse,
+        HardDeletePreviewDto,
         AuditLogPageResponse,
         AuditLogPageDto,
         AuditLogEntryDto,
