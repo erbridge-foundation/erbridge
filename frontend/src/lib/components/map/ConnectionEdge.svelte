@@ -31,6 +31,10 @@
 	// svelte-flow types `data` as optional `any`; narrow + default it.
 	const d = $derived((data ?? { wh_type: '', mass: 'fresh', eol: false }) as ConnData);
 
+	// How the sig id is shown on the endpoint pill. For now: the first 3 chars
+	// (`ABC-123` → `ABC`). This will become a per-map preference later.
+	const sigLabel = (id: string) => id.slice(0, 3);
+
 	// source/target are stable for an edge's lifetime; pass them once to the hook.
 	// svelte-ignore state_referenced_locally
 	const sourceNode = useInternalNode(source);
@@ -98,12 +102,12 @@
 	     the endpoints, the type/mass label sits at the midpoint above. -->
 	{#if d.sig_source}
 		<EdgeLabel x={geom.sigSourceX} y={geom.sigSourceY} transparent>
-			<span class="sig-endpoint">{d.sig_source}</span>
+			<span class="sig-endpoint">{sigLabel(d.sig_source)}</span>
 		</EdgeLabel>
 	{/if}
 	{#if d.sig_target}
 		<EdgeLabel x={geom.sigTargetX} y={geom.sigTargetY} transparent>
-			<span class="sig-endpoint">{d.sig_target}</span>
+			<span class="sig-endpoint">{sigLabel(d.sig_target)}</span>
 		</EdgeLabel>
 	{/if}
 {/if}
