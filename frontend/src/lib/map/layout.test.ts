@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { layoutSeed, renderableSystems } from './layout';
-import type { CombinedGraph, System, Tab } from './types';
+import type { CombinedGraph, Connection, System, Tab } from './types';
 
 /** A tiny linear chain A—B—C—D plus a side branch B—E, and an island X with no
  *  connection (a ghost / disconnected fragment). */
@@ -13,14 +13,14 @@ function graph(): CombinedGraph {
 	}));
 	return {
 		systems,
-		connections: [
-			{ id: 'ab', source: 'A', target: 'B', origin: 'A', wh_type: 'K', mass: 'fresh', eol: false },
-			{ id: 'bc', source: 'B', target: 'C', origin: 'B', wh_type: 'K', mass: 'fresh', eol: false },
-			{ id: 'cd', source: 'C', target: 'D', origin: 'C', wh_type: 'K', mass: 'fresh', eol: false },
-			{ id: 'be', source: 'B', target: 'E', origin: 'B', wh_type: 'K', mass: 'fresh', eol: false }
-		],
+		connections: [conn('ab', 'A', 'B'), conn('bc', 'B', 'C'), conn('cd', 'C', 'D'), conn('be', 'B', 'E')],
 		tabs: []
 	};
+}
+
+/** Minimal connection in the endpoint shape (no sigs needed for layout). */
+function conn(id: string, a: string, b: string): Connection {
+	return { id, a: { system: a, sig: null }, b: { system: b, sig: null }, mass: 'fresh', eol: false };
 }
 
 const tab = (roots: string[], extra: Partial<Tab> = {}): Tab => ({

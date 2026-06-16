@@ -390,6 +390,7 @@
 	"map_proto_edge_thickness": "Linienstärke",
 	"map_proto_show_mass_labels": "Massen-Labels",
 	"map_proto_show_whtype_labels": "Typ-Labels",
+	"map_proto_show_direction": "Richtung anzeigen",
 	"map_proto_display_heading": "Anzeige",
 	"map_proto_sidebar_label": "Kartensteuerung",
 	"map_proto_sidebar_open": "Steuerung öffnen",

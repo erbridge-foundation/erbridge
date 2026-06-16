@@ -39,26 +39,56 @@ export interface System {
  *  label — mass is never colour-only (Fork 3). */
 export type Mass = 'fresh' | 'half' | 'critical';
 
-/** A live connection between two systems. Directed by `origin` (the side the
- *  chain was scanned *from*) but rendered as an undirected link; reachability
- *  walks it both ways. */
+/** A scanned signature at a connection endpoint. The wormhole TYPE lives on the
+ *  signature, not the connection: a hole is `K162` on one side and a named code
+ *  (`H296`, `C247`, …) on the other. `type` may be unknown (sig bookmarked but
+ *  not yet identified) — modelled as `null`. */
+export interface Signature {
+	/** In-game signature id, e.g. `ABC-123`. */
+	id: string;
+	/** The wormhole type code, or `null` if scanned-but-unidentified. */
+	type: string | null;
+}
+
+/** One end of a connection: the system it's in, and the signature there (or
+ *  `null` when that side hasn't been scanned/bookmarked yet — the `???` case). */
+export interface ConnectionEndpoint {
+	system: string;
+	sig: Signature | null;
+}
+
+/**
+ * A live connection between two systems, modelled as a pair of endpoints:
+ *   sys_a → sig_a  < conn >  sig_b → sys_b
+ *
+ * The wormhole type lives on each endpoint's signature, so DIRECTION is derived,
+ * never stored: the arrow points toward the `K162` end (equivalently, away from
+ * the named end). One known side is enough to orient it (K162 and named are
+ * complementary); only when BOTH sides are unknown is the direction undetermined.
+ * Rendered as an undirected link for reachability — that walks both ways.
+ */
 export interface Connection {
 	id: string;
-	/** The two endpoint system ids. `origin` is whichever of these the connection
-	 *  was scanned from (presentation hint only — reachability is symmetric). */
-	source: string;
-	target: string;
-	origin: string;
-	/** Wormhole type code shown on the edge label (e.g. `C247`, `D845`, `K162`). */
-	wh_type: string;
+	a: ConnectionEndpoint;
+	b: ConnectionEndpoint;
 	mass: Mass;
 	/** End-of-life: the wormhole is in its final ~4h window. Carries a `⚠` glyph
 	 *  on the label (non-colour) plus a pulse decoration. */
 	eol: boolean;
-	/** Signature ids at each end, as scanned. Optional — not every link has both
-	 *  sides bookmarked yet. */
-	sig_source?: string;
-	sig_target?: string;
+}
+
+/** The K162 end of a connection — the endpoint the direction arrow points TO —
+ *  or `null` when neither side's type is known. Derived: the K162 side is the
+ *  one typed `K162`; if only the NAMED side is known, the K162 is the other end.
+ *  (K162 and named are complementary, so one known type orients the arrow.) */
+export function k162End(conn: Connection): 'a' | 'b' | null {
+	const aType = conn.a.sig?.type ?? null;
+	const bType = conn.b.sig?.type ?? null;
+	// a is K162, or b is a known NAMED side ⇒ the K162 is the a end.
+	if (aType === 'K162' || (bType !== null && bType !== 'K162')) return 'a';
+	// b is K162, or a is a known NAMED side ⇒ the K162 is the b end.
+	if (bType === 'K162' || (aType !== null && aType !== 'K162')) return 'b';
+	return null; // both ends unknown → direction undetermined
 }
 
 /** A view onto the combined graph: a named tab anchored at one or more roots.

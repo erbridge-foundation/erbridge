@@ -5,18 +5,22 @@ import {
 	overlayPositions,
 	reconcilePlacement
 } from './reconcile';
-import type { CombinedGraph, LocalState, Positions, System, Tab } from './types';
+import type { CombinedGraph, Connection, LocalState, Positions, System, Tab } from './types';
 
 const sys = (id: string): System => ({ id, name: id, class: 'C2', statics: [] });
+const conn = (id: string, a: string, b: string): Connection => ({
+	id,
+	a: { system: a, sig: null },
+	b: { system: b, sig: null },
+	mass: 'fresh',
+	eol: false
+});
 
 /** A—B—C chain rooted at A. */
 function server(): CombinedGraph {
 	return {
 		systems: [sys('A'), sys('B'), sys('C')],
-		connections: [
-			{ id: 'ab', source: 'A', target: 'B', origin: 'A', wh_type: 'K', mass: 'fresh', eol: false },
-			{ id: 'bc', source: 'B', target: 'C', origin: 'B', wh_type: 'K', mass: 'fresh', eol: false }
-		],
+		connections: [conn('ab', 'A', 'B'), conn('bc', 'B', 'C')],
 		tabs: []
 	};
 }
@@ -108,10 +112,7 @@ describe('ghost → confirmed end to end (no duplicate, no flicker)', () => {
 
 		const after: CombinedGraph = {
 			systems: [...before.systems, sys('G')],
-			connections: [
-				...before.connections,
-				{ id: 'cg', source: 'C', target: 'G', origin: 'C', wh_type: 'K', mass: 'fresh', eol: false }
-			],
+			connections: [...before.connections, conn('cg', 'C', 'G')],
 			tabs: []
 		};
 

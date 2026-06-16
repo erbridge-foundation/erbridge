@@ -4,9 +4,10 @@
 	// seed overlaid with saved placement — existence is never derived from
 	// placement. This component is the durable artifact; /maps/_proto is the
 	// throwaway shell around it (see build-map-canvas-prototype design).
-	import { SvelteFlow, Controls, Background, MiniMap } from '@xyflow/svelte';
+	import { SvelteFlow, Controls, Background, MiniMap, MarkerType } from '@xyflow/svelte';
 	import '@xyflow/svelte/dist/style.css';
 	import type { Node, Edge, NodeTypes, EdgeTypes } from '@xyflow/svelte';
+	import { untrack } from 'svelte';
 	import { m } from '$lib/paraglide/messages';
 
 	import SystemNode from '$lib/components/map/SystemNode.svelte';
@@ -15,6 +16,7 @@
 	import { layoutSeed, renderableSystems } from '$lib/map/layout';
 	import { combine, dropConfirmedGhosts, overlayPositions, reconcilePlacement } from '$lib/map/reconcile';
 	import * as placement from '$lib/map/placement';
+	import { k162End } from '$lib/map/types';
 	import type { CombinedGraph, LayoutDirection, LocalState, Positions, Tab } from '$lib/map/types';
 
 	let {
@@ -61,6 +63,9 @@
 	let edgeThickness = $state(2);
 	let showMassLabels = $state(true);
 	let showWhTypeLabels = $state(true);
+	// "Show direction": a single arrow per connection toward the K162 end (or a
+	// neutral marker when the direction is undetermined). On by default.
+	let showDirection = $state(true);
 
 	// ── Sidebar (holds the intel sections + canvas tweaks; collapses + docks) ────
 	let sidebarOpen = $state(true);
@@ -107,26 +112,67 @@
 				data: { system: s, isRoot: rootSet.has(s.id), isGhost: ghostIds.has(s.id) }
 			}))
 	);
-	const desiredEdges = $derived<Edge[]>(
-		union.connections
-			.filter((c) => presentIds.has(c.source) && presentIds.has(c.target))
-			.map((c) => ({
+	const desiredEdges = $derived.by<Edge[]>(() => {
+		const visible = union.connections.filter(
+			(c) => presentIds.has(c.a.system) && presentIds.has(c.b.system)
+		);
+
+		// Parallel-edge detection: two systems can have more than one wormhole
+		// between them (dual connections). Group by the UNORDERED pair so we can
+		// tell each edge how many siblings it has and which slot it is — the edge
+		// component bows parallel siblings apart so they don't stack/overlap.
+		const pairKey = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
+		const groups = new Map<string, string[]>();
+		for (const c of visible) {
+			const k = pairKey(c.a.system, c.b.system);
+			(groups.get(k) ?? groups.set(k, []).get(k)!).push(c.id);
+		}
+
+		return visible.map((c) => {
+			const siblings = groups.get(pairKey(c.a.system, c.b.system))!;
+			// Direction (derived): arrow points toward the K162 end. Edge endpoints
+			// are kept as a→b for stable layout; `arrowTo` tells which way to point
+			// ('a'|'b'), or null when direction is undetermined.
+			const arrowTo = showDirection ? k162End(c) : null;
+			// The midpoint label shows the meaningful (named) type, falling back to
+			// whatever type is known.
+			const namedType =
+				(c.a.sig?.type && c.a.sig.type !== 'K162' && c.a.sig.type) ||
+				(c.b.sig?.type && c.b.sig.type !== 'K162' && c.b.sig.type) ||
+				c.a.sig?.type ||
+				c.b.sig?.type ||
+				'';
+			// Built-in Svelte Flow arrowhead (MarkerType.ArrowClosed), tangent-
+			// accurate and node-hugging. Endpoints are a→b, so arrowTo='b' is the
+			// target end (markerEnd) and 'a' is the source end (markerStart). The
+			// undetermined case (null) gets no marker — the edge draws a neutral
+			// mid-edge diamond instead.
+			const colour = c.eol ? 'var(--mass-critical)' : `var(--mass-${c.mass})`;
+			const marker = { type: MarkerType.ArrowClosed, color: colour };
+			return {
 				id: c.id,
 				type: 'connection',
-				source: c.source,
-				target: c.target,
+				source: c.a.system,
+				target: c.b.system,
+				markerEnd: arrowTo === 'b' ? marker : undefined,
+				markerStart: arrowTo === 'a' ? marker : undefined,
 				data: {
-					wh_type: c.wh_type,
+					wh_type: namedType,
 					mass: c.mass,
 					eol: c.eol,
-					sig_source: c.sig_source,
-					sig_target: c.sig_target,
+					sig_a: c.a.sig?.id,
+					sig_b: c.b.sig?.id,
+					arrowTo,
+					showDirection,
 					thickness: edgeThickness,
 					showMass: showMassLabels,
-					showWhType: showWhTypeLabels
+					showWhType: showWhTypeLabels,
+					parallelIndex: siblings.indexOf(c.id),
+					parallelCount: siblings.length
 				}
-			}))
-	);
+			};
+		});
+	});
 
 	// svelte-flow binds (and mutates positions on drag) into these. The effect
 	// reassigns from the pure deriveds; the reassignment is a plain write to
@@ -145,8 +191,24 @@
 			null
 	);
 
+	// Reconcile the desired node set INTO the live array rather than replacing it,
+	// so Svelte-Flow-owned per-node state (selection, drag) survives a rebuild.
+	// A wholesale `nodes = desiredNodes` clobbers `selected` (and would drop drag
+	// state) every time placement saves on drag-stop — that's the selection bug.
+	// We update data/position on kept nodes, add new ones at their seed, and drop
+	// departed ones; existing nodes keep their live position (Svelte Flow owns it).
 	$effect(() => {
-		nodes = desiredNodes;
+		const desired = desiredNodes;
+		// Read the live array WITHOUT depending on it (untrack) — this effect must
+		// react to `desiredNodes` only, not to its own write to `nodes`.
+		const live = untrack(() => nodes);
+		const byId = new Map(live.map((n) => [n.id, n]));
+		nodes = desired.map((dn) => {
+			const cur = byId.get(dn.id);
+			if (!cur) return dn; // new node → take the seed position + data
+			// Kept node: preserve its live position + selection, refresh data.
+			return { ...cur, type: dn.type, data: dn.data };
+		});
 	});
 	$effect(() => {
 		edges = desiredEdges;
@@ -203,11 +265,15 @@
 
 	// ── Redo layout (one-shot) ───────────────────────────────────────────────────
 	// Clear the saved overlay for the active tab, reseed from the roots, persist.
+	// The node-sync effect preserves LIVE positions for kept nodes (so a drag-save
+	// doesn't get clobbered), so a reseed must apply the new positions to `nodes`
+	// directly — not just to savedByTab.
 	function redoLayout(dir: LayoutDirection): void {
 		placement.clearTab(mapId, activeTab.id);
 		const seed = layoutSeed(union, activeTab, dir, presentIds);
 		savedByTab[activeTab.id] = { ...seed };
 		placement.save(mapId, activeTab.id, seed, 0);
+		nodes = nodes.map((n) => (seed[n.id] ? { ...n, position: { ...seed[n.id] } } : n));
 		layoutOpen = false;
 	}
 
@@ -305,6 +371,7 @@
 					thicknessMax={THICKNESS_MAX}
 					bind:showMass={showMassLabels}
 					bind:showWhType={showWhTypeLabels}
+					bind:showDirection
 					bind:layoutOpen
 					onRedoLayout={redoLayout}
 					onReceiveUpdate={receiveUpdate}

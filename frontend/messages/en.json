@@ -390,6 +390,7 @@
 	"map_proto_edge_thickness": "Edge thickness",
 	"map_proto_show_mass_labels": "Mass labels",
 	"map_proto_show_whtype_labels": "Type labels",
+	"map_proto_show_direction": "Show direction",
 	"map_proto_display_heading": "Display",
 	"map_proto_sidebar_label": "Map controls",
 	"map_proto_sidebar_open": "Open controls",

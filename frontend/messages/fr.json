@@ -390,6 +390,7 @@
 	"map_proto_edge_thickness": "Épaisseur des lignes",
 	"map_proto_show_mass_labels": "Étiquettes de masse",
 	"map_proto_show_whtype_labels": "Étiquettes de type",
+	"map_proto_show_direction": "Afficher la direction",
 	"map_proto_display_heading": "Affichage",
 	"map_proto_sidebar_label": "Commandes de la carte",
 	"map_proto_sidebar_open": "Ouvrir les commandes",

@@ -14,6 +14,7 @@
 		thicknessMax,
 		showMass = $bindable(),
 		showWhType = $bindable(),
+		showDirection = $bindable(),
 		layoutOpen = $bindable(),
 		onRedoLayout,
 		onReceiveUpdate
@@ -25,6 +26,7 @@
 		thicknessMax: number;
 		showMass: boolean;
 		showWhType: boolean;
+		showDirection: boolean;
 		layoutOpen: boolean;
 		onRedoLayout: (dir: LayoutDirection) => void;
 		onReceiveUpdate: () => void;
@@ -198,6 +200,10 @@
 				<label class="toggle">
 					<input type="checkbox" bind:checked={showWhType} />
 					<span>{m.map_proto_show_whtype_labels()}</span>
+				</label>
+				<label class="toggle">
+					<input type="checkbox" bind:checked={showDirection} />
+					<span>{m.map_proto_show_direction()}</span>
 				</label>
 			</div>
 		{/if}

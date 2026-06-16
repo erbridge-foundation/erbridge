@@ -51,131 +51,98 @@ const systems: System[] = [
 ];
 
 // ── Connections ──────────────────────────────────────────────────────────────
-// One link per mass state at least once; one EoL link; a second root reachable
-// only via J100004 so the multi-root tab has something to min-hop over.
+// Each connection is a pair of endpoints { system, sig }. The wormhole TYPE
+// lives on the endpoint signature (a hole is `K162` on one side, a named code on
+// the other), so direction is DERIVED — the arrow points toward the K162 end.
+// The fixture exercises every signature state:
+//   - both ends known      (named + K162)         → direction known
+//   - one end known         (named OR K162 only)  → direction still known
+//   - both ends unknown     (??? / ???)            → direction undetermined
+//   - no signatures at all  (sig: null both ends)  → bare connection, no pills
 
 const connections: Connection[] = [
 	{
+		// Both ends scanned: Jita holds the K162, J100001 the named side.
 		id: 'c-jita-j1',
-		source: 'Jita',
-		target: 'J100001',
-		origin: 'Jita',
-		wh_type: 'K162',
+		a: { system: 'Jita', sig: { id: 'ABC-001', type: 'K162' } },
+		b: { system: 'J100001', sig: { id: 'XYZ-100', type: 'R943' } },
 		mass: 'fresh',
-		eol: false,
-		sig_source: 'ABC-001',
-		sig_target: 'XYZ-100'
+		eol: false
 	},
 	{
+		// Named (C247) on J100001, K162 on J100002.
 		id: 'c-j1-j2',
-		source: 'J100001',
-		target: 'J100002',
-		origin: 'J100001',
-		wh_type: 'C247',
+		a: { system: 'J100001', sig: { id: 'DEF-002', type: 'C247' } },
+		b: { system: 'J100002', sig: { id: 'XYZ-101', type: 'K162' } },
 		mass: 'half',
-		eol: false,
-		sig_source: 'DEF-002',
-		sig_target: 'XYZ-101'
+		eol: false
 	},
 	{
+		// No signatures scanned on either side yet — a bare connection.
 		id: 'c-j2-j3',
-		source: 'J100002',
-		target: 'J100003',
-		origin: 'J100002',
-		wh_type: 'D845',
+		a: { system: 'J100002', sig: null },
+		b: { system: 'J100003', sig: null },
 		mass: 'fresh',
 		eol: false
 	},
 	{
 		id: 'c-j3-amamake',
-		source: 'J100003',
-		target: 'Amamake',
-		origin: 'J100003',
-		wh_type: 'N968',
+		a: { system: 'J100003', sig: { id: 'PQR-501', type: 'N968' } },
+		b: { system: 'Amamake', sig: { id: 'STU-502', type: 'K162' } },
 		mass: 'critical',
 		eol: false
 	},
 	{
-		// EoL link — carries the ⚠ glyph + pulse on the edge label.
+		// EoL link, and BOTH ends scanned-but-unidentified (??? / ???) → direction
+		// undetermined: the neutral mid-edge marker renders instead of an arrow.
 		id: 'c-j2-j4',
-		source: 'J100002',
-		target: 'J100004',
-		origin: 'J100002',
-		wh_type: 'X702',
+		a: { system: 'J100002', sig: { id: 'GHI-201', type: null } },
+		b: { system: 'J100004', sig: { id: 'JKL-202', type: null } },
 		mass: 'half',
 		eol: true
 	},
 	{
 		id: 'c-j4-j5',
-		source: 'J100004',
-		target: 'J100005',
-		origin: 'J100004',
-		wh_type: 'M267',
+		a: { system: 'J100004', sig: { id: 'VWX-301', type: 'M267' } },
+		b: { system: 'J100005', sig: { id: 'YZA-302', type: 'K162' } },
 		mass: 'fresh',
 		eol: false
 	},
 	{
+		// The H296 → K162 example: named H296 on J100005, K162 on J100006.
 		id: 'c-j5-j6',
-		source: 'J100005',
-		target: 'J100006',
-		origin: 'J100005',
-		wh_type: 'H296',
+		a: { system: 'J100005', sig: { id: 'BCD-401', type: 'H296' } },
+		b: { system: 'J100006', sig: { id: 'EFG-402', type: 'K162' } },
 		mass: 'critical',
 		eol: false
 	},
 	{
 		id: 'c-j5-ecp8r',
-		source: 'J100005',
-		target: 'EC-P8R',
-		origin: 'J100005',
-		wh_type: 'V911',
+		a: { system: 'J100005', sig: { id: 'HIJ-601', type: 'V911' } },
+		b: { system: 'EC-P8R', sig: { id: 'KLM-602', type: 'K162' } },
 		mass: 'fresh',
 		eol: false
 	},
 	// ── Dual connections (two distinct wormholes between the same pair) ──────────
-	// J100002 ↔ J100003 already has D845 (c-j2-j3); add a second, independent hole
-	// so the canvas shows two parallel edges between one pair.
+	// J100002 ↔ J100003 already has c-j2-j3; add a second, independent hole so the
+	// canvas shows two parallel edges between one pair.
 	{
 		id: 'c-j2-j3-b',
-		source: 'J100002',
-		target: 'J100003',
-		origin: 'J100003',
-		wh_type: 'Z142',
+		a: { system: 'J100002', sig: { id: 'NOP-701', type: 'Z142' } },
+		b: { system: 'J100003', sig: { id: 'QRS-702', type: 'K162' } },
 		mass: 'half',
-		eol: false
-	},
-	// A second dual pair, J100005 ↔ J100006 (already H296 critical via c-j5-j6).
-	{
-		id: 'c-j5-j6-b',
-		source: 'J100005',
-		target: 'J100006',
-		origin: 'J100006',
-		wh_type: 'U319',
-		mass: 'fresh',
 		eol: false
 	},
 	// ── Mass × time combinations (the two states are INDEPENDENT) ────────────────
 	// FULL mass (fresh) but <10% time left (EoL): a wide-open hole that's about to
-	// collapse from age. This is the case that proves mass≠time — a green/thick
-	// edge that is nonetheless dying. (Renders red today; under the planned
-	// mass→thickness / time→dash encoding it'd be a THICK DASHED edge.)
+	// collapse from age — proves mass≠time. ALSO one-sided sig: named B274 known at
+	// the J100003 end, the far (J100004) end not yet scanned (???) — direction is
+	// still known (named side fixes it).
 	{
-		id: 'c-j3-j199_freshEol',
-		source: 'J100003',
-		target: 'J100004',
-		origin: 'J100003',
-		wh_type: 'B274',
+		id: 'c-j3-j4_freshEol',
+		a: { system: 'J100003', sig: { id: 'MNO-345', type: 'B274' } },
+		b: { system: 'J100004', sig: null },
 		mass: 'fresh',
-		eol: true
-	},
-	// CRITICAL mass AND EoL — the genuinely scary one (thin + dying).
-	{
-		id: 'c-j6-ecp8r_critEol',
-		source: 'J100006',
-		target: 'EC-P8R',
-		origin: 'J100006',
-		wh_type: 'S199',
-		mass: 'critical',
 		eol: true
 	}
 ];
@@ -223,23 +190,19 @@ export const updatedGraph: CombinedGraph = {
 		{ id: 'J100007', name: 'J100007', class: 'C4', statics: [] }
 	],
 	connections: [
-		// Drop both edges that touched the departed EC-P8R.
-		...connections.filter((c) => c.id !== 'c-j5-ecp8r' && c.id !== 'c-j6-ecp8r_critEol'),
+		// Drop the edge that touched the departed EC-P8R.
+		...connections.filter((c) => c.id !== 'c-j5-ecp8r'),
 		{
 			id: 'c-j2-j199999',
-			source: 'J100002',
-			target: 'J199999',
-			origin: 'J100002',
-			wh_type: 'O477',
+			a: { system: 'J100002', sig: { id: 'O477-801', type: 'O477' } },
+			b: { system: 'J199999', sig: { id: 'XYZ-802', type: 'K162' } },
 			mass: 'fresh',
 			eol: false
 		},
 		{
 			id: 'c-j6-j7',
-			source: 'J100006',
-			target: 'J100007',
-			origin: 'J100006',
-			wh_type: 'U210',
+			a: { system: 'J100006', sig: { id: 'U210-901', type: 'U210' } },
+			b: { system: 'J100007', sig: { id: 'XYZ-902', type: 'K162' } },
 			mass: 'fresh',
 			eol: false
 		}

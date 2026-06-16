@@ -40,9 +40,9 @@ function buildAdjacency(graph: CombinedGraph, present: Set<string>): Map<string,
 		if (present.has(s.id)) adj.set(s.id, []);
 	}
 	for (const c of graph.connections) {
-		if (!present.has(c.source) || !present.has(c.target)) continue;
-		adj.get(c.source)!.push(c.target);
-		adj.get(c.target)!.push(c.source);
+		if (!present.has(c.a.system) || !present.has(c.b.system)) continue;
+		adj.get(c.a.system)!.push(c.b.system);
+		adj.get(c.b.system)!.push(c.a.system);
 	}
 	return adj;
 }
