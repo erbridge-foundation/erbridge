@@ -110,17 +110,38 @@ pub struct Config {
     pub esi_client_id: String,
     pub esi_client_secret: String,
     pub database_url: String,
+    /// Full OAuth2 callback URL sent as `redirect_uri`. Resolved from
+    /// `ESI_CALLBACK_URL` when set, otherwise `{app_url}/auth/callback`.
+    /// Exists so a deployment whose public callback path differs from
+    /// `{app_url}/auth/callback` (e.g. behind a path-rewriting proxy) can
+    /// override it. Every callsite that builds `redirect_uri` reads this field
+    /// so they cannot diverge.
+    pub esi_callback_url: String,
     /// Socket address to bind, `BIND_ADDR` (default [`DEFAULT_BIND_ADDR`]).
     pub bind_addr: String,
     pub rate_limit: RateLimitConfig,
     pub catalog: CatalogConfig,
 }
 
+/// Resolves the OAuth2 callback URL: the explicit `ESI_CALLBACK_URL` override
+/// when set, otherwise `{app_url}/auth/callback`. Factored out so the test can
+/// exercise the resolution in lockstep with `from_env` without mutating
+/// process-global env.
+fn resolve_callback_url(app_url: &str, override_var: Option<&str>) -> String {
+    override_var
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("{app_url}/auth/callback"))
+}
+
 impl Config {
     pub fn from_env() -> Result<Self> {
+        let app_url =
+            std::env::var("APP_URL").context("APP_URL environment variable is required")?;
         Ok(Self {
-            app_url: std::env::var("APP_URL")
-                .context("APP_URL environment variable is required")?,
+            esi_callback_url: resolve_callback_url(
+                &app_url,
+                std::env::var("ESI_CALLBACK_URL").ok().as_deref(),
+            ),
             encryption_secret: std::env::var("ENCRYPTION_SECRET")
                 .context("ENCRYPTION_SECRET environment variable is required")?,
             esi_client_id: std::env::var("ESI_CLIENT_ID")
@@ -132,6 +153,7 @@ impl Config {
             bind_addr: std::env::var("BIND_ADDR").unwrap_or_else(|_| DEFAULT_BIND_ADDR.to_string()),
             rate_limit: RateLimitConfig::from_env()?,
             catalog: CatalogConfig::from_env(),
+            app_url,
         })
     }
 }
@@ -172,5 +194,24 @@ mod tests {
     #[test]
     fn bind_addr_uses_override_when_set() {
         assert_eq!(resolve_bind_addr(Some("127.0.0.1:8080")), "127.0.0.1:8080");
+    }
+
+    #[test]
+    fn callback_url_defaults_to_app_url_path_when_unset() {
+        assert_eq!(
+            resolve_callback_url("https://erbridge.example.com", None),
+            "https://erbridge.example.com/auth/callback"
+        );
+    }
+
+    #[test]
+    fn callback_url_uses_override_verbatim_when_set() {
+        assert_eq!(
+            resolve_callback_url(
+                "https://erbridge.example.com",
+                Some("https://proxy.example.com/sso/return")
+            ),
+            "https://proxy.example.com/sso/return"
+        );
     }
 }

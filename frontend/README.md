@@ -1,42 +1,51 @@
-# sv
+# erbridge frontend
 
-Everything you need to build a Svelte project, powered by [`sv`](https://github.com/sveltejs/cli).
+SvelteKit (Svelte 5, `@sveltejs/adapter-node`) UI for the E-R Bridge wormhole
+mapper. It talks to the Rust/Axum backend over `/api/*` and `/auth/*`; in
+development Traefik routes those prefixes to the backend and everything else
+here. Internationalised with Paraglide (en/de/fr).
 
-## Creating a project
-
-If you're seeing this, you've probably already done this step. Congrats!
-
-```sh
-# create a new project
-npx sv create my-app
-```
-
-To recreate this project with the same configuration:
-
-```sh
-# recreate this project
-pnpm dlx sv@0.15.3 create --template minimal --types ts --install pnpm .
-```
+> **Package manager: pnpm only.** Use `pnpm` / `pnpm dlx` — never `npm` / `npx`.
 
 ## Developing
 
-Once you've created a project and installed dependencies with `npm install` (or `pnpm install` or `yarn`), start a development server:
-
 ```sh
-npm run dev
-
-# or start the server and open the app in a new browser tab
-npm run dev -- --open
+pnpm install
+pnpm run dev          # start the dev server (vite dev)
+pnpm run dev -- --open
 ```
+
+The dev server expects the backend to be reachable; see the root
+[`docker-compose.dev.yml`](../) workflow or run the backend per
+[`../CONTRIBUTING.md`](../CONTRIBUTING.md).
 
 ## Building
 
-To create a production version of your app:
-
 ```sh
-npm run build
+pnpm run build        # vite build → node-adapter server in build/
+pnpm run preview      # preview the production build
 ```
 
-You can preview the production build with `npm run preview`.
+## Verification
 
-> To deploy your app, you may need to install an [adapter](https://svelte.dev/docs/kit/adapters) for your target environment.
+Run all three from **this `frontend/` directory** (this repo has no pnpm
+workspace root, so `pnpm --filter frontend …` fails). Each script compiles
+Paraglide first, keeping `src/lib/paraglide` in sync.
+
+```sh
+pnpm test             # Vitest unit/component tests
+pnpm run check        # svelte-check (type checking + Paraglide compile)
+pnpm run test:e2e     # Playwright e2e tests
+```
+
+All three must pass before a change lands.
+
+## Structure & conventions
+
+The authoritative source for frontend structure and conventions is the
+**`sveltekit-node` skill** at
+[`../.claude/skills/sveltekit-node/SKILL.md`](../.claude/skills/sveltekit-node/SKILL.md)
+(Svelte 5 runes, native CSS + design tokens, load functions / form actions /
+server endpoints, Svelte Flow for graph UIs). The project's route and component
+map lives in [`../openspec/AGENTS.md`](../openspec/AGENTS.md). Read those before
+adding routes or components rather than inferring structure from the tree.

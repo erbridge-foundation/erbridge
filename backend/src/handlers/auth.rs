@@ -62,10 +62,10 @@ pub async fn login(
         })?;
 
     let redirect_url = format!(
-        "{}?response_type=code&client_id={}&redirect_uri={}/auth/callback&scope={}&state={}",
+        "{}?response_type=code&client_id={}&redirect_uri={}&scope={}&state={}",
         state.esi_metadata.authorization_endpoint,
         state.config.esi_client_id,
-        state.config.app_url,
+        urlencoding::encode(&state.config.esi_callback_url),
         urlencoding::encode(ESI_SCOPES),
         csrf_state,
     );
@@ -133,10 +133,7 @@ async fn callback_inner(state: &AppState, query: &CallbackQuery) -> Result<Respo
         .form(&[
             ("grant_type", "authorization_code"),
             ("code", &query.code),
-            (
-                "redirect_uri",
-                &format!("{}/auth/callback", state.config.app_url),
-            ),
+            ("redirect_uri", &state.config.esi_callback_url),
         ])
         .send()
         .await
@@ -324,10 +321,10 @@ pub async fn add_character(
         })?;
 
     let redirect_url = format!(
-        "{}?response_type=code&client_id={}&redirect_uri={}/auth/callback&scope={}&state={}",
+        "{}?response_type=code&client_id={}&redirect_uri={}&scope={}&state={}",
         state.esi_metadata.authorization_endpoint,
         state.config.esi_client_id,
-        state.config.app_url,
+        urlencoding::encode(&state.config.esi_callback_url),
         urlencoding::encode(ESI_SCOPES),
         csrf_state,
     );

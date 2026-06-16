@@ -291,6 +291,7 @@ mod tests {
         AppState {
             config: Arc::new(Config {
                 app_url: "http://localhost:3000".into(),
+                esi_callback_url: "http://localhost:3000/auth/callback".into(),
                 encryption_secret: TEST_SECRET.into(),
                 esi_client_id: "test_client_id".into(),
                 esi_client_secret: "test_client_secret".into(),

@@ -43,3 +43,17 @@ A change MUST update `openspec/AGENTS.md` **in the same change** when it does an
 - changes a structural fact stated there (layering, auth model, router wiring, ESI/crypto notes, the i18n/locale or verification commands).
 
 When generating a change's `tasks.md`, if the change does any of the above, the tasks MUST include an explicit step to update `openspec/AGENTS.md` (alongside the spec deltas, before the change is marked complete). Pure-behaviour changes that move no structural fact don't need to touch it. Keep edits a *map*, not a changelog — state where things are now, don't accrete history.
+
+## Root-doc upkeep
+
+The human-facing root docs (`README.md`, `CONTRIBUTING.md`, `RELEASING.md`, `frontend/README.md`, `backend/README.md`) describe how to configure, build, deploy, and run the project. They are how a human (not an agent reading `openspec/AGENTS.md`) onboards — keep them a current description, not a changelog.
+
+A change MUST reconcile the affected root doc(s) **in the same change** when it changes a fact one of them states, including:
+
+- configuration / environment variables (names, defaults, required-ness);
+- the deploy or release flow, or the published artifacts;
+- local setup steps, prerequisites, or documented commands;
+- route mounts or the public URL surface a doc references;
+- the location of tests or other paths a doc names.
+
+When generating a change's `tasks.md`, if the change touches any of the above, the tasks MUST include an explicit step to update the affected root doc(s) (alongside the spec deltas, before the change is marked complete). This is review-enforced, like the architecture-doc rule above — there is no CI gate asserting doc/code consistency. Pure-behaviour changes that move no documented fact don't need to touch them.

@@ -27,13 +27,13 @@ ER Bridge is an open-source wormhole mapping tool for EVE Online. Track your cha
 | `ENCRYPTION_SECRET` | ✅       | 32-byte hex secret for AES-256-GCM encryption and JWT signing                   |
 | `ESI_CLIENT_ID`     | ✅       | Your ESI application client ID                                                   |
 | `ESI_CLIENT_SECRET` | ✅       | Your ESI application secret                                                      |
-| `ESI_CALLBACK_URL`  | ⬜       | OAuth callback URL — defaults to `APP_URL/auth/callback`                         |
+| `ESI_CALLBACK_URL`  | ⬜       | Full OAuth callback URL — defaults to `APP_URL/auth/callback`. Override only when your public callback path differs (e.g. behind a path-rewriting proxy); must match a callback URL registered on your ESI application. |
 
 ---
 
 ## Integration tests (hurl)
 
-The `hurl/` directory contains HTTP integration tests that run against a live server backed by a real database.
+The `backend/tests/hurl/` directory contains HTTP integration tests that run against a live server backed by a real database.
 
 ## Contributing
 
