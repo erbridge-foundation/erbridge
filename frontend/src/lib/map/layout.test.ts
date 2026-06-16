@@ -62,6 +62,26 @@ describe('layoutSeed', () => {
 		expect(pos.C.x).not.toBe(pos.E.x);
 	});
 
+	it('RL mirrors LR — ranks grow leftwards (roots on the right)', () => {
+		const g = graph();
+		const pos = layoutSeed(g, tab(['A']), 'RL', present(g));
+		expect(pos.A.x).toBe(0);
+		expect(pos.B.x).toBeLessThan(pos.A.x);
+		expect(pos.C.x).toBeLessThan(pos.B.x);
+		// Siblings still spread along y.
+		expect(pos.C.x).toBe(pos.E.x);
+		expect(pos.C.y).not.toBe(pos.E.y);
+	});
+
+	it('BT mirrors TB — ranks grow upwards (roots at the bottom)', () => {
+		const g = graph();
+		const pos = layoutSeed(g, tab(['A']), 'BT', present(g));
+		expect(pos.A.y).toBe(0);
+		expect(pos.B.y).toBeLessThan(pos.A.y);
+		expect(pos.C.y).toBe(pos.E.y);
+		expect(pos.C.x).not.toBe(pos.E.x);
+	});
+
 	it('radial puts a lone root at the origin and pushes deeper ranks out', () => {
 		const g = graph();
 		const pos = layoutSeed(g, tab(['A']), 'radial', present(g));

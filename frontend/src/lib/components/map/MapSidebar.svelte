@@ -170,7 +170,9 @@
 				{#if layoutOpen}
 					<div class="layout-options" role="group" aria-label={m.map_proto_layout_toggle()}>
 						<button type="button" onclick={() => onRedoLayout('LR')}>{m.map_proto_layout_lr()}</button>
+						<button type="button" onclick={() => onRedoLayout('RL')}>{m.map_proto_layout_rl()}</button>
 						<button type="button" onclick={() => onRedoLayout('TB')}>{m.map_proto_layout_tb()}</button>
+						<button type="button" onclick={() => onRedoLayout('BT')}>{m.map_proto_layout_bt()}</button>
 						<button type="button" onclick={() => onRedoLayout('radial')}>{m.map_proto_layout_radial()}</button>
 					</div>
 				{/if}

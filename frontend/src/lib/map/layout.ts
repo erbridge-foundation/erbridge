@@ -93,8 +93,15 @@ function positionFor(dir: LayoutDirection, rank: number, sibling: number, count:
 	switch (dir) {
 		case 'LR':
 			return { x: rank * DX, y: sibling * DY };
+		case 'RL':
+			// Mirror of LR: ranks grow leftwards (roots on the right). `|| 0`
+			// normalises a rank-0 `-0` to `+0`.
+			return { x: -rank * DX || 0, y: sibling * DY };
 		case 'TB':
 			return { x: sibling * DX, y: rank * DY };
+		case 'BT':
+			// Mirror of TB: ranks grow upwards (roots at the bottom).
+			return { x: sibling * DX, y: -rank * DY || 0 };
 		case 'radial': {
 			// Rank 0 (a single root) sits at the origin; deeper ranks fan around it.
 			if (rank === 0 && count === 1) return { x: 0, y: 0 };
@@ -161,11 +168,19 @@ export function layoutSeed(
 function placeGutter(dir: LayoutDirection, gutter: string[], out: Positions): void {
 	gutter.forEach((id, i) => {
 		switch (dir) {
+			// Park the gutter on the side OPPOSITE the rank flow so unreached nodes
+			// sit clear of the ranked chain.
 			case 'LR':
 				out[id] = { x: -GUTTER_GAP, y: i * DY };
 				break;
+			case 'RL':
+				out[id] = { x: GUTTER_GAP, y: i * DY };
+				break;
 			case 'TB':
 				out[id] = { x: i * DX, y: -GUTTER_GAP };
+				break;
+			case 'BT':
+				out[id] = { x: i * DX, y: GUTTER_GAP };
 				break;
 			case 'radial':
 				out[id] = { x: -GUTTER_GAP, y: i * DY };

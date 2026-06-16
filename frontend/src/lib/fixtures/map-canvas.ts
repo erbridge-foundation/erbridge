@@ -131,6 +131,52 @@ const connections: Connection[] = [
 		wh_type: 'V911',
 		mass: 'fresh',
 		eol: false
+	},
+	// ── Dual connections (two distinct wormholes between the same pair) ──────────
+	// J100002 ↔ J100003 already has D845 (c-j2-j3); add a second, independent hole
+	// so the canvas shows two parallel edges between one pair.
+	{
+		id: 'c-j2-j3-b',
+		source: 'J100002',
+		target: 'J100003',
+		origin: 'J100003',
+		wh_type: 'Z142',
+		mass: 'half',
+		eol: false
+	},
+	// A second dual pair, J100005 ↔ J100006 (already H296 critical via c-j5-j6).
+	{
+		id: 'c-j5-j6-b',
+		source: 'J100005',
+		target: 'J100006',
+		origin: 'J100006',
+		wh_type: 'U319',
+		mass: 'fresh',
+		eol: false
+	},
+	// ── Mass × time combinations (the two states are INDEPENDENT) ────────────────
+	// FULL mass (fresh) but <10% time left (EoL): a wide-open hole that's about to
+	// collapse from age. This is the case that proves mass≠time — a green/thick
+	// edge that is nonetheless dying. (Renders red today; under the planned
+	// mass→thickness / time→dash encoding it'd be a THICK DASHED edge.)
+	{
+		id: 'c-j3-j199_freshEol',
+		source: 'J100003',
+		target: 'J100004',
+		origin: 'J100003',
+		wh_type: 'B274',
+		mass: 'fresh',
+		eol: true
+	},
+	// CRITICAL mass AND EoL — the genuinely scary one (thin + dying).
+	{
+		id: 'c-j6-ecp8r_critEol',
+		source: 'J100006',
+		target: 'EC-P8R',
+		origin: 'J100006',
+		wh_type: 'S199',
+		mass: 'critical',
+		eol: true
 	}
 ];
 
@@ -177,7 +223,8 @@ export const updatedGraph: CombinedGraph = {
 		{ id: 'J100007', name: 'J100007', class: 'C4', statics: [] }
 	],
 	connections: [
-		...connections.filter((c) => c.id !== 'c-j5-ecp8r'),
+		// Drop both edges that touched the departed EC-P8R.
+		...connections.filter((c) => c.id !== 'c-j5-ecp8r' && c.id !== 'c-j6-ecp8r_critEol'),
 		{
 			id: 'c-j2-j199999',
 			source: 'J100002',
