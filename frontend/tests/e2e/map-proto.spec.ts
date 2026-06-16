@@ -1,0 +1,131 @@
+/**
+ * E2E for the disposable map-canvas sandbox at /maps/_proto.
+ *
+ * The route is PUBLIC (no sign-in): it mounts MapCanvas against a static fixture
+ * with no loader/auth. This spec proves the interaction model the prototype
+ * exists to validate:
+ *   - the position-less fixture renders as nodes + edges
+ *   - a dragged node's position SURVIVES a reload (localStorage placement)
+ *   - "redo layout" reseeds positions from the roots
+ *   - "receive update" reconciles a local ghost into a real server node
+ *
+ * Runs against the built SvelteKit app. No mock backend needed — the sandbox is
+ * entirely client-side static.
+ */
+
+import { test, expect, type Page } from '@playwright/test';
+
+/** A svelte-flow node by the system id it carries (node id == system id). */
+function node(page: Page, id: string) {
+	return page.locator(`.svelte-flow__node[data-id="${id}"]`);
+}
+
+async function nodePosition(page: Page, id: string): Promise<{ x: number; y: number }> {
+	const box = await node(page, id).boundingBox();
+	if (!box) throw new Error(`node ${id} has no bounding box`);
+	return { x: box.x, y: box.y };
+}
+
+test.describe('/maps/_proto', () => {
+	test.beforeEach(async ({ page }) => {
+		await page.goto('/maps/_proto');
+		// Nodes render from the position-less fixture.
+		await expect(node(page, 'Jita')).toBeVisible();
+	});
+
+	test('renders nodes and edges from the position-less fixture', async ({ page }) => {
+		// A spread of systems across classes/security renders.
+		await expect(node(page, 'J100001')).toBeVisible();
+		await expect(node(page, 'J100005')).toBeVisible();
+		// Edges render (svelte-flow draws each as an .svelte-flow__edge).
+		await expect(page.locator('.svelte-flow__edge').first()).toBeVisible();
+		// Mass cue is text, not colour alone.
+		await expect(page.getByText('critical').first()).toBeVisible();
+		// The EoL connection shows the ⚠ glyph.
+		await expect(page.getByText('⚠').first()).toBeVisible();
+	});
+
+	test('edges float — the connection path follows a node as it is dragged', async ({ page }) => {
+		// The Jita→J100001 edge path. Floating edges anchor to each node's perimeter,
+		// so dragging an endpoint recomputes the bezier path's `d`.
+		const edgePath = page.locator(
+			'.svelte-flow__edge[data-id="c-jita-j1"] path.svelte-flow__edge-path'
+		);
+		const before = await edgePath.getAttribute('d');
+		expect(before).toBeTruthy();
+
+		// Drag J100001 to a new spot.
+		const box = await node(page, 'J100001').boundingBox();
+		if (!box) throw new Error('no box');
+		await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+		await page.mouse.down();
+		await page.mouse.move(box.x + 200, box.y + 150, { steps: 8 });
+		await page.mouse.up();
+
+		// The path changed — the endpoint floated to follow the node.
+		const after = await edgePath.getAttribute('d');
+		expect(after).not.toBe(before);
+	});
+
+	test('a dragged node keeps its position across a reload', async ({ page }) => {
+		const before = await nodePosition(page, 'J100001');
+
+		// Drag J100001 a clear distance.
+		const handle = node(page, 'J100001');
+		const box = await handle.boundingBox();
+		if (!box) throw new Error('no box');
+		await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+		await page.mouse.down();
+		await page.mouse.move(box.x + 180, box.y + 140, { steps: 8 });
+		await page.mouse.up();
+
+		const afterDrag = await nodePosition(page, 'J100001');
+		expect(Math.abs(afterDrag.x - before.x) + Math.abs(afterDrag.y - before.y)).toBeGreaterThan(40);
+
+		// Give the debounced placement save time to flush, then reload.
+		await page.waitForTimeout(600);
+		await page.reload();
+		await expect(node(page, 'J100001')).toBeVisible();
+
+		const afterReload = await nodePosition(page, 'J100001');
+		// Same on-screen position as before the reload (within a small tolerance:
+		// fitView re-centres the whole graph identically, so deltas are stable).
+		expect(Math.abs(afterReload.x - afterDrag.x)).toBeLessThan(30);
+		expect(Math.abs(afterReload.y - afterDrag.y)).toBeLessThan(30);
+	});
+
+	test('redo layout reseeds node positions', async ({ page }) => {
+		// Drag a node well away first.
+		const box = await node(page, 'J100001').boundingBox();
+		if (!box) throw new Error('no box');
+		await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+		await page.mouse.down();
+		await page.mouse.move(box.x + 220, box.y + 160, { steps: 8 });
+		await page.mouse.up();
+		const dragged = await nodePosition(page, 'J100001');
+
+		// Open the layout slide-out and pick top→bottom.
+		await page.getByRole('button', { name: /redo layout/i }).click();
+		await page.getByRole('button', { name: /top.*bottom/i }).click();
+
+		await expect(node(page, 'J100001')).toBeVisible();
+		const reseeded = await nodePosition(page, 'J100001');
+		// The node moved off the dragged spot (back onto the BFS grid).
+		expect(Math.abs(reseeded.x - dragged.x) + Math.abs(reseeded.y - dragged.y)).toBeGreaterThan(30);
+	});
+
+	test('receive update reconciles a ghost into a real node', async ({ page }) => {
+		// The ghost J199999 is present (local state) and styled as unconfirmed.
+		await expect(node(page, 'J199999')).toBeVisible();
+		await expect(page.getByText('unconfirmed')).toBeVisible();
+
+		// Simulate the SSE update: J199999 becomes server truth, gains a connection.
+		await page.getByRole('button', { name: /receive update/i }).click();
+
+		// Still exactly one J199999 node, now without the ghost badge.
+		await expect(node(page, 'J199999')).toHaveCount(1);
+		await expect(page.getByText('unconfirmed')).toHaveCount(0);
+		// The brand-new system from the update has arrived.
+		await expect(node(page, 'J100007')).toBeVisible();
+	});
+});

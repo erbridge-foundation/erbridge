@@ -108,14 +108,17 @@ Integration tests per area (`admin`, `auth`, `maps_acls`, …) plus `layering.rs
 ## Frontend (`frontend/src`)
 
 SvelteKit pages + load functions + form actions + server endpoints. Svelte 5 runes,
-native CSS with the design-token system, paraglide i18n. Load functions **forward cookies**
-to the backend.
+native CSS with the design-token system (`src/app.css` — incl. the map palette:
+class `--c1..c6`, security `--hs/--ls/--ns`, mass `--mass-fresh/half/critical`),
+paraglide i18n. Load functions **forward cookies** to the backend.
 
 ### Routes (`routes/`)
 - Root `+layout.*`, `+page.*` — shell + landing.
 - `account/`, `characters/`, `preferences/`, `about/`, `login/`, `blocked/` — user-facing.
 - `acls/` + `acls/[id]/` — ACL list + detail (MemberPicker-driven).
 - `maps/` + `maps/[slug]/` + `maps/[slug]/settings/` — map list / detail / settings.
+- `maps/_proto/` — disposable map-canvas sandbox (static fixture, no `+page.server.ts`,
+  no auth; whitelisted in the root layout's public-route list). Mounts `MapCanvas`.
 - `admin/` (own `+layout.server.ts` gate) — `admins`, `audit` (+ `audit/more` endpoint),
   `blocks`, `characters` (client-side account datagrid).
 - Endpoints: `preferences/+server.ts`, `admin/audit/more/+server.ts`.
@@ -127,7 +130,16 @@ to the backend.
 - `server/env.ts` — server-only env access.
 - `components/` — `GlobalNav`, `UserMenu`, `UserChip`, `Modal`, `ConfirmDialog`,
   `MemberPicker`, `PreferenceControl`, `UpdateBanner`, `AuditDetailsDialog`,
-  `StatusIcon` (shape-distinct severity glyph: `ok`/`warning`/`error`).
+  `StatusIcon` (shape-distinct severity glyph: `ok`/`warning`/`error`),
+  `MapCanvas` (reusable Svelte-Flow map canvas; consumes a position-less graph) +
+  `components/map/` custom nodes/edges (`SystemNode`, `ConnectionEdge`,
+  `ConnectionEdgeLabel`, `floating-edge` perimeter-anchored bezier geometry) — the
+  theme seam; edges float to the node side facing their neighbour; meaning is
+  text, colour decorates.
+- `map/` — map-canvas logic (sandbox): `types` (position-less graph contract),
+  `layout` (hand-rolled BFS seed, no lib), `reconcile` (server ∪ local union +
+  placement overlay), `placement` (swappable `localStorage` placement seam).
+- `fixtures/` — static test/sandbox data (`map-canvas` combined-graph snapshots).
 - `paraglide/` — generated i18n (compiled from messages; **run scripts from `frontend/`**,
   not `pnpm --filter`).
 

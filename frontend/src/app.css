@@ -31,6 +31,24 @@
 	--amber: #f59e0b;
 	--red: #ef4444;
 
+	/* Map canvas palette (see build-map-canvas-prototype). These DECORATE the
+	   text badges/labels rendered by SystemNode / ConnectionEdge — meaning is
+	   always carried by text too, never colour alone, so a colourblind user (or
+	   forced-colors, which flattens these) loses nothing. Wormhole class colours
+	   (C1–C6), J-space security tiers (HS/LS/NS), and connection mass state. */
+	--c1: #60a5fa;
+	--c2: #34d399;
+	--c3: #a78bfa;
+	--c4: #f472b6;
+	--c5: #fb923c;
+	--c6: #f87171;
+	--hs: #4ade80;
+	--ls: #facc15;
+	--ns: #fca5a5;
+	--mass-fresh: #22c55e;
+	--mass-half: #f59e0b;
+	--mass-critical: #ef4444;
+
 	/* The UI typeface, indirected through a custom property so the dyslexia-font
 	   accessibility preference can swap it in one place (see below). */
 	--font-ui: "JetBrains Mono", ui-monospace, monospace;
@@ -138,6 +156,22 @@ html[data-reduce-motion="on"] *::after {
 		--amber: #fcd34d;
 		--red: #fca5a5;
 		--violet: #c4b5fd;
+
+		/* Map palette brightened to read on the near-black surfaces. Decoration
+		   only (the badges carry text), but kept vivid for the sighted-but-
+		   low-contrast user. */
+		--c1: #93c5fd;
+		--c2: #6ee7b7;
+		--c3: #c4b5fd;
+		--c4: #f9a8d4;
+		--c5: #fdba74;
+		--c6: #fca5a5;
+		--hs: #86efac;
+		--ls: #fde047;
+		--ns: #fecaca;
+		--mass-fresh: #86efac;
+		--mass-half: #fcd34d;
+		--mass-critical: #fca5a5;
 	}
 }
 html[data-high-contrast="on"] {
@@ -166,15 +200,34 @@ html[data-high-contrast="on"] {
 	--amber: #fcd34d;
 	--red: #fca5a5;
 	--violet: #c4b5fd;
+
+	/* Map palette brightened to read on the near-black surfaces (decoration
+	   only — the badges carry text). */
+	--c1: #93c5fd;
+	--c2: #6ee7b7;
+	--c3: #c4b5fd;
+	--c4: #f9a8d4;
+	--c5: #fdba74;
+	--c6: #fca5a5;
+	--hs: #86efac;
+	--ls: #fde047;
+	--ns: #fecaca;
+	--mass-fresh: #86efac;
+	--mass-half: #fcd34d;
+	--mass-critical: #fca5a5;
 }
 
 /* 4.4 — Larger interactive targets. Enforce a minimum hit area on controls
-   without growing text (spacing stays in px per the design system). */
+   without growing text (spacing stays in px per the design system).
+
+   Svelte Flow node handles render as `<div role="button">` but are NOT user
+   targets — they're 1×1px hidden anchors for floating-edge geometry. Inflating
+   them to 44px bursts giant circles out of every map node, so exclude them. */
 html[data-large-targets="on"] button,
 html[data-large-targets="on"] a,
 html[data-large-targets="on"] input,
 html[data-large-targets="on"] select,
-html[data-large-targets="on"] [role="button"],
+html[data-large-targets="on"] [role="button"]:not(.svelte-flow__handle),
 html[data-large-targets="on"] [role="menuitem"] {
 	min-height: 44px;
 	min-width: 44px;

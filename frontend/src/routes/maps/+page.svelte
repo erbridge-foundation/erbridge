@@ -51,6 +51,13 @@
 			</button>
 		</div>
 
+		<!-- Temporary: link to the disposable map-canvas prototype. Removed when the
+		     real /maps/[slug] canvas lands (see build-map-canvas-prototype). -->
+		<a class="proto-link" href="/maps/_proto">
+			<span class="proto-link-label">{m.map_proto_link()}</span>
+			<span class="proto-link-note">{m.map_proto_link_note()}</span>
+		</a>
+
 		<section class="panel">
 			{#if data.maps.length === 0}
 				<p class="empty" role="status">{m.maps_empty()}</p>
@@ -197,6 +204,35 @@
 		font-size: 0.75rem;
 		font-weight: 600;
 		letter-spacing: 0.2em;
+		color: var(--slate-500);
+	}
+
+	/* Temporary prototype link (see markup note). */
+	.proto-link {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		margin-bottom: 16px;
+		padding: 12px 16px;
+		background: var(--space-900);
+		border: 1px dashed var(--violet);
+		border-radius: 6px;
+		text-decoration: none;
+	}
+	.proto-link:hover {
+		background: var(--space-800);
+	}
+	.proto-link:focus-visible {
+		outline: 2px solid var(--sky);
+		outline-offset: 2px;
+	}
+	.proto-link-label {
+		font-size: 0.8125rem;
+		font-weight: 600;
+		color: var(--violet);
+	}
+	.proto-link-note {
+		font-size: 0.6875rem;
 		color: var(--slate-500);
 	}
 

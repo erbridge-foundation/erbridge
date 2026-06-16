@@ -112,6 +112,14 @@ describe('+layout.server load', () => {
 		expect(result).toEqual({ me: null, meError: null, serverPrefs: null });
 	});
 
+	it('does NOT redirect unauthenticated user on /maps/_proto (public sandbox)', async () => {
+		vi.mocked(getMe).mockRejectedValue(new ApiError('unauthenticated', 'auth required', 401));
+
+		const result = await load(makeEvent({ pathname: '/maps/_proto' }));
+
+		expect(result).toEqual({ me: null, meError: null, serverPrefs: null });
+	});
+
 	it('does NOT bounce an authenticated user away from /about', async () => {
 		const me = {
 			account: { id: 'a', status: 'active', is_server_admin: false, created_at: 'now' },

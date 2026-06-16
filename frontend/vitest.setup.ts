@@ -22,3 +22,32 @@ if (typeof Element !== 'undefined' && !Element.prototype.animate) {
 		};
 	};
 }
+
+// jsdom implements neither matchMedia nor ResizeObserver, both of which
+// @xyflow/svelte (Svelte Flow) touches at mount. Stub them so the map canvas
+// custom node/edge component tests can mount a real <SvelteFlow>.
+if (typeof window !== 'undefined' && !window.matchMedia) {
+	window.matchMedia = (query: string): MediaQueryList =>
+		({
+			matches: false,
+			media: query,
+			onchange: null,
+			addListener() {},
+			removeListener() {},
+			addEventListener() {},
+			removeEventListener() {},
+			dispatchEvent() {
+				return false;
+			}
+		}) as MediaQueryList;
+}
+
+if (typeof globalThis !== 'undefined' && !('ResizeObserver' in globalThis)) {
+	class ResizeObserverStub {
+		observe() {}
+		unobserve() {}
+		disconnect() {}
+	}
+	// @ts-expect-error — minimal ResizeObserver shim for jsdom.
+	globalThis.ResizeObserver = ResizeObserverStub;
+}

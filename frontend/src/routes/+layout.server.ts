@@ -8,12 +8,15 @@ export const load: LayoutServerLoad = async ({ fetch, url, locals, request }) =>
 	// Public routes render without an authenticated session: a getMe 401 must not
 	// redirect them to /login. /about is intentionally public (its purpose is to be
 	// findable); /login is public so unauthenticated visitors can sign in;
-	// /preferences is public so accessibility settings work before/without login.
+	// /preferences is public so accessibility settings work before/without login;
+	// /maps/_proto is the disposable map-canvas sandbox (static fixture, no loader,
+	// no auth — see build-map-canvas-prototype). The real /maps/[slug] stays gated.
 	const isPublicRoute =
 		isLoginRoute ||
 		url.pathname === '/about' ||
 		url.pathname === '/preferences' ||
-		url.pathname === '/blocked';
+		url.pathname === '/blocked' ||
+		url.pathname === '/maps/_proto';
 	const cookie = request.headers.get('cookie') ?? '';
 
 	try {
