@@ -8,7 +8,7 @@
  *
  * Driven against /characters (authed via the mock backend) because it shows
  * all three signals at once: the search input (focus pattern), the connected
- * dot in the nav, and per-character token-status chips.
+ * status icon in the nav, and per-character token-status chips.
  *
  * forced-colors emulation is Chromium-only; the suite is skipped elsewhere.
  */
@@ -55,11 +55,14 @@ test.describe('forced-colors: active', () => {
 		expect(outlineStyle).not.toBe('none');
 	});
 
-	test('the connected status dot preserves its colour signal', async ({ page }) => {
-		const dot = page.locator('header .dot').first();
-		await expect(dot).toBeAttached();
+	test('the connected status icon preserves its colour signal', async ({ page }) => {
+		// The nav connection indicator is now a StatusIcon glyph. Its shape carries
+		// the signal under forced-colors, and forced-color-adjust: none keeps the
+		// semantic token colour as a redundant channel.
+		const icon = page.locator('header .status-icon').first();
+		await expect(icon).toBeAttached();
 
-		const adjust = await dot.evaluate(
+		const adjust = await icon.evaluate(
 			(el) => getComputedStyle(el).forcedColorAdjust
 		);
 		expect(adjust).toBe('none');

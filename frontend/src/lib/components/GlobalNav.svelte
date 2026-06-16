@@ -2,6 +2,7 @@
 	import { page } from '$app/stores';
 	import { m } from '$lib/paraglide/messages';
 	import UserChip from './UserChip.svelte';
+	import StatusIcon from './StatusIcon.svelte';
 	import type { MeResponse } from '$lib/api';
 
 	let { me }: { me: MeResponse | null } = $props();
@@ -38,7 +39,7 @@
 	<div class="nav-spacer"></div>
 
 	<div class="status" aria-live="polite">
-		<span class="dot" class:disconnected={!connected} aria-hidden="true"></span>
+		<StatusIcon level={connected ? 'ok' : 'error'} />
 		<span>{connected ? m.nav_connected() : m.nav_disconnected()}</span>
 	</div>
 
@@ -112,30 +113,6 @@
 		margin-right: 16px;
 		font-size: 0.75rem;
 		color: var(--slate-400);
-	}
-	.dot {
-		width: 8px;
-		height: 8px;
-		border-radius: 50%;
-		background: var(--emerald);
-		box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.5);
-		animation: pulse 2s infinite;
-	}
-	.dot.disconnected {
-		background: var(--red);
-		box-shadow: none;
-		animation: none;
-	}
-	@keyframes pulse {
-		0% {
-			box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.6);
-		}
-		70% {
-			box-shadow: 0 0 0 6px rgba(16, 185, 129, 0);
-		}
-		100% {
-			box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
-		}
 	}
 
 	.user-chip-placeholder {

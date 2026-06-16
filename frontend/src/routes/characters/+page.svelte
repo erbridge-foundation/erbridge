@@ -5,8 +5,16 @@
 	import { m } from '$lib/paraglide/messages';
 	import type { PageData, ActionData } from './$types';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
+	import StatusIcon from '$lib/components/StatusIcon.svelte';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
+
+	// Map a character's token status to a StatusIcon severity level.
+	function tokenLevel(status: string): 'ok' | 'warning' | 'error' {
+		if (status === 'active') return 'ok';
+		if (status === 'owner_mismatch') return 'warning';
+		return 'error';
+	}
 
 	let query = $state('');
 
@@ -177,7 +185,7 @@
 								class="token-status"
 								data-state={character.token_status}
 							>
-								<span class="dot" aria-hidden="true"></span>
+								<StatusIcon level={tokenLevel(character.token_status)} />
 								<span
 									>{character.token_status === 'active'
 										? m.characters_token_active()
@@ -528,23 +536,8 @@
 		font-size: 0.6875rem;
 		color: var(--slate-400);
 	}
-	.token-status .dot {
-		width: 7px;
-		height: 7px;
-		border-radius: 50%;
-		flex-shrink: 0;
-	}
-	.token-status[data-state='active'] .dot {
-		background: var(--emerald);
-	}
-	.token-status[data-state='expired'] .dot {
-		background: var(--red);
-	}
 	.token-status[data-state='expired'] {
 		color: var(--red);
-	}
-	.token-status[data-state='owner_mismatch'] .dot {
-		background: var(--amber);
 	}
 	.token-status[data-state='owner_mismatch'] {
 		color: var(--amber);

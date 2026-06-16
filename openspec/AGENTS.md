@@ -126,7 +126,8 @@ to the backend.
 - `preferences/` — `schema`, `store.svelte`, `apply` (preference application).
 - `server/env.ts` — server-only env access.
 - `components/` — `GlobalNav`, `UserMenu`, `UserChip`, `Modal`, `ConfirmDialog`,
-  `MemberPicker`, `PreferenceControl`, `UpdateBanner`, `AuditDetailsDialog`.
+  `MemberPicker`, `PreferenceControl`, `UpdateBanner`, `AuditDetailsDialog`,
+  `StatusIcon` (shape-distinct severity glyph: `ok`/`warning`/`error`).
 - `paraglide/` — generated i18n (compiled from messages; **run scripts from `frontend/`**,
   not `pnpm --filter`).
 

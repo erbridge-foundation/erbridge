@@ -3,6 +3,7 @@
 	import { invalidateAll } from '$app/navigation';
 	import { m } from '$lib/paraglide/messages';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
+	import StatusIcon from '$lib/components/StatusIcon.svelte';
 	import type {
 		AdminAccountDto,
 		AdminAccountCharacterDto,
@@ -114,6 +115,13 @@
 		if (status === 'active') return m.admin_characters_token_active();
 		if (status === 'owner_mismatch') return m.admin_characters_token_transferred();
 		return m.admin_characters_token_expired();
+	}
+
+	// Map a domain token status to a StatusIcon severity level.
+	function tokenLevel(status: TokenStatus): 'ok' | 'warning' | 'error' {
+		if (status === 'active') return 'ok';
+		if (status === 'owner_mismatch') return 'warning';
+		return 'error';
 	}
 
 	function matchesText(account: AdminAccountDto, needle: string): boolean {
@@ -339,13 +347,13 @@
 							{:else}
 								{#if transferredCount > 0}
 									<span class="issue" data-state="owner_mismatch">
-										<span class="dot" aria-hidden="true"></span>
+										<StatusIcon level="warning" />
 										<span>{m.admin_characters_issues_transferred({ count: transferredCount })}</span>
 									</span>
 								{/if}
 								{#if expiredCount > 0}
 									<span class="issue" data-state="expired">
-										<span class="dot" aria-hidden="true"></span>
+										<StatusIcon level="error" />
 										<span>{m.admin_characters_issues_expired({ count: expiredCount })}</span>
 									</span>
 								{/if}
@@ -385,7 +393,7 @@
 												</td>
 												<td>
 													<span class="token-status" data-state={character.token_status}>
-														<span class="dot" aria-hidden="true"></span>
+														<StatusIcon level={tokenLevel(character.token_status)} />
 														<span>{tokenLabel(character.token_status)}</span>
 													</span>
 												</td>
@@ -718,23 +726,11 @@
 		gap: 6px;
 		font-size: 0.6875rem;
 	}
-	.issue .dot {
-		width: 7px;
-		height: 7px;
-		border-radius: 50%;
-		flex-shrink: 0;
-	}
 	.issue[data-state='expired'] {
 		color: var(--red);
 	}
-	.issue[data-state='expired'] .dot {
-		background: var(--red);
-	}
 	.issue[data-state='owner_mismatch'] {
 		color: var(--amber);
-	}
-	.issue[data-state='owner_mismatch'] .dot {
-		background: var(--amber);
 	}
 
 	.detail-row > td {
@@ -786,23 +782,8 @@
 		font-size: 0.6875rem;
 		color: var(--slate-400);
 	}
-	.token-status .dot {
-		width: 7px;
-		height: 7px;
-		border-radius: 50%;
-		flex-shrink: 0;
-	}
-	.token-status[data-state='active'] .dot {
-		background: var(--emerald);
-	}
-	.token-status[data-state='expired'] .dot {
-		background: var(--red);
-	}
 	.token-status[data-state='expired'] {
 		color: var(--red);
-	}
-	.token-status[data-state='owner_mismatch'] .dot {
-		background: var(--amber);
 	}
 	.token-status[data-state='owner_mismatch'] {
 		color: var(--amber);
