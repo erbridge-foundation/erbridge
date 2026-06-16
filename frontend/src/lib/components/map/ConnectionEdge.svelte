@@ -19,6 +19,8 @@
 		wh_type: string;
 		mass: Mass;
 		eol: boolean;
+		sig_source?: string;
+		sig_target?: string;
 		thickness?: number;
 		showMass?: boolean;
 		showWhType?: boolean;
@@ -37,6 +39,10 @@
 
 	// Floating bezier path + its midpoint (for the label). Recomputed reactively
 	// as either node is dragged, so the connection point migrates around the node.
+	// How far (px) from a node's perimeter the sig endpoint label sits, nudged
+	// along the edge toward the midpoint so it hugs the node like the wireframe.
+	const SIG_INSET = 0.16;
+
 	const geom = $derived.by(() => {
 		if (!sourceNode.current || !targetNode.current) return null;
 		const p = getEdgeParams(sourceNode.current, targetNode.current);
@@ -48,7 +54,13 @@
 			targetY: p.ty,
 			targetPosition: p.targetPos
 		});
-		return { path, labelX, labelY };
+		// Endpoint label anchors: a short way in from each node along the straight
+		// source→target line (close enough to read as "this sig, this side").
+		const sigSourceX = p.sx + (p.tx - p.sx) * SIG_INSET;
+		const sigSourceY = p.sy + (p.ty - p.sy) * SIG_INSET;
+		const sigTargetX = p.tx + (p.sx - p.tx) * SIG_INSET;
+		const sigTargetY = p.ty + (p.sy - p.ty) * SIG_INSET;
+		return { path, labelX, labelY, sigSourceX, sigSourceY, sigTargetX, sigTargetY };
 	});
 
 	const massColour: Record<Mass, string> = {
@@ -80,4 +92,35 @@
 			/>
 		</EdgeLabel>
 	{/if}
+
+	<!-- Sig endpoint labels: which signature in each system leads to this hole.
+	     Svelte Flow supports multiple <EdgeLabel>s per edge — these two sit near
+	     the endpoints, the type/mass label sits at the midpoint above. -->
+	{#if d.sig_source}
+		<EdgeLabel x={geom.sigSourceX} y={geom.sigSourceY} transparent>
+			<span class="sig-endpoint">{d.sig_source}</span>
+		</EdgeLabel>
+	{/if}
+	{#if d.sig_target}
+		<EdgeLabel x={geom.sigTargetX} y={geom.sigTargetY} transparent>
+			<span class="sig-endpoint">{d.sig_target}</span>
+		</EdgeLabel>
+	{/if}
 {/if}
+
+<style>
+	.sig-endpoint {
+		display: inline-block;
+		padding: 1px 4px;
+		background: var(--space-900);
+		border: 1px solid var(--space-600);
+		border-radius: 3px;
+		font-family: var(--font-ui);
+		font-size: 9px;
+		font-weight: 700;
+		line-height: 1.3;
+		color: var(--slate-300);
+		white-space: nowrap;
+		pointer-events: none;
+	}
+</style>

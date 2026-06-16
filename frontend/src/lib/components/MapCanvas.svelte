@@ -69,12 +69,6 @@
 		sidebarSide = sidebarSide === 'right' ? 'left' : 'right';
 	}
 
-	// The system the intel sections describe. Stand-in for canvas selection until
-	// the real selection model lands: the active tab's first root.
-	const selectedSystem = $derived(
-		union.systems.find((s) => s.id === activeTab.roots[0]) ?? union.systems[0] ?? null
-	);
-
 	// Saved placement per tab. Seeded once from the store (placement.loadTab); a
 	// drag-save or redo-layout reassigns the active tab's entry so the nodes
 	// reflow. A version counter lets a redo-layout force a fresh layout pass.
@@ -125,6 +119,8 @@
 					wh_type: c.wh_type,
 					mass: c.mass,
 					eol: c.eol,
+					sig_source: c.sig_source,
+					sig_target: c.sig_target,
 					thickness: edgeThickness,
 					showMass: showMassLabels,
 					showWhType: showWhTypeLabels
@@ -137,6 +133,17 @@
 	// $state, not a mutation during another rune's derivation.
 	let nodes = $state<Node[]>([]);
 	let edges = $state<Edge[]>([]);
+
+	// The system the intel sections describe = the canvas selection. Svelte Flow
+	// flips `node.selected` on click (we bind `nodes`), so we read it back here;
+	// with nothing selected we fall back to the active tab's first root.
+	const selectedId = $derived(nodes.find((n) => n.selected)?.id);
+	const selectedSystem = $derived(
+		union.systems.find((s) => s.id === selectedId) ??
+			union.systems.find((s) => s.id === activeTab.roots[0]) ??
+			union.systems[0] ??
+			null
+	);
 
 	$effect(() => {
 		nodes = desiredNodes;
@@ -402,7 +409,8 @@
 	/* Collapse/expand toggle, a round button overflowing the inner edge. */
 	.sidebar-toggle {
 		position: absolute;
-		top: 12px;
+		top: 50%;
+		transform: translateY(-50%);
 		z-index: 20;
 		width: 24px;
 		height: 24px;

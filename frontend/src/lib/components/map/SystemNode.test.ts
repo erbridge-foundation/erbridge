@@ -12,12 +12,18 @@ const sys = (over: Partial<System> = {}): System => ({
 	...over
 });
 
-function node(data: { system: System; isRoot: boolean; isGhost: boolean }): Node {
-	return { id: data.system.id, type: 'system', position: { x: 0, y: 0 }, data };
+function node(
+	data: { system: System; isRoot: boolean; isGhost: boolean },
+	selected = false
+): Node {
+	return { id: data.system.id, type: 'system', position: { x: 0, y: 0 }, data, selected };
 }
 
-function renderNode(data: { system: System; isRoot: boolean; isGhost: boolean }) {
-	return render(Harness, { props: { nodes: [node(data)] } });
+function renderNode(
+	data: { system: System; isRoot: boolean; isGhost: boolean },
+	selected = false
+) {
+	return render(Harness, { props: { nodes: [node(data, selected)] } });
 }
 
 afterEach(cleanup);
@@ -52,5 +58,19 @@ describe('SystemNode encoding (meaning never colour-only)', () => {
 		const { container } = renderNode({ system: sys(), isRoot: false, isGhost: true });
 		expect(screen.getByText('unconfirmed')).toBeInTheDocument();
 		expect(container.querySelector('.system-node.ghost')).not.toBeNull();
+	});
+
+	it('does not show the expanded detail block when not selected', () => {
+		const { container } = renderNode({ system: sys(), isRoot: false, isGhost: false });
+		expect(container.querySelector('.system-node.selected')).toBeNull();
+		expect(container.querySelector('.detail')).toBeNull();
+	});
+
+	it('grows and reveals extra detail when selected', () => {
+		const { container } = renderNode({ system: sys(), isRoot: false, isGhost: false }, true);
+		expect(container.querySelector('.system-node.selected')).not.toBeNull();
+		// The detail list appears, surfacing the same fields as the sidebar intel.
+		expect(container.querySelector('.detail')).not.toBeNull();
+		expect(screen.getByText('Security')).toBeInTheDocument();
 	});
 });

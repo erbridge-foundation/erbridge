@@ -6,7 +6,16 @@
 	import { m } from '$lib/paraglide/messages';
 	import type { System, SystemClass } from '$lib/map/types';
 
-	let { data }: { data: { system: System; isRoot: boolean; isGhost: boolean } } = $props();
+	// `selected` is supplied by Svelte Flow (NodeProps) — it tracks selection for
+	// us, so a "selected system" is just this node in its selected state, not a
+	// separate component. The rest comes through `data`.
+	let {
+		data,
+		selected = false
+	}: {
+		data: { system: System; isRoot: boolean; isGhost: boolean };
+		selected?: boolean;
+	} = $props();
 
 	const system = $derived(data.system);
 
@@ -29,6 +38,7 @@
 	class="system-node"
 	class:root={data.isRoot}
 	class:ghost={data.isGhost}
+	class:selected
 	data-class={system.class}
 >
 	<!-- Floating edges: a `source` handle on every side so getEdgeParams can anchor
@@ -57,6 +67,22 @@
 				<li class="badge static" style:--badge-colour={classColour[s.dest]}>{s.code}</li>
 			{/each}
 		</ul>
+	{/if}
+
+	<!-- Selected: the node grows and reveals extra detail in-place. Same data the
+	     sidebar's System Intel shows, surfaced on the node so the focus reads at a
+	     glance. (Security is a placeholder until the chain-map model supplies it.) -->
+	{#if selected}
+		<dl class="detail">
+			<dt>{m.map_proto_intel_security()}</dt>
+			<dd>—</dd>
+			<dt>{m.map_proto_intel_statics()}</dt>
+			<dd>
+				{#if system.statics.length}
+					{system.statics.map((s) => s.code).join(', ')}
+				{:else}—{/if}
+			</dd>
+		</dl>
 	{/if}
 
 	<Handle type="source" position={Position.Right} id="right" />
@@ -90,6 +116,36 @@
 	.system-node.ghost {
 		border-style: dashed;
 		opacity: 0.8;
+	}
+	/* The selected system — a violet highlight ring drawn with box-shadow so it
+	   composes with the root border (a node can be both root AND selected). The
+	   ring also survives forced-colors (it's an outline-like shadow, not a token
+	   fill); selection is additionally reflected in the sidebar's System Intel. */
+	.system-node.selected {
+		box-shadow: 0 0 0 2px var(--violet);
+		border-color: var(--violet);
+		/* Grow the focused node so the revealed detail has room and the selection
+		   reads at a glance. */
+		min-width: 150px;
+		z-index: 1;
+	}
+
+	/* Extra detail revealed only on the selected node. */
+	.detail {
+		display: grid;
+		grid-template-columns: auto 1fr;
+		gap: 2px 10px;
+		margin: 0.4rem 0 0;
+		padding-top: 0.4rem;
+		border-top: 1px solid var(--space-700);
+		font-size: 0.6875rem;
+	}
+	.detail dt {
+		color: var(--slate-500);
+	}
+	.detail dd {
+		margin: 0;
+		color: var(--slate-300);
 	}
 
 	header {
