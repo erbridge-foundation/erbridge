@@ -8,7 +8,7 @@
 	// out — Fork 1 reversed). Existence is never derived from placement. This
 	// component is the durable artifact; /maps/_proto is the throwaway shell
 	// around it (see build-map-canvas-prototype design).
-	import { SvelteFlow, Controls, Background, MiniMap, MarkerType } from '@xyflow/svelte';
+	import { SvelteFlow, Controls, Background, MiniMap } from '@xyflow/svelte';
 	import '@xyflow/svelte/dist/style.css';
 	import type { Node, Edge, NodeTypes, EdgeTypes } from '@xyflow/svelte';
 	import { untrack } from 'svelte';
@@ -163,22 +163,13 @@
 				c.a.sig?.type ||
 				c.b.sig?.type ||
 				'';
-			// Built-in Svelte Flow arrowhead (MarkerType.ArrowClosed), tangent-
-			// accurate and node-hugging. Endpoints are a→b, so arrowTo='b' is the
-			// target end (markerEnd) and 'a' is the source end (markerStart). The
-			// undetermined case (null) gets no marker — the edge draws a neutral
-			// mid-edge diamond instead.
-			// Arrowhead follows the MASS colour (the alert casing carries urgency, not
-			// the arrow); resolves against whichever palette is active via the token.
-			const colour = `var(--mass-${c.mass})`;
-			const marker = { type: MarkerType.ArrowClosed, color: colour };
+			// No endpoint arrowhead: direction is a → glyph the edge component draws
+			// just outside the named end (it derives the named end from `arrowTo`).
 			return {
 				id: c.id,
 				type: 'connection',
 				source: c.a.system,
 				target: c.b.system,
-				markerEnd: arrowTo === 'b' ? marker : undefined,
-				markerStart: arrowTo === 'a' ? marker : undefined,
 				data: {
 					wh_type: namedType,
 					mass: c.mass,

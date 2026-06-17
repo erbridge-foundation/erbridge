@@ -45,7 +45,7 @@
 	// Perpendicular separation (px) between adjacent parallel siblings.
 	const PARALLEL_GAP = 26;
 
-	let { source, target, markerEnd, markerStart, data }: EdgeProps = $props();
+	let { source, target, data }: EdgeProps = $props();
 
 	// svelte-flow types `data` as optional `any`; narrow + default it.
 	const d = $derived(
@@ -67,6 +67,9 @@
 	// How far (px) from a node's perimeter the sig endpoint label sits, nudged
 	// along the edge toward the midpoint so it hugs the node like the wireframe.
 	const SIG_INSET = 0.16;
+	// The direction glyph sits closer to the node than the sig pill, just outside the
+	// named ("from"/non-K162) end, pointing down-line toward the K162 end.
+	const DIR_INSET = 0.34;
 
 	const geom = $derived.by(() => {
 		if (!sourceNode.current || !targetNode.current) return null;
@@ -121,6 +124,12 @@
 		const sigSourceY = p.sy + (p.ty - p.sy) * SIG_INSET + bowY;
 		const sigTargetX = p.tx + (p.sx - p.tx) * SIG_INSET + bowX;
 		const sigTargetY = p.ty + (p.sy - p.ty) * SIG_INSET + bowY;
+		// Direction-glyph anchors: closer to each node than the sig pill, so the
+		// glyph reads as belonging to that end (the from/named end gets one).
+		const dirSourceX = p.sx + (p.tx - p.sx) * DIR_INSET + bowX;
+		const dirSourceY = p.sy + (p.ty - p.sy) * DIR_INSET + bowY;
+		const dirTargetX = p.tx + (p.sx - p.tx) * DIR_INSET + bowX;
+		const dirTargetY = p.ty + (p.sy - p.ty) * DIR_INSET + bowY;
 		return {
 			path,
 			labelX,
@@ -129,6 +138,10 @@
 			sigSourceY,
 			sigTargetX,
 			sigTargetY,
+			dirSourceX,
+			dirSourceY,
+			dirTargetX,
+			dirTargetY,
 			sx: p.sx,
 			sy: p.sy,
 			tx: p.tx,
@@ -153,12 +166,23 @@
 		(d.showMass ?? true) || (d.showWhType ?? true) || enc.alert.level !== 'none'
 	);
 
-	// Direction marker. The arrowhead toward the K162 end is the built-in
-	// markerEnd/markerStart (set in MapCanvas, applied to BaseEdge below) — it's
-	// tangent-accurate and hugs the node. When the direction is UNDETERMINED (both
-	// ends unidentified, arrowTo null) we draw NOTHING — no arrow, no mid-edge
-	// marker — the line just connects normally; a missing arrow already reads as
-	// "direction not yet known" without adding a mystery glyph.
+	// Direction is shown by a single → glyph in its OWN label just outside the named
+	// ("from"/non-K162) end, rotated to point down-line toward the K162 end. No
+	// endpoint arrowhead. `arrowTo` is the K162 end → the named end is the other one;
+	// undetermined (arrowTo null) → no glyph.
+	const namedEnd = $derived<'a' | 'b' | null>(
+		!d.showDirection || d.arrowTo == null ? null : d.arrowTo === 'a' ? 'b' : 'a'
+	);
+	// Screen-space angle (deg) from the named end toward the K162 end, so the glyph
+	// rotates to lie along the line. `a` points sx→tx; `b` points tx→sx.
+	const dirAngle = $derived.by(() => {
+		if (!geom || namedEnd == null) return 0;
+		const [fx, fy, tx2, ty2] =
+			namedEnd === 'a'
+				? [geom.sx, geom.sy, geom.tx, geom.ty]
+				: [geom.tx, geom.ty, geom.sx, geom.sy];
+		return (Math.atan2(ty2 - fy, tx2 - fx) * 180) / Math.PI;
+	});
 </script>
 
 {#if geom}
@@ -178,18 +202,28 @@
 		/>
 	{/if}
 
-	<!-- The direction arrowhead (when known) is the built-in markerEnd/markerStart,
-	     applied here so it auto-orients to the path tangent and hugs the node. Mass
-	     owns the width + colour; TTL owns the dash pattern. -->
+	<!-- The line. Mass owns width + colour; TTL owns the dash. No endpoint arrowhead:
+	     direction is a → glyph just outside the named end (below). -->
 	<BaseEdge
 		path={geom.path}
-		{markerEnd}
-		{markerStart}
 		style="stroke: {stroke}; stroke-width: {thickness}; stroke-linecap: round; {enc.ttl
 			.dashArray
 			? `stroke-dasharray: ${enc.ttl.dashArray};`
 			: ''}"
 	/>
+
+	<!-- Direction glyph: a single → in its own label just outside the named ("from")
+	     end, rotated to point down-line toward the K162 end. Absent when direction is
+	     undetermined. -->
+	{#if namedEnd != null}
+		{@const dx = namedEnd === 'a' ? geom.dirSourceX : geom.dirTargetX}
+		{@const dy = namedEnd === 'a' ? geom.dirSourceY : geom.dirTargetY}
+		<EdgeLabel x={dx} y={dy} transparent>
+			<span class="dir-glyph" style="transform: rotate({dirAngle}deg);" aria-hidden="true"
+				>→</span
+			>
+		</EdgeLabel>
+	{/if}
 
 	{#if showLabel}
 		<EdgeLabel x={geom.labelX} y={geom.labelY} transparent>
@@ -278,5 +312,20 @@
 		color: var(--slate-300);
 		white-space: nowrap;
 		pointer-events: none;
+	}
+
+	/* Direction glyph: a large → just outside the named end, rotated (inline style)
+	   to lie along the line pointing toward the K162 end. Bright, in its own label —
+	   the sole direction cue now the endpoint arrowhead is gone. */
+	.dir-glyph {
+		display: inline-block;
+		font-size: 20px;
+		font-weight: 700;
+		line-height: 1;
+		color: var(--sky);
+		pointer-events: none;
+		text-shadow:
+			0 0 3px var(--space-950),
+			0 0 3px var(--space-950);
 	}
 </style>
