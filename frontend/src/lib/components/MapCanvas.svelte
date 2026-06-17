@@ -1,9 +1,13 @@
 <script lang="ts">
 	// The reusable map canvas. Consumes a POSITION-LESS combined graph + local
-	// state and renders it through svelte-flow. Positions come from the layout
-	// seed overlaid with saved placement — existence is never derived from
-	// placement. This component is the durable artifact; /maps/_proto is the
-	// throwaway shell around it (see build-map-canvas-prototype design).
+	// state and renders it through svelte-flow, following the Svelte Flow website
+	// model: the graph is laid out ONCE on initial load, and thereafter only
+	// changes through discrete SSE events (`MapEvent`). An added node is placed
+	// incrementally (one flow-step from its anchor, then collisions ripple); there
+	// is NO whole-map re-layout, and positions are ephemeral (a refresh re-lays-
+	// out — Fork 1 reversed). Existence is never derived from placement. This
+	// component is the durable artifact; /maps/_proto is the throwaway shell
+	// around it (see build-map-canvas-prototype design).
 	import { SvelteFlow, Controls, Background, MiniMap, MarkerType } from '@xyflow/svelte';
 	import '@xyflow/svelte/dist/style.css';
 	import type { Node, Edge, NodeTypes, EdgeTypes } from '@xyflow/svelte';
@@ -14,31 +18,47 @@
 	import ConnectionEdge from '$lib/components/map/ConnectionEdge.svelte';
 	import MapSidebar from '$lib/components/map/MapSidebar.svelte';
 	import { layoutSeed, renderableSystems } from '$lib/map/layout';
-	import { combine, dropConfirmedGhosts, overlayPositions, reconcilePlacement } from '$lib/map/reconcile';
-	import * as placement from '$lib/map/placement';
+	import { combine, dropConfirmedGhosts } from '$lib/map/reconcile';
+	import { resolveCollisions } from '$lib/map/resolve-collisions';
+	import { placeIncoming } from '$lib/map/place-incoming';
 	import { k162End } from '$lib/map/types';
-	import type { CombinedGraph, LayoutDirection, LocalState, Positions, Tab } from '$lib/map/types';
+	import type {
+		CombinedGraph,
+		Connection,
+		LayoutDirection,
+		LocalState,
+		MapEvent,
+		Positions,
+		System,
+		Tab
+	} from '$lib/map/types';
 
 	let {
 		mapId,
 		serverState,
 		localState = $bindable(),
-		onReceiveUpdate
+		nextEvent
 	}: {
 		mapId: string;
 		serverState: CombinedGraph;
 		localState: LocalState;
-		/** Sandbox SSE simulation: the host swaps server state + reruns reconcile. */
-		onReceiveUpdate?: () => void;
+		/** Sandbox SSE simulation: returns the next scripted event (or null when the
+		 *  script is exhausted). The canvas applies it incrementally. */
+		nextEvent?: () => MapEvent | null;
 	} = $props();
 
 	const nodeTypes: NodeTypes = { system: SystemNode };
 	const edgeTypes: EdgeTypes = { connection: ConnectionEdge };
 
-	const tabs = $derived(serverState.tabs);
-	// Initial active tab only; tab switching reassigns it. The tab set is stable
-	// across the sandbox's server-state swap, so seeding from the initial value
-	// is correct here.
+	// EXISTENCE truth, owned by the canvas. Seeded ONCE from the initial server
+	// snapshot; thereafter mutated only by applying SSE events (never re-derived
+	// from a prop, so a drag/event-driven position is never clobbered by a reactive
+	// graph swap). The server is truth; this mirrors it as events arrive.
+	// svelte-ignore state_referenced_locally
+	let graph = $state<CombinedGraph>(serverState);
+
+	const tabs = $derived(graph.tabs);
+	// Initial active tab only; tab switching reassigns it.
 	// svelte-ignore state_referenced_locally
 	let activeTabId = $state(serverState.tabs[0]?.id ?? '');
 	const activeTab = $derived<Tab>(
@@ -46,11 +66,12 @@
 	);
 
 	/** The union graph (server ∪ local). Existence truth for the active tab. */
-	const union = $derived(combine(serverState, localState));
+	const union = $derived(combine(graph, localState));
 	const rootSet = $derived(new Set(activeTab.roots));
 
-	// Active direction is per-render only: applying a layout is a one-shot action
-	// (clears saved placement, reseeds) — there is no persistent layout MODE.
+	// The map's flow direction. Set by the one-shot initial layout and by a
+	// "redo layout" action; it tells `placeIncoming` which way a new node steps.
+	let layoutDir = $state<LayoutDirection>('LR');
 	let layoutOpen = $state(false);
 
 	// ── Display controls (prototype-only, no persistence) ───────────────────────
@@ -74,41 +95,37 @@
 		sidebarSide = sidebarSide === 'right' ? 'left' : 'right';
 	}
 
-	// Saved placement per tab. Seeded once from the store (placement.loadTab); a
-	// drag-save or redo-layout reassigns the active tab's entry so the nodes
-	// reflow. A version counter lets a redo-layout force a fresh layout pass.
-	let savedByTab = $state<Record<string, Positions>>({});
-
-	// Lazy-load the active tab's saved placement from localStorage exactly once,
-	// in an effect (NOT in a derived — mutating state mid-derivation is unsafe).
-	$effect(() => {
-		const id = activeTab.id;
-		if (id && !(id in savedByTab)) {
-			savedByTab[id] = placement.loadTab(mapId, id);
-		}
-	});
-
 	const presentIds = $derived(renderableSystems(union, activeTab, localState.ghostSystems));
 	const ghostIds = $derived(new Set(localState.ghostSystems.map((s) => s.id)));
 
-	// Positions = saved ?? seed, computed over the union. Reconciled against the
-	// current render set so departed nodes' saved positions are dropped. PURE
-	// (no state mutation) so it's safe to read while syncing nodes below.
-	const positions = $derived.by<Positions>(() => {
-		const saved = savedByTab[activeTab.id] ?? {};
-		const reconciled = reconcilePlacement(saved, presentIds);
-		return overlayPositions(serverState, activeTab, localState, reconciled, 'LR');
+	// Seed positions per tab. Computed ONCE per tab the first time it is viewed
+	// (the one-shot initial layout); a redo-layout reassigns the active tab's
+	// entry. An SSE add writes the incoming node's slot here too. Drag positions
+	// are NOT mirrored back here — once a node is live, svelte-flow owns its
+	// position; `seedPos` only supplies the FIRST position a node ever gets.
+	let seedByTab = $state<Record<string, Positions>>({});
+
+	// Lay out the active tab exactly once, in an effect (NOT a derived — mutating
+	// state mid-derivation is unsafe). This is the one-shot initial layout.
+	$effect(() => {
+		const id = activeTab.id;
+		if (id && !(id in untrack(() => seedByTab))) {
+			seedByTab[id] = layoutSeed(union, activeTab, untrack(() => layoutDir), presentIds);
+		}
 	});
 
+	const seedPos = $derived<Positions>(seedByTab[activeTab.id] ?? {});
+
 	// The desired node/edge sets are PURE deriveds; an effect below syncs them
-	// into the bindable $state svelte-flow mutates on drag.
+	// into the bindable $state svelte-flow mutates on drag. A new node takes its
+	// seed slot; kept nodes keep their live (svelte-flow-owned) position.
 	const desiredNodes = $derived<Node[]>(
 		union.systems
 			.filter((s) => presentIds.has(s.id))
 			.map((s) => ({
 				id: s.id,
 				type: 'system',
-				position: positions[s.id] ?? { x: 0, y: 0 },
+				position: seedPos[s.id] ?? { x: 0, y: 0 },
 				data: { system: s, isRoot: rootSet.has(s.id), isGhost: ghostIds.has(s.id) }
 			}))
 	);
@@ -214,65 +231,32 @@
 		edges = desiredEdges;
 	});
 
-	// ── Drag → save (debounced) + one-shot collision repel ──────────────────────
-	// Custom collision resolution (NOT svelte-flow proximity-connect — a drag must
-	// never assert graph truth). After a drag settles, nudge overlapping nodes
-	// apart, then persist the tab's placement.
-	const NODE_W = 150;
-	const NODE_H = 70;
+	// ── Collision repel (official @xyflow algorithm) ────────────────────────────
+	// Run on drag-stop and after an SSE add. NOT svelte-flow proximity-connect — a
+	// drag/add must never assert graph truth, only nudge overlapping nodes apart.
+	// It moves whatever it must to clear overlaps, so existing nodes shift to make
+	// room ("let it ripple"). margin 15 keeps a small gap between nodes.
+	const COLLISION_OPTS = { maxIterations: 1000, overlapThreshold: 0.5, margin: 15 };
 
-	function resolveCollisions(): void {
-		for (let pass = 0; pass < 4; pass++) {
-			let moved = false;
-			for (let i = 0; i < nodes.length; i++) {
-				for (let j = i + 1; j < nodes.length; j++) {
-					const a = nodes[i];
-					const b = nodes[j];
-					const dx = b.position.x - a.position.x;
-					const dy = b.position.y - a.position.y;
-					const overlapX = NODE_W - Math.abs(dx);
-					const overlapY = NODE_H - Math.abs(dy);
-					if (overlapX > 0 && overlapY > 0) {
-						// Push apart along the lesser-overlap axis (smallest shove).
-						if (overlapX < overlapY) {
-							const push = (overlapX / 2) * (dx < 0 ? -1 : 1);
-							a.position.x -= push;
-							b.position.x += push;
-						} else {
-							const push = (overlapY / 2) * (dy < 0 ? -1 : 1);
-							a.position.y -= push;
-							b.position.y += push;
-						}
-						moved = true;
-					}
-				}
-			}
-			if (!moved) break;
-		}
-	}
-
-	function persistPlacement(): void {
-		const next: Positions = {};
-		for (const n of nodes) next[n.id] = { x: n.position.x, y: n.position.y };
-		savedByTab[activeTab.id] = next;
-		placement.save(mapId, activeTab.id, next);
+	function repel(): void {
+		nodes = resolveCollisions(nodes, COLLISION_OPTS);
 	}
 
 	function handleDragStop(): void {
-		resolveCollisions();
-		persistPlacement();
+		// A drag settles; nudge anything it now overlaps apart. Positions are
+		// session-only — svelte-flow owns them and nothing persists them.
+		repel();
 	}
 
 	// ── Redo layout (one-shot) ───────────────────────────────────────────────────
-	// Clear the saved overlay for the active tab, reseed from the roots, persist.
-	// The node-sync effect preserves LIVE positions for kept nodes (so a drag-save
-	// doesn't get clobbered), so a reseed must apply the new positions to `nodes`
-	// directly — not just to savedByTab.
+	// Re-run the one-shot layout for the active tab in a new direction. The
+	// node-sync effect preserves LIVE positions for kept nodes (so it can't reflow
+	// them on its own), so we apply the fresh seed to `nodes` directly AND update
+	// the tab's seed map. `layoutDir` updates so subsequent SSE adds step the new way.
 	function redoLayout(dir: LayoutDirection): void {
-		placement.clearTab(mapId, activeTab.id);
+		layoutDir = dir;
 		const seed = layoutSeed(union, activeTab, dir, presentIds);
-		savedByTab[activeTab.id] = { ...seed };
-		placement.save(mapId, activeTab.id, seed, 0);
+		seedByTab[activeTab.id] = { ...seed };
 		nodes = nodes.map((n) => (seed[n.id] ? { ...n, position: { ...seed[n.id] } } : n));
 		layoutOpen = false;
 	}
@@ -282,11 +266,66 @@
 	}
 
 	// ── Simulated SSE ────────────────────────────────────────────────────────────
-	// The host swaps serverState; we drop any now-confirmed ghosts so the union
-	// dedupes (no duplicate / flicker) and reconcile prunes departed placements.
+	// Pull the next scripted event from the host and apply it to the canvas's own
+	// graph, placing incrementally — never a whole-map re-layout.
+	function applyEvent(ev: MapEvent): void {
+		switch (ev.kind) {
+			case 'add-system':
+				addSystem(ev.system, ev.anchor, ev.connection);
+				break;
+			case 'add-connection':
+				graph = { ...graph, connections: [...graph.connections, ev.connection] };
+				break;
+			case 'remove-system':
+				removeSystem(ev.id);
+				break;
+			case 'remove-connection':
+				graph = { ...graph, connections: graph.connections.filter((c) => c.id !== ev.id) };
+				break;
+		}
+	}
+
+	// Add a system reached through `anchor`: drop it one flow-step out from the
+	// anchor's CURRENT (live) position, then resolve collisions over the whole
+	// graph so it ripples its neighbours apart. If the system was a local ghost it
+	// is dropped from local state (the union then dedupes — no duplicate).
+	function addSystem(system: System, anchor: string, connection: Connection): void {
+		const anchorPos = nodes.find((n) => n.id === anchor)?.position ?? seedPos[anchor] ?? { x: 0, y: 0 };
+		// Seed the incoming node BEFORE it enters the render set, so the node-sync
+		// effect places it there rather than at the origin.
+		seedByTab[activeTab.id] = { ...seedPos, [system.id]: placeIncoming(anchorPos, layoutDir) };
+		// Mutate existence truth; the union + deriveds pick the new node/edge up.
+		const exists = graph.systems.some((s) => s.id === system.id);
+		graph = {
+			...graph,
+			systems: exists ? graph.systems : [...graph.systems, system],
+			connections: graph.connections.some((c) => c.id === connection.id)
+				? graph.connections
+				: [...graph.connections, connection]
+		};
+		localState = dropConfirmedGhosts(graph, localState);
+		// The node-sync effect flushes the new node into `nodes` reactively; ripple
+		// once that has happened (next microtask), so collisions see the real node.
+		queueMicrotask(repel);
+	}
+
+	function removeSystem(id: string): void {
+		graph = {
+			...graph,
+			systems: graph.systems.filter((s) => s.id !== id),
+			connections: graph.connections.filter((c) => c.a.system !== id && c.b.system !== id)
+		};
+		// Forget its seed slot so a future re-add re-places it.
+		if (id in seedPos) {
+			const next = { ...seedPos };
+			delete next[id];
+			seedByTab[activeTab.id] = next;
+		}
+	}
+
 	function receiveUpdate(): void {
-		onReceiveUpdate?.();
-		localState = dropConfirmedGhosts(serverState, localState);
+		const ev = nextEvent?.();
+		if (ev) applyEvent(ev);
 	}
 </script>
 

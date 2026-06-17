@@ -5,9 +5,11 @@
  * with no loader/auth. This spec proves the interaction model the prototype
  * exists to validate:
  *   - the position-less fixture renders as nodes + edges
- *   - a dragged node's position SURVIVES a reload (localStorage placement)
+ *   - dragging a node moves it (positions are session-only — ephemeral)
+ *   - a reload RE-LAYS-OUT (a dragged position does NOT survive — no persistence)
  *   - "redo layout" reseeds positions from the roots
- *   - "receive update" reconciles a local ghost into a real server node
+ *   - "receive update" replays scripted SSE events, placing each incrementally:
+ *     a new system is added, and a local ghost is confirmed into a real node
  *
  * Runs against the built SvelteKit app. No mock backend needed — the sandbox is
  * entirely client-side static.
@@ -67,7 +69,7 @@ test.describe('/maps/_proto', () => {
 		expect(after).not.toBe(before);
 	});
 
-	test('a dragged node keeps its position across a reload', async ({ page }) => {
+	test('a reload re-lays-out — a dragged position is ephemeral, not persisted', async ({ page }) => {
 		const before = await nodePosition(page, 'J100001');
 
 		// Drag J100001 a clear distance.
@@ -82,16 +84,16 @@ test.describe('/maps/_proto', () => {
 		const afterDrag = await nodePosition(page, 'J100001');
 		expect(Math.abs(afterDrag.x - before.x) + Math.abs(afterDrag.y - before.y)).toBeGreaterThan(40);
 
-		// Give the debounced placement save time to flush, then reload.
-		await page.waitForTimeout(600);
+		// Reload: with no persistence (Fork 1 reversed), the map re-lays-out from the
+		// fixture, so the node returns to its seed position — NOT the dragged spot.
 		await page.reload();
 		await expect(node(page, 'J100001')).toBeVisible();
 
 		const afterReload = await nodePosition(page, 'J100001');
-		// Same on-screen position as before the reload (within a small tolerance:
-		// fitView re-centres the whole graph identically, so deltas are stable).
-		expect(Math.abs(afterReload.x - afterDrag.x)).toBeLessThan(30);
-		expect(Math.abs(afterReload.y - afterDrag.y)).toBeLessThan(30);
+		// Back to (near) the original seeded position; clearly NOT the dragged spot.
+		expect(Math.abs(afterReload.x - before.x)).toBeLessThan(30);
+		expect(Math.abs(afterReload.y - before.y)).toBeLessThan(30);
+		expect(Math.abs(afterReload.x - afterDrag.x) + Math.abs(afterReload.y - afterDrag.y)).toBeGreaterThan(40);
 	});
 
 	test('redo layout reseeds node positions', async ({ page }) => {
@@ -114,18 +116,28 @@ test.describe('/maps/_proto', () => {
 		expect(Math.abs(reseeded.x - dragged.x) + Math.abs(reseeded.y - dragged.y)).toBeGreaterThan(30);
 	});
 
-	test('receive update reconciles a ghost into a real node', async ({ page }) => {
+	test('receive update replays scripted SSE events incrementally', async ({ page }) => {
+		const receive = page.getByRole('button', { name: /receive update/i });
+
 		// The ghost J199999 is present (local state) and styled as unconfirmed.
 		await expect(node(page, 'J199999')).toBeVisible();
 		await expect(page.getByText('unconfirmed')).toBeVisible();
 
-		// Simulate the SSE update: J199999 becomes server truth, gains a connection.
-		await page.getByRole('button', { name: /receive update/i }).click();
+		// Event 1: a brand-new system (J100007) is added, reached from J100006.
+		await receive.click();
+		await expect(node(page, 'J100007')).toBeVisible();
+		// The ghost is still unconfirmed — this event didn't touch it.
+		await expect(page.getByText('unconfirmed')).toBeVisible();
 
-		// Still exactly one J199999 node, now without the ghost badge.
+		// Event 2: J199999 is confirmed as server truth (gains a connection). It
+		// drops from local state, so it renders once, without the ghost badge.
+		await receive.click();
 		await expect(node(page, 'J199999')).toHaveCount(1);
 		await expect(page.getByText('unconfirmed')).toHaveCount(0);
-		// The brand-new system from the update has arrived.
-		await expect(node(page, 'J100007')).toBeVisible();
+
+		// Event 3: EC-P8R departs the graph and disappears.
+		await expect(node(page, 'EC-P8R')).toBeVisible();
+		await receive.click();
+		await expect(node(page, 'EC-P8R')).toHaveCount(0);
 	});
 });

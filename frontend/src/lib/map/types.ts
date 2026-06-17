@@ -132,3 +132,23 @@ export type Positions = Record<string, XY>;
  *  cardinal flows rank away from the roots in that screen direction; `radial`
  *  fans ranks in concentric rings around the root. */
 export type LayoutDirection = 'LR' | 'RL' | 'TB' | 'BT' | 'radial';
+
+/**
+ * A live update from the server, modelled as the SSE event the real backend will
+ * push (the sandbox replays a scripted list of these — see the fixture). The map
+ * is laid out ONCE on initial load; thereafter the graph only ever changes
+ * through these discrete events, and each is placed incrementally — never a
+ * whole-map re-layout (see the incremental-placement model in design.md).
+ *
+ *   - `add-system`     : a system entered the graph, reached via `anchor` (an
+ *                        existing system). Placed one flow-step out from the
+ *                        anchor, then collisions are resolved across the graph.
+ *   - `add-connection` : a new wormhole between two already-present systems.
+ *   - `remove-system`  : a system left the graph (its edges drop with it).
+ *   - `remove-connection` : a wormhole collapsed.
+ */
+export type MapEvent =
+	| { kind: 'add-system'; system: System; anchor: string; connection: Connection }
+	| { kind: 'add-connection'; connection: Connection }
+	| { kind: 'remove-system'; id: string }
+	| { kind: 'remove-connection'; id: string };

@@ -136,10 +136,16 @@ paraglide i18n. Load functions **forward cookies** to the backend.
   `ConnectionEdgeLabel`, `floating-edge` perimeter-anchored bezier geometry) — the
   theme seam; edges float to the node side facing their neighbour; meaning is
   text, colour decorates.
-- `map/` — map-canvas logic (sandbox): `types` (position-less graph contract),
-  `layout` (hand-rolled BFS seed, no lib), `reconcile` (server ∪ local union +
-  placement overlay), `placement` (swappable `localStorage` placement seam).
-- `fixtures/` — static test/sandbox data (`map-canvas` combined-graph snapshots).
+- `map/` — map-canvas logic (sandbox): `types` (position-less graph contract +
+  `MapEvent` SSE union), `layout` (hand-rolled BFS seed, no lib — the ONE-SHOT
+  initial layout), `reconcile` (server ∪ local existence union only),
+  `place-incoming` (where a node arriving via an SSE event lands — one flow-step
+  from its anchor), `resolve-collisions` (official @xyflow repel, run on drag-stop
+  + after an add). Positions are EPHEMERAL: laid out once on load, placed
+  incrementally per event, never persisted — a refresh re-lays-out (no
+  `localStorage`).
+- `fixtures/` — static test/sandbox data (`map-canvas`: an `initialGraph` +
+  ordered `updateEvents` the sandbox replays as simulated SSE).
 - `paraglide/` — generated i18n (compiled from messages; **run scripts from `frontend/`**,
   not `pnpm --filter`).
 

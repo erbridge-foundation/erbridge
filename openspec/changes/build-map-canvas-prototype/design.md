@@ -14,7 +14,8 @@ EXISTENCE = the combined graph. node/edge existence is a pure function of it,
             render   = reachable(tab.roots, live_connections) ∪ local ghosts
 
 PLACEMENT = pure presentation, ZERO graph weight. layout seed + drag + collision-repel.
-            Persists across session restart (convenience), never graph truth.
+            EPHEMERAL — laid out once on load, placed incrementally per SSE event,
+            never persisted (a refresh re-lays-out). [Fork 1 REVERSED — see below.]
 
 STYLE     = theme. custom svelte-flow node/edge components ARE the theme seam.
 ```
@@ -26,19 +27,24 @@ STYLE     = theme. custom svelte-flow node/edge components ARE the theme seam.
 ## Unifying data flow
 
 ```
-  layoutSeed(graph, dir)                      pure fn, graph → positions     (the FLOOR)
-       │ default
+  INITIAL LOAD: layoutSeed(graph, dir)        pure fn, graph → positions     (one-shot)
+       │ seed nodes once
        ▼
-  pos[id] = saved[id] ?? layoutSeed(g,dir)[id]   persistence OVERLAY          (Fork 1)
+  svelte-flow owns positions (drag mutates them; nothing persists them)
+       ▲
+       │ per SSE event
+  LIVE: placeIncoming(anchorPos, dir) → new node one flow-step out, then
+        resolveCollisions over the whole graph ("let it ripple")            (incremental)
        │
        ▼
-  svelte-flow renders pos + custom node/edge components   meaning never colour-only (Fork 3)
+  custom node/edge components render          meaning never colour-only         (Fork 3)
 ```
 
-- **"Redo layout"** = clear the saved overlay for the active tab, recompute the seed, apply.
-- **Reconcile on graph change** = recompute the union with the new node set:
-  `dropped id → forget saved pos`, `new id → seed`, `kept id → keep saved pos`. Visually
-  seamless because render is always the union.
+- **"Redo layout"** = recompute the seed for the active tab in a new direction and apply it
+  to the live nodes (and update the flow direction future adds step along).
+- **SSE event on graph change** = mutate the existence union, place incrementally:
+  `add-system → placeIncoming + ripple`, `remove → drop node + edges`. No whole-map
+  re-layout. Render is always the union, so a confirmed ghost dedupes seamlessly.
 
 ## Module shape (governed by `sveltekit-node`)
 
@@ -50,11 +56,12 @@ frontend/src/
       SystemNode.svelte                class/sec/static badges (text + colour)
       ConnectionEdge.svelte           wh-type + mass label, EoL ⚠, dash/colour decoration
     map/
-      layout.ts                        hand-rolled BFS seed (L→R / T→B / radial)
-      reconcile.ts                     combined = server ∪ localState; placement overlay
-      placement.ts                     localStorage[mapId] load/save (sandbox backend)
-      types.ts                         fixture/graph contract (System, Connection, Tab…)
-    fixtures/map-canvas.ts             static combined-graph snapshot (the data under test)
+      layout.ts                        hand-rolled BFS seed (L→R / T→B / radial) — one-shot
+      reconcile.ts                     combined = server ∪ localState (existence union only)
+      place-incoming.ts                where an SSE-added node lands (one flow-step from anchor)
+      resolve-collisions.ts            official @xyflow repel (drag-stop + after an add)
+      types.ts                         graph contract + MapEvent SSE union (System, Connection…)
+    fixtures/map-canvas.ts             initialGraph + ordered updateEvents (the data under test)
   routes/maps/_proto/+page.svelte      disposable sandbox; mounts MapCanvas with the fixture
 ```
 
@@ -67,6 +74,14 @@ frontend/src/
   itself, so we own save/restore. Sandbox backend = `localStorage[mapId]`. The *backend*
   (localStorage vs per-user server state) is a Track-2 decision — keep `placement.ts` a thin
   seam so swapping the store later is one module.
+  - **REVERSED in implementation → ephemeral placement (no persistence).** Adopting the
+    Svelte Flow website model (one-shot initial layout + incremental per-event placement)
+    made persistence the wrong default: positions are a transient, locally-arranged view of
+    a live graph, not durable state worth restoring across a refresh. A reload re-lays-out
+    from the server graph; drags live only in svelte-flow's session `nodes`. `placement.ts`
+    and the placement overlay in `reconcile.ts` were deleted; `place-incoming.ts` +
+    `resolve-collisions.ts` replace them. A per-user *saved arrangement* can return later as
+    a deliberate Track-2 feature, but it is no longer the prototype's baseline.
 - **Fork 2 — layout → hand-rolled BFS, no lib.** Graph is root-anchored + shallow; the three
   wireframe layouts are all BFS-from-`tab.roots`. Keeps `@xyflow/svelte` the only new dep.
 - **Fork 3 — a11y → text carries meaning, colour decorates.** Only colour-only hole was edge
@@ -103,17 +118,18 @@ Pulse is decoration — under `prefers-reduced-motion` it drops with no informat
 
 ## SSE simulation
 
-No real SSE. A sandbox "receive update" affordance swaps the fixture's server-state to a
-second snapshot and runs reconcile — demonstrating ghost→reconcile and graph-change
-placement reconciliation without any backend.
+No real SSE. The fixture ships an `initialGraph` (laid out once) plus an ordered list of
+`updateEvents` (`MapEvent[]`). A sandbox "receive update" affordance replays the next event,
+which the canvas applies incrementally — demonstrating ghost→confirm dedupe, incremental
+add placement ("let it ripple"), and removal, all without any backend.
 
 ## Disposability contract
 
 `MapCanvas` (and `$lib/map/*`, fixtures, custom nodes) are real and reusable. `/maps/_proto`
 is throwaway. Convergence path: real `/maps/[slug]/+page.svelte` mounts the same `MapCanvas`,
-swap fixture → loader, swap `placement.ts` store → server/per-user; delete `_proto`. Nothing
-reusable lives in the route. (Minor open: guard `_proto` out of prod or leave it — at
-wormhole scale, leaving it is fine.)
+swap fixture → loader, swap the sandbox `nextEvent` script → a real SSE stream of `MapEvent`s;
+delete `_proto`. Nothing reusable lives in the route. (Minor open: guard `_proto` out of prod
+or leave it — at wormhole scale, leaving it is fine.)
 
 ## Out of scope (Track 2 / future)
 

@@ -12,12 +12,13 @@
  *   - the wildcard `*` tab (shows everything, ignores roots — e.g. eve-scout)
  *   - a seeded ghost living in local state (no server connection reaches it yet)
  *
- * A second server snapshot (`updatedGraph`) drives the simulated-SSE reconcile:
- * it adds a system, removes a system, and confirms the ghost as real server
- * state — see reconcile.ts and the sandbox "receive update" affordance.
+ * An ordered list of SSE-style events (`updateEvents`) drives the simulated
+ * live updates: the map is laid out ONCE from `initialGraph` and thereafter each
+ * "receive update" replays the next event, placed incrementally (no whole-map
+ * re-layout) — see place-incoming.ts and the sandbox "receive update" affordance.
  */
 
-import type { CombinedGraph, Connection, LocalState, System } from '$lib/map/types';
+import type { CombinedGraph, Connection, LocalState, MapEvent, System } from '$lib/map/types';
 
 // ── Systems ────────────────────────────────────────────────────────────────
 // Home is the HS anchor; the chain fans out through every class so the canvas
@@ -165,8 +166,9 @@ export const initialGraph: CombinedGraph = {
 
 /**
  * Local state: a single ghost system the user "added" by hand that no server
- * connection reaches yet. It parks in the layout gutter until `updatedGraph`
- * confirms it as real server state (reconcile drops it from local state then).
+ * connection reaches yet. It parks in the layout gutter until an `updateEvents`
+ * entry confirms it as real server state (the canvas drops it from local state
+ * then, so the union dedupes — no duplicate).
  */
 export const initialLocalState: LocalState = {
 	ghostSystems: [{ id: 'J199999', name: 'J199999', class: 'C2', statics: [] }],
@@ -174,38 +176,46 @@ export const initialLocalState: LocalState = {
 };
 
 /**
- * Second server snapshot for the simulated update. Versus `initialGraph`:
- *   - ADDS  J100007 (a new C4 reached from J100006) — takes the layout seed.
- *   - DROPS EC-P8R and its connection (a departed system) — forgets its placement.
- *   - CONFIRMS the J199999 ghost: it now exists in server state with a real
- *     connection from J100002, so reconcile removes it from local state and it
- *     renders from server state with no flicker/duplicate.
+ * Ordered SSE-style events. The map lays out ONCE from `initialGraph`; each
+ * "receive update" replays the next event, placed incrementally. Together they
+ * exercise the live paths:
+ *   1. ADD a brand-new system (J100007) reached from J100006 — placed one flow-
+ *      step out from its anchor, then collisions ripple across the graph.
+ *   2. CONFIRM the J199999 ghost: it arrives as a real server system with a
+ *      connection from J100002. The canvas drops it from local state (so the
+ *      union dedupes — no duplicate) and re-anchors it to J100002.
+ *   3. REMOVE EC-P8R (a departed system); its edge drops with it.
+ *
+ * Replaying past the end is a no-op (the sandbox button just stops doing
+ * anything once the script is exhausted).
  */
-export const updatedGraph: CombinedGraph = {
-	systems: [
-		...systems.filter((s) => s.id !== 'EC-P8R'),
-		// Ghost confirmed as server truth.
-		{ id: 'J199999', name: 'J199999', class: 'C2', statics: [{ code: 'C1a', dest: 'C1' }] },
-		// Brand-new system — seeds from layout.
-		{ id: 'J100007', name: 'J100007', class: 'C4', statics: [] }
-	],
-	connections: [
-		// Drop the edge that touched the departed EC-P8R.
-		...connections.filter((c) => c.id !== 'c-j5-ecp8r'),
-		{
-			id: 'c-j2-j199999',
-			a: { system: 'J100002', sig: { id: 'O477-801', type: 'O477' } },
-			b: { system: 'J199999', sig: { id: 'XYZ-802', type: 'K162' } },
-			mass: 'fresh',
-			eol: false
-		},
-		{
+export const updateEvents: MapEvent[] = [
+	{
+		kind: 'add-system',
+		system: { id: 'J100007', name: 'J100007', class: 'C4', statics: [] },
+		anchor: 'J100006',
+		connection: {
 			id: 'c-j6-j7',
 			a: { system: 'J100006', sig: { id: 'U210-901', type: 'U210' } },
 			b: { system: 'J100007', sig: { id: 'XYZ-902', type: 'K162' } },
 			mass: 'fresh',
 			eol: false
 		}
-	],
-	tabs: initialGraph.tabs
-};
+	},
+	{
+		// The ghost J199999 is confirmed by the server, arriving with a real
+		// connection from J100002. (Its server copy carries a static the ghost
+		// lacked — server truth wins on the union.)
+		kind: 'add-system',
+		system: { id: 'J199999', name: 'J199999', class: 'C2', statics: [{ code: 'C1a', dest: 'C1' }] },
+		anchor: 'J100002',
+		connection: {
+			id: 'c-j2-j199999',
+			a: { system: 'J100002', sig: { id: 'O477-801', type: 'O477' } },
+			b: { system: 'J199999', sig: { id: 'XYZ-802', type: 'K162' } },
+			mass: 'fresh',
+			eol: false
+		}
+	},
+	{ kind: 'remove-system', id: 'EC-P8R' }
+];

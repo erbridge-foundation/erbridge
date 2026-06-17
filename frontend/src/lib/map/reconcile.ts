@@ -1,29 +1,20 @@
 /**
- * Reconcile — the union and the placement overlay (Fork 1).
+ * Reconcile — the union of server state and local (ghost) state.
  *
  *   combined = server-state ∪ localState
  *   render   = reachable(tab.roots, live connections) ∪ local ghosts
- *   pos[id]  = saved[id] ?? layoutSeed(graph, tab, dir)[id]
  *
- * On a graph change (a simulated SSE update) placement reconciles WITHOUT being
- * graph truth:
- *   - dropped id (left the graph)  → forget its saved position
- *   - new id     (entered)         → take the layout seed
- *   - kept id    (still present)   → keep the saved position
- * And a local-only system the server now confirms is dropped from localState, so
+ * Positions are NOT this module's concern. The map is laid out ONCE on initial
+ * load (`layoutSeed`) and thereafter placed incrementally per SSE event
+ * (`place-incoming.ts`) — there is no persisted placement overlay to reconcile
+ * (Fork 1 reversed: placement is ephemeral, a refresh re-lays-out). This module
+ * only resolves EXISTENCE: who is in the graph right now.
+ *
+ * A local-only system the server later confirms is dropped from localState, so
  * it renders from server state with no duplicate (the union dedupes by id).
  */
 
-import { layoutSeed, renderableSystems } from './layout';
-import type {
-	CombinedGraph,
-	Connection,
-	LayoutDirection,
-	LocalState,
-	Positions,
-	System,
-	Tab
-} from './types';
+import type { CombinedGraph, Connection, LocalState, System } from './types';
 
 /**
  * The union of server state and local state. Server state wins on id collision
@@ -58,49 +49,4 @@ export function dropConfirmedGhosts(server: CombinedGraph, local: LocalState): L
 		ghostSystems: local.ghostSystems.filter((g) => !serverIds.has(g.id)),
 		ghostConnections: local.ghostConnections.filter((c) => !serverConnIds.has(c.id))
 	};
-}
-
-/**
- * The placement overlay for a tab: each rendered node's position is its saved
- * position if present, otherwise the layout seed. Computed over the union graph
- * so ghosts get a (gutter) seed too.
- *
- * `saved` is the tab's persisted positions (placement.loadTab). `seed` defaults
- * to a fresh `layoutSeed`, but callers may pass a precomputed one.
- */
-export function overlayPositions(
-	graph: CombinedGraph,
-	tab: Tab,
-	local: LocalState,
-	saved: Positions,
-	dir: LayoutDirection
-): Positions {
-	// Lay out over the UNION so ghosts (which live in local state, not server
-	// `graph.systems`) get a position too — they park in the gutter.
-	const union = combine(graph, local);
-	const present = renderableSystems(union, tab, local.ghostSystems);
-	const seed = layoutSeed(union, tab, dir, present);
-
-	const out: Positions = {};
-	for (const id of present) {
-		// saved beats seed (survive-restart); a node with no saved pos takes seed.
-		out[id] = saved[id] ?? seed[id];
-	}
-	return out;
-}
-
-/**
- * Reconcile saved placement against a NEW render set: keep saved positions for
- * nodes still present, drop saved positions for nodes that left, and leave new
- * nodes unsaved (they'll take the seed via {@link overlayPositions}). Returns the
- * pruned saved map to persist back.
- */
-export function reconcilePlacement(saved: Positions, present: Set<string>): Positions {
-	const next: Positions = {};
-	for (const [id, pos] of Object.entries(saved)) {
-		if (present.has(id)) next[id] = pos; // kept → keep
-		// departed → forget (simply not copied across)
-	}
-	// new ids: absent from `saved`, so they stay unsaved → seed at overlay time.
-	return next;
 }
