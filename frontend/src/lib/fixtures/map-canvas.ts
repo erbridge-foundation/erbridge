@@ -8,8 +8,8 @@
  *   - every wormhole class C1–C6, every k-space tier HS/LS/NS, and Pochven (P)
  *   - every mass state: fresh / half / critical
  *   - an end-of-life (EoL) connection
- *   - a multi-root tab (rank = min hop across the root set)
- *   - the wildcard `*` tab (shows everything, ignores roots — e.g. eve-scout)
+ *   - a second, disconnected chain anchoring its own single-root tab
+ *   - the wildcard `*` tab (shows everything, ignores the root — e.g. eve-scout)
  *   - a seeded ghost living in local state (no server connection reaches it yet)
  *
  * An ordered list of SSE-style events (`updateEvents`) drives the simulated
@@ -86,6 +86,22 @@ const systems: System[] = [
 	// A Pochven (Triglavian space) exit so the P tier renders too — its own
 	// distinct space type, not NS/LS.
 	{ id: "Krirald", name: "Krirald", class: "P", statics: [] },
+	// A SEPARATE, disconnected small chain (J200001 → J200002), unreachable from
+	// the Home chain. It gives the wildcard `*` tab a second cluster to show and
+	// anchors its own single-root "Outpost" tab. Deliberately tiny — no loops, no
+	// parallel holes — so the second-chain case stays simple.
+	{
+		id: "J200001",
+		name: "J200001",
+		class: "C5",
+		statics: [{ wh_type: "H296", dest: "NS" }],
+	},
+	{
+		id: "J200002",
+		name: "J200002",
+		class: "C2",
+		statics: [{ wh_type: "D845", dest: "HS" }],
+	},
 ];
 
 // ── Connections ──────────────────────────────────────────────────────────────
@@ -185,8 +201,8 @@ const connections: Connection[] = [
 		ttl_remaining_min: 1600,
 		eol: false,
 	},
-	// J100006 → J100007: a fresh C4 hung off the C6, the deeper anchor for the
-	// multi-root "Deep" tab. Named Y683 on the C6 side, K162 on J100007.
+	// J100006 → J100007: a fresh C4 hung off the C6. Named Y683 on the C6 side,
+	// K162 on J100007.
 	{
 		id: "c-j6-j7",
 		a: { system: "J100006", sig: { id: "Y683-701", type: "Y683" } },
@@ -221,21 +237,33 @@ const connections: Connection[] = [
 		ttl_remaining_min: 5,
 		eol: true,
 	},
+	// The lone connection of the disconnected second chain: J200001 → J200002.
+	// Both ends scanned, fresh + stable — a calm baseline edge in its own cluster.
+	{
+		id: "c-j200001-j200002",
+		a: { system: "J200001", sig: { id: "OUT-001", type: "D845" } },
+		b: { system: "J200002", sig: { id: "OUT-002", type: "K162" } },
+		mass: "fresh",
+		ttl_remaining_min: 1300,
+		eol: false,
+	},
 ];
 
 /**
- * The home tab is rooted at the home wormhole J100001 (a typical wormhole home,
- * with k-space hanging off it); the multi-root tab is rooted at the two deep
- * systems (J100004 + J100006) to exercise min-hop rank; the wildcard tab shows
- * everything regardless of reachability (origin-filter UX deferred to Track 2).
+ * Each tab is anchored at a SINGLE root (multi-root was dropped — a new root just
+ * means a new tab). The home tab roots at the home wormhole J100001 (k-space
+ * hanging off it); the "Outpost" tab roots at J200001, the head of the separate
+ * disconnected chain; the wildcard tab shows everything regardless of
+ * reachability — so it's the one place both chains appear at once (origin-filter
+ * UX deferred to Track 2).
  */
 export const initialGraph: CombinedGraph = {
 	systems,
 	connections,
 	tabs: [
-		{ id: "home", label: "Home", roots: ["J100001"] },
-		{ id: "deep", label: "Deep (multi-root)", roots: ["J100004", "J100006"] },
-		{ id: "all", label: "*", roots: [], isWildcard: true },
+		{ id: "home", label: "Home", root: "J100001" },
+		{ id: "outpost", label: "Outpost", root: "J200001" },
+		{ id: "all", label: "*", root: "", isWildcard: true },
 	],
 };
 

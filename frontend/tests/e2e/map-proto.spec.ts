@@ -7,7 +7,7 @@
  *   - the position-less fixture renders as nodes + edges
  *   - dragging a node moves it (positions are session-only — ephemeral)
  *   - a reload RE-LAYS-OUT (a dragged position does NOT survive — no persistence)
- *   - "redo layout" reseeds positions from the roots
+ *   - "redo layout" reseeds positions from the root
  *   - "receive update" replays scripted SSE events, placing each incrementally:
  *     a new system is added, and a local ghost is confirmed into a real node
  *

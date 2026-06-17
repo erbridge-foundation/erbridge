@@ -196,14 +196,16 @@ export function k162End(conn: Connection): 'a' | 'b' | null {
 	return null; // both ends unknown → direction undetermined
 }
 
-/** A view onto the combined graph: a named tab anchored at one or more roots.
- *  Render = systems reachable from `roots` over live connections. The wildcard
- *  tab (`isWildcard`) shows everything regardless of roots (e.g. eve-scout). */
+/** A view onto the combined graph: a named tab anchored at a single root.
+ *  Render = systems reachable from `root` over live connections. A new root
+ *  system means a new tab — multi-root was dropped as unnecessary. The wildcard
+ *  tab (`isWildcard`) shows everything regardless of `root` (e.g. eve-scout);
+ *  its `root` is ignored (conventionally empty). */
 export interface Tab {
 	id: string;
 	label: string;
-	/** Root SET — multi-root is first-class. Empty + `isWildcard` ⇒ show all. */
-	roots: string[];
+	/** The single anchor system. Ignored when `isWildcard`. */
+	root: string;
 	isWildcard?: boolean;
 }
 

@@ -2,7 +2,7 @@
  * Reconcile — the union of server state and local (ghost) state.
  *
  *   combined = server-state ∪ localState
- *   render   = reachable(tab.roots, live connections) ∪ local ghosts
+ *   render   = reachable(tab.root, live connections) ∪ local ghosts
  *
  * Positions are NOT this module's concern. The map is laid out ONCE on initial
  * load (`layoutSeed`) and thereafter placed incrementally per SSE event

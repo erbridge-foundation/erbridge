@@ -5,7 +5,7 @@
  * FLOOR the placement overlay sits on (`pos[id] = saved[id] ?? seed[id]`). The
  * graph carries no coordinates; this is where they come from.
  *
- *   rank(node)    = min BFS hop distance from the nearest system in `tab.roots`
+ *   rank(node)    = min BFS hop distance from `tab.root`
  *   sibling(node) = index among nodes sharing a rank, ordered by the barycenter
  *                   heuristic (see `orderRanks`) to reduce edge crossings — a
  *                   child seats beside its parent rather than in raw input order.
@@ -13,9 +13,9 @@
  *   LR     : x = rank * DX,    y = sibling * DY
  *   TB     : x = sibling * DX, y = rank * DY
  *
- * Systems not reachable from the roots (a ghost the user added that no live
+ * Systems not reachable from the root (a ghost the user added that no live
  * connection reaches, or a disconnected fragment) are PARKED in a gutter rank so
- * they stay visible but read as clearly-unreached. The wildcard tab has no roots,
+ * they stay visible but read as clearly-unreached. The wildcard tab has no root,
  * so *every* system parks-or-ranks from a synthetic seed: we rank from the whole
  * node set's first element to keep it deterministic and connected-looking.
  */
@@ -47,10 +47,11 @@ function buildAdjacency(graph: CombinedGraph, present: Set<string>): Map<string,
 }
 
 /**
- * Multi-source BFS: rank = min hop across the root set. Returns a map of
- * id → rank for every reachable node. Unreached nodes are absent (parked later).
- * Deterministic: roots seed rank 0 in `roots` order; the queue preserves
- * insertion order so equal-rank discovery order is stable.
+ * BFS: rank = min hop from the seed(s). Returns a map of id → rank for every
+ * reachable node; unreached nodes are absent (parked later). Takes a list because
+ * it's a multi-source BFS, but a normal tab passes exactly one root (the wildcard
+ * passes a single synthetic seed). Deterministic: seeds get rank 0 in list order;
+ * the queue preserves insertion order so equal-rank discovery is stable.
  */
 function bfsRanks(adj: Map<string, string[]>, roots: string[]): Map<string, number> {
 	const rank = new Map<string, number>();
@@ -102,7 +103,7 @@ function positionFor(dir: LayoutDirection, rank: number, sibling: number): XY {
  * Seed positions for the systems of `graph` as viewed through `tab`, in the
  * given direction. The caller decides which systems are *present* (reachable +
  * ghosts) and passes them; everything in `present` gets a position — ranked if
- * reachable from the roots, parked in the gutter otherwise.
+ * reachable from the root, parked in the gutter otherwise.
  */
 export function layoutSeed(
 	graph: CombinedGraph,
@@ -115,9 +116,13 @@ export function layoutSeed(
 	// Wildcard / root-less tabs have no anchor: rank from the first present system
 	// (stable by `graph.systems` order) so the layout is still connected-looking
 	// and deterministic rather than all-gutter.
+	// A normal tab seeds from its single root; the wildcard / root-less tab has no
+	// anchor, so we rank from the first present system (stable by `graph.systems`
+	// order) to keep the layout connected-looking and deterministic. `bfsRanks`
+	// still takes a list (it's a multi-source BFS) — we just feed it one seed.
 	const roots =
-		tab.roots.length > 0
-			? tab.roots
+		!tab.isWildcard && tab.root
+			? [tab.root]
 			: graph.systems.filter((s) => present.has(s.id)).slice(0, 1).map((s) => s.id);
 
 	const rank = bfsRanks(adj, roots);
@@ -245,7 +250,7 @@ function placeGutter(dir: LayoutDirection, gutter: string[], out: Positions): vo
 }
 
 /**
- * The systems that RENDER for a tab: those reachable from `tab.roots` over live
+ * The systems that RENDER for a tab: those reachable from `tab.root` over live
  * connections, plus any ghosts (which park in the gutter). The wildcard tab
  * renders every system. Existence is a pure function of the graph — NEVER of
  * placement. Returned as a Set of ids for layout/reconcile to consume.
@@ -262,7 +267,7 @@ export function renderableSystems(
 	} else {
 		const present = new Set(graph.systems.map((s) => s.id));
 		const adj = buildAdjacency(graph, present);
-		const reach = bfsRanks(adj, tab.roots); // reachable set = keys of the rank map
+		const reach = bfsRanks(adj, [tab.root]); // reachable set = keys of the rank map
 		for (const id of reach.keys()) ids.add(id);
 	}
 

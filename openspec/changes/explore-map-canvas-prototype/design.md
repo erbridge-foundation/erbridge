@@ -104,7 +104,7 @@ cut fields recorded as deliberately-cut, not forgotten.
 EXISTENCE   = the combined graph. node/edge existence is a pure function of it,
               NEVER derived from placement.
               combined = server-state  ∪  localState
-              render   = reachable(tab.roots, live_connections) ∪ local ghosts
+              render   = reachable(tab.root, live_connections) ∪ local ghosts
 
 PLACEMENT   = pure presentation, ZERO graph weight. layout preference (one-shot
               seed) + drag + collision-repel. Persistence = OPEN (fork A/B).
@@ -141,11 +141,17 @@ The one rule that keeps interactions honest:
   server state).
 
 - **Tabs are local browser state, NOT persisted server-side** (matches wireframe).
-  A tab = a root-set filter over the shared connection graph.
+  A tab = a root filter over the shared connection graph.
 
-- **Tabs are multi-root.** `tab.roots` is a SET. e.g. tab_b roots off {J123456, Thera}.
-  Confirms the "1..N roots" direction. Plus a **wildcard `*` tab** = all systems with a
-  live mapped connection.
+- **Tabs are SINGLE-ROOT** (REVISED 2026-06-17 — was multi-root). `tab.root` is one
+  system id, not a set. Multi-root was dropped as unnecessary Tripwire-flavoured
+  complexity: wanting a second root just means opening another tab, and the layout was
+  handling a multi-root rank poorly. A **wildcard `*` tab** (no root, `isWildcard`) is the
+  one place multiple chains appear together — it shows every system with a live mapped
+  connection and synthesises a layout seed from the first present system (anything
+  unreachable from it, e.g. a disconnected second chain, parks in the gutter).
+  - *Superseded:* the earlier "`tab.roots` is a SET / 1..N roots / min-hop rank across the
+    root set" direction (and its layout test + fixture multi-root "Deep" tab) is gone.
 
 - **eve-scout (Thera/Turnur) is merged BACKEND-side**, not a render-time client merge.
   A backend job polls `https://api.eve-scout.com/v2/public/signatures` and merges into
@@ -189,9 +195,9 @@ A snapshot of the combined graph, two layers kept strictly separate:
 ```
 server-state:  { systems:     [{ id, class, effect, statics, ... }],
                  connections: [{ a, b, origin, mass, eol_at, sig_a, sig_b, ... }],
-                 roots-per-tab }
+                 single-root-per-tab }
 localState:    starts empty (or one seeded ghost to demo right-click-add)
-render = reachable(roots, live_connections) ∪ localState
+render = reachable(tab.root, live_connections) ∪ localState
 ```
 
 NO positions in the fixture. SSE is *simulated* (a "receive update" button triggers
@@ -224,7 +230,7 @@ The three canvas forks are closed. Implementable change: **`build-map-canvas-pro
 - **Fork 2 — layout: RESOLVED → hand-roll BFS + barycenter ordering (no lib).**
   svelte-flow has NO built-in auto-layout (verified — *"we believe you know your app's
   requirements best… choose the best tool"*; it renders positions you give it). Our graph
-  is root-anchored (`tab.roots`) and shallow: `rank = BFS hops from roots`; L→R
+  is root-anchored (`tab.root`, single) and shallow: `rank = BFS hops from the root`; L→R
   `x=rank,y=sibling`; T→B swaps (RL/BT mirror). **`@xyflow/svelte` stays the ONLY map dep.**
 
   - **ELK.js spiked then REJECTED (2026-06-17).** Tried `elkjs` `layered` for crossing

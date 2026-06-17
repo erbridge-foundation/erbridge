@@ -63,12 +63,11 @@
 	// svelte-ignore state_referenced_locally
 	let activeTabId = $state(serverState.tabs[0]?.id ?? '');
 	const activeTab = $derived<Tab>(
-		tabs.find((t) => t.id === activeTabId) ?? tabs[0] ?? { id: '', label: '', roots: [] }
+		tabs.find((t) => t.id === activeTabId) ?? tabs[0] ?? { id: '', label: '', root: '' }
 	);
 
 	/** The union graph (server ∪ local). Existence truth for the active tab. */
 	const union = $derived(combine(graph, localState));
-	const rootSet = $derived(new Set(activeTab.roots));
 
 	// The map's flow direction. Set by the one-shot initial layout and by a
 	// "redo layout" action; it tells `placeIncoming` which way a new node steps.
@@ -215,7 +214,7 @@
 				id: s.id,
 				type: 'system',
 				position: seedPos[s.id] ?? { x: 0, y: 0 },
-				data: { system: s, isRoot: rootSet.has(s.id), isGhost: ghostIds.has(s.id) }
+				data: { system: s, isRoot: s.id === activeTab.root, isGhost: ghostIds.has(s.id) }
 			}))
 	);
 	const desiredEdges = $derived.by<Edge[]>(() => {
@@ -282,11 +281,11 @@
 
 	// The system the intel sections describe = the canvas selection. Svelte Flow
 	// flips `node.selected` on click (we bind `nodes`), so we read it back here;
-	// with nothing selected we fall back to the active tab's first root.
+	// with nothing selected we fall back to the active tab's root.
 	const selectedId = $derived(nodes.find((n) => n.selected)?.id);
 	const selectedSystem = $derived(
 		union.systems.find((s) => s.id === selectedId) ??
-			union.systems.find((s) => s.id === activeTab.roots[0]) ??
+			union.systems.find((s) => s.id === activeTab.root) ??
 			union.systems[0] ??
 			null
 	);

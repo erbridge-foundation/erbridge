@@ -12,39 +12,39 @@ superseded.
 
 ### Requirement: Canvas renders a position-less combined graph
 
-`MapCanvas` SHALL accept a combined graph (`{ systems, connections, roots-per-tab }`) that
-carries **no node coordinates** and render it via svelte-flow. Node and edge existence SHALL
-be a pure function of the graph (reachability from `tab.roots` over live connections),
+`MapCanvas` SHALL accept a combined graph (`{ systems, connections, single-root-per-tab }`)
+that carries **no node coordinates** and render it via svelte-flow. Node and edge existence
+SHALL be a pure function of the graph (reachability from `tab.root` over live connections),
 NEVER derived from placement. Node positions SHALL be supplied by the layout seed and/or
 saved placement, not read from the graph.
 
 #### Scenario: Fixture with no coordinates renders nodes and edges
 - **WHEN** the sandbox route `/maps/_proto` mounts `MapCanvas` with the static fixture (which contains no node positions)
-- **THEN** every system reachable from the active tab's roots renders as a node, and every live connection between rendered systems renders as an edge
+- **THEN** every system reachable from the active tab's root renders as a node, and every live connection between rendered systems renders as an edge
 
 #### Scenario: Existence is independent of placement
 - **WHEN** a node is dragged to any position (or its saved position is cleared)
 - **THEN** the set of rendered nodes and edges is unchanged — only its on-screen position moves
 
-### Requirement: One-shot hand-rolled layout seeds positions from tab roots
+### Requirement: One-shot hand-rolled layout seeds positions from the tab root
 
-The canvas SHALL compute seed positions by BFS rank (hop distance from the active tab's root
-set), with left→right, top→bottom, and radial variants selectable as a one-shot "redo
-layout" action. Layout SHALL be deterministic (same graph + direction → same positions) and
-SHALL use no external layout library. There is no persistent layout mode — applying a layout
-is a one-shot action after which the map is user-positioned.
+The canvas SHALL compute seed positions by BFS rank (hop distance from the active tab's
+single root), with left→right, right→left, top→bottom, and bottom→top variants selectable as
+a one-shot "redo layout" action. Layout SHALL be deterministic (same graph + direction → same
+positions) and SHALL use no external layout library. There is no persistent layout mode —
+applying a layout is a one-shot action after which the map is user-positioned.
 
 #### Scenario: Redo layout reseeds positions
 - **WHEN** the user has dragged nodes and then selects a layout option (e.g. left→right)
-- **THEN** the saved placement for the active tab is cleared and all nodes are repositioned by BFS rank from the roots
+- **THEN** the saved placement for the active tab is cleared and all nodes are repositioned by BFS rank from the root
 
 #### Scenario: Layout is deterministic
 - **WHEN** the same layout direction is applied twice to the same graph
 - **THEN** the resulting positions are identical
 
-#### Scenario: Multi-root tab ranks from the nearest root
-- **WHEN** the active tab has more than one root system
-- **THEN** each node's rank is its minimum hop distance across the root set
+#### Scenario: A new root means a new tab (no multi-root)
+- **WHEN** a second root system is wanted on the map
+- **THEN** it is added as its own single-root tab — a tab anchors at exactly one root, and the wildcard `*` tab is the place where multiple chains appear together
 
 ### Requirement: Placement is ephemeral and reconciles in-place on graph change
 
