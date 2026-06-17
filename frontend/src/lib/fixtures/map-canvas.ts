@@ -73,6 +73,12 @@ const systems: System[] = [
 		class: "C6",
 		statics: [{ wh_type: "V911", dest: "C6" }],
 	},
+	{
+		id: "J100007",
+		name: "J100007",
+		class: "C4",
+		statics: [{ wh_type: "Y683", dest: "C4" }],
+	},
 	// A low-sec exit (reached via J100003's LS static) and a null-sec exit
 	// (reached via J100005's NS static) so HS/LS/NS all render.
 	{ id: "Amamake", name: "Amamake", class: "LS", statics: [] },
@@ -179,13 +185,24 @@ const connections: Connection[] = [
 		ttl_remaining_min: 1600,
 		eol: false,
 	},
-	// ── Dual connections (two distinct wormholes between the same pair) ──────────
-	// J100002 ↔ J100003 already has c-j2-j3; add a second, independent hole so the
-	// canvas shows two parallel edges between one pair.
+	// J100006 → J100007: a fresh C4 hung off the C6, the deeper anchor for the
+	// multi-root "Deep" tab. Named Y683 on the C6 side, K162 on J100007.
 	{
-		id: "c-j2-j3-b",
-		a: { system: "J100002", sig: { id: "NOP-701", type: "Z142" } },
-		b: { system: "J100003", sig: { id: "QRS-702", type: "K162" } },
+		id: "c-j6-j7",
+		a: { system: "J100006", sig: { id: "Y683-701", type: "Y683" } },
+		b: { system: "J100007", sig: { id: "K162-702", type: "K162" } },
+		mass: "fresh",
+		ttl_remaining_min: 1400,
+		eol: false,
+	},
+	// ── Dual connections (two distinct wormholes between the same pair) ──────────
+	// A SECOND, independent hole between J100006 ↔ J100007 (alongside c-j6-j7), so
+	// the canvas shows two parallel edges bowed apart for exactly one pair — kept
+	// away from the busier core so the encoding demo stays readable.
+	{
+		id: "c-j6-j7-b",
+		a: { system: "J100006", sig: { id: "NOP-801", type: "Z142" } },
+		b: { system: "J100007", sig: { id: "QRS-802", type: "K162" } },
 		mass: "half",
 		ttl_remaining_min: 1100,
 		eol: false,
@@ -237,7 +254,7 @@ export const initialLocalState: LocalState = {
  * Ordered SSE-style events. The map lays out ONCE from `initialGraph`; each
  * "receive update" replays the next event, placed incrementally. Together they
  * exercise the live paths:
- *   1. ADD a brand-new system (J100007) reached from J100006 — placed one flow-
+ *   1. ADD a brand-new system (J100008) reached from J100006 — placed one flow-
  *      step out from its anchor, then collisions ripple across the graph.
  *   2. CONFIRM the J199999 ghost: it arrives as a real server system with a
  *      connection from J100002. The canvas drops it from local state (so the
@@ -250,12 +267,12 @@ export const initialLocalState: LocalState = {
 export const updateEvents: MapEvent[] = [
 	{
 		kind: "add-system",
-		system: { id: "J100007", name: "J100007", class: "C4", statics: [] },
+		system: { id: "J100008", name: "J100008", class: "C4", statics: [] },
 		anchor: "J100006",
 		connection: {
-			id: "c-j6-j7",
+			id: "c-j6-j8",
 			a: { system: "J100006", sig: { id: "U210-901", type: "U210" } },
-			b: { system: "J100007", sig: { id: "XYZ-902", type: "K162" } },
+			b: { system: "J100008", sig: { id: "XYZ-902", type: "K162" } },
 			mass: "fresh",
 			ttl_remaining_min: 1440,
 			eol: false,

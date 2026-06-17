@@ -193,9 +193,9 @@ test.describe('/maps/_proto', () => {
 		await expect(node(page, 'J199999')).toBeVisible();
 		await expect(page.getByText('unconfirmed')).toBeVisible();
 
-		// Event 1: a brand-new system (J100007) is added, reached from J100006.
+		// Event 1: a brand-new system (J100008) is added, reached from J100006.
 		await receive.click();
-		await expect(node(page, 'J100007')).toBeVisible();
+		await expect(node(page, 'J100008')).toBeVisible();
 		// The ghost is still unconfirmed — this event didn't touch it.
 		await expect(page.getByText('unconfirmed')).toBeVisible();
 
