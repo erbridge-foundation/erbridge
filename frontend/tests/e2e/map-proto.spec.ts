@@ -236,7 +236,10 @@ test.describe('/maps/_proto', () => {
 		await expect(legend.getByRole('heading', { name: /connection mass/i })).toBeVisible();
 		await expect(legend.getByRole('heading', { name: /time to live/i })).toBeVisible();
 		// Meaning is text beside each swatch (a11y rule): the mass labels are present.
-		await expect(legend.getByText('fresh', { exact: true })).toBeVisible();
+		// Scope to the mass group's row list — "stable" is shared with the TTL group's
+		// calm tier, so an unscoped getByText would match two elements.
+		const massRows = legend.locator('.rows').first();
+		await expect(massRows.getByText('stable', { exact: true })).toBeVisible();
 
 		// Collapse again.
 		await page.getByRole('button', { name: /hide legend/i }).click();

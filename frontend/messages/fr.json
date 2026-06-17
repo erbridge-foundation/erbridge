@@ -380,7 +380,7 @@
 	"map_proto_tabs_label": "Vues de la carte",
 	"map_proto_root": "racine",
 	"map_proto_ghost": "non confirmé",
-	"map_proto_mass_fresh": "frais",
+	"map_proto_mass_fresh": "stable",
 	"map_proto_mass_half": "moitié",
 	"map_proto_mass_critical": "critique",
 	"map_proto_eol": "fin de vie",

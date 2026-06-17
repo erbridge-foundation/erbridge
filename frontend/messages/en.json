@@ -380,7 +380,7 @@
 	"map_proto_tabs_label": "Map views",
 	"map_proto_root": "root",
 	"map_proto_ghost": "unconfirmed",
-	"map_proto_mass_fresh": "fresh",
+	"map_proto_mass_fresh": "stable",
 	"map_proto_mass_half": "half",
 	"map_proto_mass_critical": "critical",
 	"map_proto_eol": "end of life",
