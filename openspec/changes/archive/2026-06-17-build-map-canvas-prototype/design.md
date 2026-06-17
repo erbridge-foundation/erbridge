@@ -123,6 +123,14 @@ No real SSE. The fixture ships an `initialGraph` (laid out once) plus an ordered
 which the canvas applies incrementally — demonstrating ghost→confirm dedupe, incremental
 add placement ("let it ripple"), and removal, all without any backend.
 
+> **Connection = propagation group (transport unit).** A connection travels and renders as
+> one composite triple `sig_a? · conn · sig_b?` (sigs independently nullable); direction is
+> intrinsic to it (the typed sig orients the group, shown on the pill — no endpoint
+> arrowhead) and SSE delivers/replaces the WHOLE group by `conn.id` (whole-replace, no
+> deltas). Captured 2026-06-17 in the explore ledger ("propagation group" decision); NOT yet
+> implemented — it's its own future change spanning the SSE contract, `reconcile.ts`, and the
+> edge render + arrowhead removal.
+
 ## Disposability contract
 
 `MapCanvas` (and `$lib/map/*`, fixtures, custom nodes) are real and reusable. `/maps/_proto`

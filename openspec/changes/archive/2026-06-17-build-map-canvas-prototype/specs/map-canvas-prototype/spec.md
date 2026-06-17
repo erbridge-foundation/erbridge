@@ -42,26 +42,27 @@ is a one-shot action after which the map is user-positioned.
 - **WHEN** the active tab has more than one root system
 - **THEN** each node's rank is its minimum hop distance across the root set
 
-### Requirement: Placement persists across session restart and reconciles on graph change
+### Requirement: Placement is ephemeral and reconciles in-place on graph change
 
-Manual node positions ("nudges") SHALL persist across a session restart (sandbox backend:
-`localStorage` keyed by map). On load, a node's position SHALL be its saved position if one
-exists, otherwise the layout seed. Persisted placement is a personal convenience cache and
-SHALL NEVER be treated as graph truth. When the graph changes, placement SHALL reconcile:
-nodes that left the graph forget their saved position, new nodes take the layout seed, and
-nodes that remain keep their saved position.
+Node positions SHALL be ephemeral: the map is laid out ONCE on load (layout seed), and a
+refresh re-lays-out from scratch — manual nudges and incremental placements are NOT
+persisted (Fork 1 was REVERSED in implementation; see the change design). Placement SHALL
+NEVER be treated as graph truth. While the session is live, positions are owned by
+svelte-flow (drag mutates them); when the graph changes via an event, placement reconciles
+in-place: a new node takes its incrementally-computed slot, nodes that remain keep their
+current (live) position, and a removed node drops with its edges.
 
-#### Scenario: Nudges survive a reload
+#### Scenario: A reload re-lays-out (nudges do not survive)
 - **WHEN** the user drags nodes and then reloads the sandbox route
-- **THEN** each dragged node reappears at its saved position rather than its layout seed
+- **THEN** the map is laid out afresh from the seed; the dragged positions are not restored
 
-#### Scenario: New node takes the seed, kept nodes keep their position
-- **WHEN** a graph update adds a system while existing dragged nodes remain in the graph
-- **THEN** the new system is placed by the layout seed and the existing dragged nodes keep their saved positions
+#### Scenario: New node placed incrementally, kept nodes keep their live position
+- **WHEN** a graph event adds a system while existing (possibly dragged) nodes remain
+- **THEN** the new system is placed one flow-step from its anchor (then collisions ripple) and the existing nodes keep their current positions
 
-#### Scenario: Departed node is forgotten
-- **WHEN** a graph update removes a system that had a saved position
-- **THEN** the node is no longer rendered and its saved position is not retained
+#### Scenario: Departed node drops with its edges
+- **WHEN** a graph event removes a system
+- **THEN** the node and its connected edges are no longer rendered
 
 ### Requirement: Map state is never encoded by colour alone
 
