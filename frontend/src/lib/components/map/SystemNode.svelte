@@ -76,21 +76,9 @@
 		</ul>
 	{/if}
 
-	<!-- Selected: the node grows and reveals extra detail in-place. Same data the
-	     sidebar's System Intel shows, surfaced on the node so the focus reads at a
-	     glance. (Security is a placeholder until the chain-map model supplies it.) -->
-	{#if selected}
-		<dl class="detail">
-			<dt>{m.map_proto_intel_security()}</dt>
-			<dd>—</dd>
-			<dt>{m.map_proto_intel_statics()}</dt>
-			<dd>
-				{#if system.statics.length}
-					{system.statics.map((s) => s.dest).join(', ')}
-				{:else}—{/if}
-			</dd>
-		</dl>
-	{/if}
+	<!-- Selection is shown ONLY by the highlight ring (see .selected below): the
+	     node keeps its size and content so manual alignment isn't disturbed. The
+	     richer per-system detail lives in the sidebar's System Intel section. -->
 
 	<Handle type="source" position={Position.Right} id="right" />
 	<Handle type="source" position={Position.Bottom} id="bottom" />
@@ -131,28 +119,9 @@
 	.system-node.selected {
 		box-shadow: 0 0 0 2px var(--violet);
 		border-color: var(--violet);
-		/* Grow the focused node so the revealed detail has room and the selection
-		   reads at a glance. */
-		min-width: 150px;
+		/* No size change on selection — only the ring — so a selected node still
+		   lines up with its edges/neighbours. Detail goes to the sidebar intel. */
 		z-index: 1;
-	}
-
-	/* Extra detail revealed only on the selected node. */
-	.detail {
-		display: grid;
-		grid-template-columns: auto 1fr;
-		gap: 2px 10px;
-		margin: 0.4rem 0 0;
-		padding-top: 0.4rem;
-		border-top: 1px solid var(--space-700);
-		font-size: 0.6875rem;
-	}
-	.detail dt {
-		color: var(--slate-500);
-	}
-	.detail dd {
-		margin: 0;
-		color: var(--slate-300);
 	}
 
 	header {

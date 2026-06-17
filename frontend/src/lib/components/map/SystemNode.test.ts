@@ -65,17 +65,17 @@ describe('SystemNode encoding (meaning never colour-only)', () => {
 		expect(container.querySelector('.system-node.ghost')).not.toBeNull();
 	});
 
-	it('does not show the expanded detail block when not selected', () => {
+	it('is not marked selected when not selected', () => {
 		const { container } = renderNode({ system: sys(), isRoot: false, isGhost: false });
 		expect(container.querySelector('.system-node.selected')).toBeNull();
-		expect(container.querySelector('.detail')).toBeNull();
 	});
 
-	it('grows and reveals extra detail when selected', () => {
+	it('marks selection with the ring only — no size change or extra detail', () => {
 		const { container } = renderNode({ system: sys(), isRoot: false, isGhost: false }, true);
+		// Selection is the highlight ring; the node keeps its size/content (detail
+		// lives in the sidebar intel) so it stays aligned with its edges.
 		expect(container.querySelector('.system-node.selected')).not.toBeNull();
-		// The detail list appears, surfacing the same fields as the sidebar intel.
-		expect(container.querySelector('.detail')).not.toBeNull();
-		expect(screen.getByText('Security')).toBeInTheDocument();
+		expect(container.querySelector('.detail')).toBeNull();
+		expect(screen.queryByText('Security')).toBeNull();
 	});
 });
