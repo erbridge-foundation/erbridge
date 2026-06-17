@@ -540,6 +540,9 @@
 				     child that yields, so the pinned legend below expands upward. -->
 				<div class="sidebar-scroll">
 				<header class="sidebar-head">
+					<!-- Collapse all: a chevron pointing UP to a bar below it (sections fold
+					     up to a line). The bar is an unmistakable horizontal element, so it
+					     never reads as an "X" the way two bare chevrons can. -->
 					<button
 						type="button"
 						class="icon-btn"
@@ -548,8 +551,22 @@
 						onclick={collapseAll}
 						disabled={locked}
 					>
-						⊟
+						<svg
+							class="head-icon"
+							viewBox="0 0 16 16"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="1.8"
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							aria-hidden="true"
+						>
+							<path d="M4 7l4-4 4 4" />
+							<path d="M4 12h8" />
+						</svg>
 					</button>
+					<!-- Expand all: a chevron pointing DOWN from a bar above it (sections
+					     unfold down from a line). -->
 					<button
 						type="button"
 						class="icon-btn"
@@ -558,7 +575,19 @@
 						onclick={expandAll}
 						disabled={locked}
 					>
-						⊞
+						<svg
+							class="head-icon"
+							viewBox="0 0 16 16"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="1.8"
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							aria-hidden="true"
+						>
+							<path d="M4 4h8" />
+							<path d="M4 9l4 4 4-4" />
+						</svg>
 					</button>
 					<button
 						type="button"
@@ -826,6 +855,10 @@
 	}
 	.icon-btn:hover:not(:disabled) {
 		background: var(--space-700);
+	}
+	.head-icon {
+		width: 1.05rem;
+		height: 1.05rem;
 	}
 	/* The lock toggle when engaged: accent border so the locked state is visible. */
 	.icon-btn.active {
