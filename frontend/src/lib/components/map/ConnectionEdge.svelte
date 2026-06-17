@@ -166,7 +166,7 @@
 		(d.showMass ?? true) || (d.showWhType ?? true) || enc.alert.level !== 'none'
 	);
 
-	// Direction is shown by a single → glyph in its OWN label just outside the named
+	// Direction is shown by a single ➤ glyph in its OWN label just outside the named
 	// ("from"/non-K162) end, rotated to point down-line toward the K162 end. No
 	// endpoint arrowhead. `arrowTo` is the K162 end → the named end is the other one;
 	// undetermined (arrowTo null) → no glyph.
@@ -213,15 +213,15 @@
 			: ''}"
 	/>
 
-	<!-- Direction glyph: a single → in its own label just outside the named ("from")
-	     end, rotated to point down-line toward the K162 end. Absent when direction is
-	     undetermined. -->
+	<!-- Direction glyph: a chunky filled ➤ on a dark backing disc, in its own label
+	     just outside the named ("from") end, rotated to point down-line toward the
+	     K162 end. Absent when direction is undetermined. -->
 	{#if namedEnd != null}
 		{@const dx = namedEnd === 'a' ? geom.dirSourceX : geom.dirTargetX}
 		{@const dy = namedEnd === 'a' ? geom.dirSourceY : geom.dirTargetY}
 		<EdgeLabel x={dx} y={dy} transparent>
 			<span class="dir-glyph" style="transform: rotate({dirAngle}deg);" aria-hidden="true"
-				>→</span
+				>➤</span
 			>
 		</EdgeLabel>
 	{/if}
@@ -315,18 +315,34 @@
 		pointer-events: none;
 	}
 
-	/* Direction glyph: a large → just outside the named end, rotated (inline style)
-	   to lie along the line pointing toward the K162 end. Bright, in its own label —
-	   the sole direction cue now the endpoint arrowhead is gone. */
+	/* Direction glyph: a chunky filled ➤ just outside the named end, rotated (inline
+	   style) to lie along the line pointing toward the K162 end. The sole direction
+	   cue now the endpoint arrowhead is gone. It rides ON the thick stroke, so it was
+	   getting lost against it (faint, sitting on the line) — give it a dark backing
+	   disc to lift it off the stroke and a heavier filled glyph so it out-weighs the
+	   line. The disc is a sized box with a radial centre that fades to transparent,
+	   so it dims the stroke under the glyph without printing a hard circle outline. */
 	.dir-glyph {
-		display: inline-block;
-		font-size: 20px;
-		font-weight: 700;
+		display: grid;
+		place-items: center;
+		width: 22px;
+		height: 22px;
+		/* Soft dark disc behind a chunky filled glyph: lifts it off the thick stroke
+		   it rides on (so the arrow doesn't merge into the line) without printing a
+		   hard outline where the glyph instead sits beside the line — the radial fade
+		   dissolves the disc edge into the dot-grid background. The sky drop-shadow
+		   gives the arrow its own halo so it out-weighs the stroke either way. */
+		background: radial-gradient(
+			circle,
+			var(--space-950) 0%,
+			var(--space-950) 50%,
+			rgb(2 6 23 / 0.55) 70%,
+			transparent 100%
+		);
+		font-size: 19px;
 		line-height: 1;
 		color: var(--sky);
+		filter: drop-shadow(0 0 2px rgb(2 6 23 / 0.9));
 		pointer-events: none;
-		text-shadow:
-			0 0 3px var(--space-950),
-			0 0 3px var(--space-950);
 	}
 </style>
