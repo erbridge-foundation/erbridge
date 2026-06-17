@@ -256,6 +256,94 @@ None exist in `app.css` yet (`--violet` now DOES exist — ledger was stale):
 - security colours `--hs:#4ade80 --ls:#facc15 --ns:#fca5a5`
 - mass colours `--mass-fresh:#22c55e --mass-half:#f59e0b --mass-critical:#ef4444`
 
+## DECISION (2026-06-17): the connection is a "propagation group" — the unit of transport, identity, and render
+
+Emerged while solving edge **direction** legibility for an ELK left-to-right layout (the
+arrowhead-at-a-shared-perimeter-point ambiguity — see the rejected approaches below). The
+resolution reframes what an edge *is*.
+
+**A connection renders and travels as one composite triple:**
+
+```
+  [ sig_a? ] ——— conn ——— [ sig_b? ]      (sig_a and sig_b each independently nullable)
+```
+
+The two endpoint sig **pills** and the line between them are ONE thing — a *propagation
+group* — not a line that happens to have labels parked near its ends. This matches the
+data model we already have (`Connection = { a:{system,sig}, b:{system,sig}, … }`,
+`sig: Signature | null`); the shift is in how we render/reason, and in naming the wire
+contract.
+
+### Direction is INTRINSIC to the group, never an endpoint arrowhead
+
+Direction is a property of the **signatures**, not the line: a hole is a named type
+(`H296`) on one side and `K162` on the other, so the *typed* sig orients the whole group.
+`k162End(conn)` already derives this and returns `'a' | 'b' | null`, covering all four
+null/typed combinations exactly:
+
+| sig_a | sig_b | direction |
+|-------|-------|-----------|
+| typed | typed | known (either) |
+| typed | null  | known |
+| null  | typed | known |
+| null  | null  | **unknown — render line only, no pills, no cue (honest)** |
+
+So direction is shown **on the sig pill** (the thing that *causes* it), as a
+shape/position cue (chevron-pill / caret), **never colour** (keeps the "meaning never
+colour-only" rule). The both-null case shows no pills — absence of pills IS the "we don't
+know direction" signal (no neutral mystery marker; that was already removed).
+
+**This dissolves three earlier threads at once:**
+- the endpoint **arrowhead** (`markerEnd`/`markerStart` + `MarkerType.ArrowClosed` in
+  MapCanvas) becomes redundant for direction → removal candidate;
+- the **ELK-LR convergence problem** (many edges sharing one node-side anchor pile up
+  ambiguous arrowheads) evaporates — there's no endpoint arrowhead by construction;
+- the **endpoint-spread** idea (distributing landings along a node side, à la the
+  resize-handle screenshot) drops from "needed for direction legibility" to *optional
+  polish* — the pills already disambiguate per-line even when the lines converge (this is
+  what Wanderer's pills do; its edges carry no arrowheads either).
+
+Rejected on the way here: (a) endpoint-spread as the *primary* fix — heavy reconciliation
+(per-(node,side) grouping, corner-flip hysteresis, crowded-side degradation); (b)
+mid-edge direction chevron — works but puts the cue where the cause isn't.
+
+### The group is the SSE TRANSPORT unit (the load-bearing reason)
+
+The backend doesn't push a line + two separate sig labels. When a wormhole changes, the
+atomic thing that changed is the **whole group** `sig_a? · conn · sig_b?`. So the group is
+the unit of **change**, **identity**, and therefore **render** — render = transport.
+Modelling the edge as anything else forces decompose-on-receive / recompose-on-render,
+which is pure friction and a drift source (orphaned sig, wrong-side update).
+
+Contract decisions:
+
+1. **Stable identity = `conn.id`.** A sig getting identified (null → typed) arrives as the
+   SAME group id with the field changed — NOT a new group (else the client churns/re-places
+   it). Sigs have no independent wire identity; a sig *is* "the K162 end of conn X".
+2. **Whole-replace per group (DECIDED).** An update resends the entire triple; the client
+   does `byId[group.id] = group`. No deltas/patches — a group is tiny, replace-by-id is
+   trivially idempotent and correct, and it suits wormhole scale. (Diffing old↔new group is
+   only needed later for *cosmetic* transitions like a "newly identified" highlight — not
+   for correctness.)
+3. **`MapEvent` already carries this** — the `connection` in `add-system`/`add-connection`
+   already includes `a.sig`/`b.sig`. Make it intentional: events create/replace/remove
+   **groups** by `conn.id`; there is no standalone "sig event".
+
+### Type-system implication
+
+Introduce an explicit propagation-group view-type (`sig_a? · conn · sig_b?`) as the unit
+the edge component consumes AND (close to) the SSE event payload type — one type spans
+wire → store → render, with the null-handling type-enforced. (Vs. keeping the raw
+`Connection` and treating the triple as an implicit rendering convention — rejected as less
+honest to the transport reality.)
+
+**Status of this decision:** captured, NOT implemented. Touches the SSE event contract
+(backend, Track 2), the client store/`reconcile.ts`, and the edge/label render + marker
+removal (frontend) together — wants its own change when picked up. Open sub-choices left
+for that change: exact pill direction cue (chevron-pill vs caret vs typed-tag; mark-K162
+vs mark-named end) and whether the arrowhead is removed outright or kept dormant during
+transition.
+
 ## TRACK 2 (backend model) FORKS — STILL OPEN (resume here for the model session)
 
 - **localState never confirmed:** if I locally add `J999999` and a real connection never

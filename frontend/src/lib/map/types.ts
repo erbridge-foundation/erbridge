@@ -12,15 +12,20 @@
  * *where it sits*.
  */
 
-/** Wormhole / J-space class. C1–C6 are the wormhole classes; the security tiers
- *  (HS/LS/NS) describe the known-space anchor a chain hangs off. */
-export type SystemClass = 'C1' | 'C2' | 'C3' | 'C4' | 'C5' | 'C6' | 'HS' | 'LS' | 'NS';
+/** Wormhole / J-space class. C1–C6 are the wormhole classes; the k-space tiers
+ *  (HS/LS/NS) describe the known-space anchor a chain hangs off. `P` is Pochven
+ *  (Triglavian space) — its OWN distinct space type, not null- or low-sec: it
+ *  displays a null-ish security status but is a separate region with its own
+ *  access + connectivity rules, so the map tracks it as a first-class tier. */
+export type SystemClass = 'C1' | 'C2' | 'C3' | 'C4' | 'C5' | 'C6' | 'HS' | 'LS' | 'NS' | 'P';
 
 /** A static wormhole a system always spawns (e.g. a C5 system with a C5+HS pair).
- *  `dest` is the static's destination class; `code` is the in-game signature-ish
- *  shorthand the badge renders (e.g. `C5a`, `HSa`). */
+ *  `dest` is the static's destination class (HS/LS/NS/C1–C6) — the only thing the
+ *  map surfaces for now. `wh_type` is the actual wormhole TYPE code (e.g. `C008`,
+ *  `N062`), kept for a later piece of work (scanning signatures and offering which
+ *  wormhole type a static is) but NOT displayed on the node yet. */
 export interface SystemStatic {
-	code: string;
+	wh_type: string;
 	dest: SystemClass;
 }
 
@@ -35,9 +40,97 @@ export interface System {
 	statics: SystemStatic[];
 }
 
-/** Connection mass state. Drives both a colour token and a TEXT cue on the edge
- *  label — mass is never colour-only (Fork 3). */
+/** Connection mass state. Drives line THICKNESS + colour, plus a TEXT cue on the
+ *  edge label — mass is never colour-only (Fork 3). Thresholds follow the in-game
+ *  stability text: fresh > 50%, reduced (half) < 50%, critical < 10%. */
 export type Mass = 'fresh' | 'half' | 'critical';
+
+/**
+ * A wormhole type's MAXIMUM stable lifetime, in minutes, as the eve-scout import
+ * gives it (`max_stable_time`). The observed value set is:
+ *
+ *   [0, 270, 720, 960, 1440, 2880]
+ *
+ * 0 is the special "no fixed lifetime" marker some types carry; the rest are
+ * 4.5 h / 12 h / 16 h / 24 h / 48 h. A type's max is the CEILING — a hole opens
+ * with this much life and only ever counts down. The map cares about how much is
+ * LEFT (see {@link TtlState}), not the ceiling, but the ceiling is what the
+ * backend stores per type, so the prototype carries it for realism.
+ *
+ * Note 270 (= 4.5 h) is the frigate-hole ceiling; a standard hole's is 240
+ * (4 h). The in-game stability TEXT only ever rounds to "less than 4 hours"
+ * regardless — the exact ceiling (4 h vs 4.5 h) is a per-type attribute people
+ * will be able to pick later, NOT a display bucket. The {@link TtlState} buckets
+ * below mirror the rounded in-game text, not the ceiling.
+ */
+export type MaxStableMin = 0 | 270 | 720 | 960 | 1440 | 2880;
+
+/** The known `max_stable_time` values, smallest first. The 0 marker sorts first
+ *  but is the "unknown/no fixed lifetime" case, not the shortest-lived. */
+export const MAX_STABLE_MIN: readonly MaxStableMin[] = [0, 270, 720, 960, 1440, 2880];
+
+/**
+ * The DISPLAYED time-to-live bucket — derived from how many minutes of life a
+ * connection has LEFT, independent of its type's ceiling. These are the UX
+ * buckets the edge encoding draws (dash + glyph + alert); they are NOT the raw
+ * EVE lifetime, which is a continuous countdown.
+ *
+ *   - `stable`   : anything above 4 h left.
+ *   - `lt4h`     : under 4 h left.
+ *   - `lt1h`     : under 1 h left — the actionable "act now" window.
+ *   - `imminent` : minutes left, effectively too late to use.
+ *
+ * We track all FOUR as distinct states (the model/enum cares about the
+ * difference, e.g. for sorting or future tooling), but the MAP visual collapses
+ * them to three (see {@link TtlVisual}): `lt1h` and `imminent` render the SAME
+ * loud critical state, because by the time it's imminent the urgency message is
+ * unchanged — there's nothing new to say, it's just past saving.
+ *
+ * DECISION: these spec buckets are authoritative for OUR tool, NOT the in-game
+ * lifetime text. EVE currently shows four states ("< 1 day / < 4 h / < 1 h /
+ * Expired, closure imminent"), but that is CCP's UI and can change; we don't
+ * bind to it. In particular EVE's calm top state is "< 1 day" whereas ours is
+ * "anything above 4 h" — by design, so a healthy hole reads calm (no glyph,
+ * solid line). Only the under-4-h escalation carries cues.
+ */
+export type TtlState = 'stable' | 'lt4h' | 'lt1h' | 'imminent';
+
+/**
+ * The three VISUAL urgency tiers the edge encoding actually draws. The four
+ * {@link TtlState} buckets collapse onto these for rendering:
+ *
+ *   stable            → `calm`     (solid line, no glyph, no alert)
+ *   lt4h              → `warning`  (amber dash + clock glyph)
+ *   lt1h, imminent    → `critical` (red dash + alert glyph + red breathing halo)
+ *
+ * Mass-critical also forces at least `critical` on the alert layer independently
+ * of TTL (a near-collapse-by-mass hole is its own emergency); see resolveAlert.
+ */
+export type TtlVisual = 'calm' | 'warning' | 'critical';
+
+/** Collapse a four-state {@link TtlState} onto the three visual tiers the map
+ *  draws. `lt1h` and `imminent` are the SAME critical visual (see TtlState). */
+export function ttlVisual(state: TtlState): TtlVisual {
+	switch (state) {
+		case 'stable':
+			return 'calm';
+		case 'lt4h':
+			return 'warning';
+		case 'lt1h':
+		case 'imminent':
+			return 'critical';
+	}
+}
+
+/** Bucket remaining-minutes into a {@link TtlState}. Thresholds are the chosen UX
+ *  buckets (4 h / 1 h / imminent); confirm against real EVE EOL mechanics before
+ *  the backend hardcodes them (see the edge-encoding spec's open questions). */
+export function ttlState(remainingMin: number): TtlState {
+	if (remainingMin < 15) return 'imminent';
+	if (remainingMin < 60) return 'lt1h';
+	if (remainingMin < 240) return 'lt4h';
+	return 'stable';
+}
 
 /** A scanned signature at a connection endpoint. The wormhole TYPE lives on the
  *  signature, not the connection: a hole is `K162` on one side and a named code
@@ -72,8 +165,20 @@ export interface Connection {
 	a: ConnectionEndpoint;
 	b: ConnectionEndpoint;
 	mass: Mass;
-	/** End-of-life: the wormhole is in its final ~4h window. Carries a `⚠` glyph
-	 *  on the label (non-colour) plus a pulse decoration. */
+	/**
+	 * Minutes of life this wormhole has LEFT (a countdown). The edge encoding
+	 * buckets it into a {@link TtlState} (see {@link ttlState}) for dash/glyph/
+	 * alert. In the real backend this is derived from `opened_at + max_stable_time`
+	 * minus now; the prototype carries a literal value per fixture connection.
+	 */
+	ttl_remaining_min: number;
+	/**
+	 * End-of-life: the wormhole is in its final window. Retained as a convenience
+	 * flag, but it is now DERIVED from TTL (`ttlState() === 'imminent'`) rather
+	 * than an independent input — the fixture sets it consistently and the
+	 * encoding reads TTL, not this. Kept so existing call sites (marker colour,
+	 * sr-text) keep compiling during the prototype.
+	 */
 	eol: boolean;
 }
 

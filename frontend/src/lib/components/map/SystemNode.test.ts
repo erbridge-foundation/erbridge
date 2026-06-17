@@ -8,7 +8,7 @@ const sys = (over: Partial<System> = {}): System => ({
 	id: 'J100005',
 	name: 'J100005',
 	class: 'C5',
-	statics: [{ code: 'C5a', dest: 'C5' }],
+	statics: [{ wh_type: 'H900', dest: 'C5' }],
 	...over
 });
 
@@ -39,13 +39,18 @@ describe('SystemNode encoding (meaning never colour-only)', () => {
 		expect(screen.getByText('LS')).toBeInTheDocument();
 	});
 
-	it('renders static codes as TEXT', () => {
+	it('renders a static by its DESTINATION class as TEXT, not the wormhole-type code', () => {
 		renderNode({
-			system: sys({ statics: [{ code: 'HSa', dest: 'HS' }] }),
+			// A C5 system with a static leading to HS, whose wormhole type is B274.
+			system: sys({ class: 'C5', statics: [{ wh_type: 'B274', dest: 'HS' }] }),
 			isRoot: false,
 			isGhost: false
 		});
-		expect(screen.getByText('HSa')).toBeInTheDocument();
+		// The static surfaces as its destination class (HS)...
+		const statics = screen.getByLabelText('statics');
+		expect(statics).toHaveTextContent('HS');
+		// ...and the wormhole-type code is NOT shown (kept in the model for later).
+		expect(screen.queryByText('B274')).toBeNull();
 	});
 
 	it('marks a root with a text badge, not colour alone', () => {

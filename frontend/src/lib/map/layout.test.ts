@@ -20,7 +20,14 @@ function graph(): CombinedGraph {
 
 /** Minimal connection in the endpoint shape (no sigs needed for layout). */
 function conn(id: string, a: string, b: string): Connection {
-	return { id, a: { system: a, sig: null }, b: { system: b, sig: null }, mass: 'fresh', eol: false };
+	return {
+		id,
+		a: { system: a, sig: null },
+		b: { system: b, sig: null },
+		mass: 'fresh',
+		ttl_remaining_min: 1440,
+		eol: false
+	};
 }
 
 const tab = (roots: string[], extra: Partial<Tab> = {}): Tab => ({

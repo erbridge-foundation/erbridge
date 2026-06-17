@@ -87,6 +87,10 @@
 	// "Show direction": a single arrow per connection toward the K162 end (or a
 	// neutral marker when the direction is undetermined). On by default.
 	let showDirection = $state(true);
+	// Colour-blind palette toggle (prototype A/B switch). Swaps ONLY the three mass
+	// hues, via a `data-edge-palette` attribute on the canvas wrapper that the
+	// app.css token override keys off — see the edge-encoding spec §2.
+	let colourblindPalette = $state(false);
 
 	// ── Sidebar (holds the intel sections + canvas tweaks; collapses + docks) ────
 	let sidebarOpen = $state(true);
@@ -164,7 +168,9 @@
 			// target end (markerEnd) and 'a' is the source end (markerStart). The
 			// undetermined case (null) gets no marker — the edge draws a neutral
 			// mid-edge diamond instead.
-			const colour = c.eol ? 'var(--mass-critical)' : `var(--mass-${c.mass})`;
+			// Arrowhead follows the MASS colour (the alert casing carries urgency, not
+			// the arrow); resolves against whichever palette is active via the token.
+			const colour = `var(--mass-${c.mass})`;
 			const marker = { type: MarkerType.ArrowClosed, color: colour };
 			return {
 				id: c.id,
@@ -177,6 +183,7 @@
 					wh_type: namedType,
 					mass: c.mass,
 					eol: c.eol,
+					ttl_remaining_min: c.ttl_remaining_min,
 					sig_a: c.a.sig?.id,
 					sig_b: c.b.sig?.id,
 					arrowTo,
@@ -350,7 +357,11 @@
 	     the sidebar-outer animates WIDTH on collapse (wireframe slide), so the
 	     content stays mounted and the canvas reflows smoothly. -->
 	<div class="stage" data-side={sidebarSide}>
-		<div class="flow" data-testid="map-flow">
+		<div
+			class="flow"
+			data-testid="map-flow"
+			data-edge-palette={colourblindPalette ? 'colourblind' : 'standard'}
+		>
 			<SvelteFlow
 				bind:nodes
 				bind:edges
@@ -411,6 +422,7 @@
 					bind:showMass={showMassLabels}
 					bind:showWhType={showWhTypeLabels}
 					bind:showDirection
+					bind:colourblind={colourblindPalette}
 					bind:layoutOpen
 					onRedoLayout={redoLayout}
 					onReceiveUpdate={receiveUpdate}

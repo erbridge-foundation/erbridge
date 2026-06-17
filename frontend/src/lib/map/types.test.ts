@@ -10,6 +10,7 @@ function conn(aType: string | null | undefined, bType: string | null | undefined
 		a: { system: 'A', sig: sig(aType) },
 		b: { system: 'B', sig: sig(bType) },
 		mass: 'fresh',
+		ttl_remaining_min: 1440,
 		eol: false
 	};
 }

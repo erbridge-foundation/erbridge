@@ -1,7 +1,8 @@
 <script lang="ts">
 	// Custom svelte-flow node — the STYLE seam for a system. Meaning is carried by
-	// TEXT (class / security / static codes), colour only decorates, so the node
-	// stays legible in greyscale, forced-colors, and to a colourblind user (Fork 3).
+	// TEXT (class / security / static destination classes), colour only decorates,
+	// so the node stays legible in greyscale, forced-colors, and to a colourblind
+	// user (Fork 3).
 	import { Handle, Position } from '@xyflow/svelte';
 	import { m } from '$lib/paraglide/messages';
 	import type { System, SystemClass } from '$lib/map/types';
@@ -19,8 +20,9 @@
 
 	const system = $derived(data.system);
 
-	// Class C1–C6 map to --c1..c6; the security tiers HS/LS/NS to --hs/--ls/--ns.
-	// The badge always shows the code TEXT; this only picks the decorative colour.
+	// Class C1–C6 map to --c1..c6; the k-space tiers HS/LS/NS to --hs/--ls/--ns;
+	// Pochven (P) to --pochven. The badge always shows the class TEXT; this only
+	// picks the decorative colour.
 	const classColour: Record<SystemClass, string> = {
 		C1: 'var(--c1)',
 		C2: 'var(--c2)',
@@ -30,7 +32,8 @@
 		C6: 'var(--c6)',
 		HS: 'var(--hs)',
 		LS: 'var(--ls)',
-		NS: 'var(--ns)'
+		NS: 'var(--ns)',
+		P: 'var(--pochven)'
 	};
 </script>
 
@@ -63,8 +66,12 @@
 
 	{#if system.statics.length > 0}
 		<ul class="statics" aria-label="statics">
-			{#each system.statics as s (s.code)}
-				<li class="badge static" style:--badge-colour={classColour[s.dest]}>{s.code}</li>
+			<!-- Show the static's DESTINATION class (HS/LS/C5…), not the wormhole-type
+			     code — the type isn't user-facing yet (it's kept for the later
+			     signature-scanning work). Key by index since a system can have two
+			     statics to the same destination. -->
+			{#each system.statics as s, i (i)}
+				<li class="badge static" style:--badge-colour={classColour[s.dest]}>{s.dest}</li>
 			{/each}
 		</ul>
 	{/if}
@@ -79,7 +86,7 @@
 			<dt>{m.map_proto_intel_statics()}</dt>
 			<dd>
 				{#if system.statics.length}
-					{system.statics.map((s) => s.code).join(', ')}
+					{system.statics.map((s) => s.dest).join(', ')}
 				{:else}—{/if}
 			</dd>
 		</dl>
@@ -166,8 +173,8 @@
 		font-weight: 700;
 		white-space: nowrap;
 	}
-	/* Class/static badges: the colour DECORATES the border + text; the code text
-	   is the real signal. */
+	/* Class/static badges: the colour DECORATES the border + text; the class text
+	   (system class, or static destination class) is the real signal. */
 	.badge.class,
 	.badge.static {
 		color: var(--badge-colour);

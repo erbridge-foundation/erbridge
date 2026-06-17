@@ -45,14 +45,44 @@
 	--hs: #4ade80;
 	--ls: #facc15;
 	--ns: #fca5a5;
-	--mass-fresh: #22c55e;
-	--mass-half: #f59e0b;
-	--mass-critical: #ef4444;
+	/* Pochven (Triglavian space) — a saturated magenta-crimson, distinct from the
+	   lighter C6/NS reds and the C4 pink so its own space type reads at a glance. */
+	--pochven: #e11d74;
+	/* Connection mass hues (standard palette). These are the spec's edge-encoding
+	   values; the colour-blind palette below swaps ONLY these three (Okabe-Ito
+	   blue/orange/vermillion), leaving thickness, dash, glyph, motion identical —
+	   so a palette swap is one attribute on the canvas wrapper. */
+	--mass-fresh: #2e9e58;
+	--mass-half: #e0a126;
+	--mass-critical: #db4b4a;
+
+	/* Edge alert layer (TTL/mass casing + glyph tints). Hue-independent meaning is
+	   carried by dash + glyph + shape; these only tint the halo/badge. */
+	--alert-warning: #e69f00;
+	--alert-danger: #d55e00;
+	/* The breathing CASING gets a richer, more saturated red than the glyph/line
+	   tint (--alert-danger is the colour-blind-safe vermillion, which desaturates
+	   to a dim ember at the halo's low opacity). The line + glyph + badge keep the
+	   vermillion; only the pulsing glow uses this hotter red so it actually reads
+	   as an alarm against the near-black canvas. */
+	--alert-danger-halo: #ff3b30;
+	/* Neutral glyph tint (the <4h clock) — secondary text colour. */
+	--text-secondary: var(--slate-400);
 
 	/* The UI typeface, indirected through a custom property so the dyslexia-font
 	   accessibility preference can swap it in one place (see below). */
 	--font-ui: "JetBrains Mono", ui-monospace, monospace;
 	--font-dyslexic: "Atkinson Hyperlegible", ui-sans-serif, system-ui, sans-serif;
+}
+
+/* Colour-blind edge palette (spec §2). Swaps ONLY the three mass hues to an
+   Okabe-Ito-derived set; everything else (thickness, dash, glyph, alert, motion)
+   is unchanged. Scoped to a wrapper attribute so the map canvas can flip it at
+   runtime for A/B comparison without touching the rest of the app's colours. */
+[data-edge-palette="colourblind"] {
+	--mass-fresh: #2e8fd6; /* blue */
+	--mass-half: #e69f00; /* orange */
+	--mass-critical: #d55e00; /* vermillion */
 }
 
 *,
@@ -169,6 +199,7 @@ html[data-reduce-motion="on"] *::after {
 		--hs: #86efac;
 		--ls: #fde047;
 		--ns: #fecaca;
+		--pochven: #f9a8d4;
 		--mass-fresh: #86efac;
 		--mass-half: #fcd34d;
 		--mass-critical: #fca5a5;
@@ -212,6 +243,7 @@ html[data-high-contrast="on"] {
 	--hs: #86efac;
 	--ls: #fde047;
 	--ns: #fecaca;
+	--pochven: #f9a8d4;
 	--mass-fresh: #86efac;
 	--mass-half: #fcd34d;
 	--mass-critical: #fca5a5;

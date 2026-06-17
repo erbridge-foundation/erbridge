@@ -43,8 +43,23 @@ test.describe('/maps/_proto', () => {
 		await expect(page.locator('.svelte-flow__edge').first()).toBeVisible();
 		// Mass cue is text, not colour alone.
 		await expect(page.getByText('critical').first()).toBeVisible();
-		// The EoL connection shows the ⚠ glyph.
-		await expect(page.getByText('⚠').first()).toBeVisible();
+		// The imminent-closure connection surfaces its TTL state as text (the SVG
+		// glyph's accessible name) — meaning never relies on colour or shape alone.
+		await expect(page.getByText('closure imminent').first()).toBeVisible();
+		// And it draws a breathing danger casing (the alert under-stroke). The casing
+		// is a fill:none stroked path, which Playwright's visibility heuristic treats
+		// as hidden — assert it is attached (present in the rendered edge) instead.
+		await expect(
+			page.locator('.svelte-flow__edge .edge-casing.halo-red').first()
+		).toBeAttached();
+	});
+
+	test('colour-blind palette toggle swaps the canvas palette attribute', async ({ page }) => {
+		const flow = page.getByTestId('map-flow');
+		await expect(flow).toHaveAttribute('data-edge-palette', 'standard');
+		// The toggle lives in the Map Canvas Tweaks sidebar section (open by default).
+		await page.getByLabel('Colour-blind palette').check();
+		await expect(flow).toHaveAttribute('data-edge-palette', 'colourblind');
 	});
 
 	test('edges float — the connection path follows a node as it is dragged', async ({ page }) => {

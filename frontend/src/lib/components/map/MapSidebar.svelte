@@ -15,6 +15,7 @@
 		showMass = $bindable(),
 		showWhType = $bindable(),
 		showDirection = $bindable(),
+		colourblind = $bindable(),
 		layoutOpen = $bindable(),
 		onRedoLayout,
 		onReceiveUpdate
@@ -27,6 +28,7 @@
 		showMass: boolean;
 		showWhType: boolean;
 		showDirection: boolean;
+		colourblind: boolean;
 		layoutOpen: boolean;
 		onRedoLayout: (dir: LayoutDirection) => void;
 		onReceiveUpdate: () => void;
@@ -91,7 +93,10 @@
 						<span class="stat-value">
 							{#if selected.statics.length}
 								<span class="statics">
-									{#each selected.statics as s (s.code)}<span class="static-badge">{s.code}</span>{/each}
+									<!-- Destination class only (HS/LS/C5…); the wormhole-type code is
+									     kept in the model but not surfaced yet. Key by index (a system
+									     can have two statics to the same destination). -->
+									{#each selected.statics as s, i (i)}<span class="static-badge">{s.dest}</span>{/each}
 								</span>
 							{:else}—{/if}
 						</span>
@@ -205,6 +210,10 @@
 					<input type="checkbox" bind:checked={showDirection} />
 					<span>{m.map_proto_show_direction()}</span>
 				</label>
+				<label class="toggle">
+					<input type="checkbox" bind:checked={colourblind} />
+					<span>{m.map_proto_colourblind_palette()}</span>
+				</label>
 			</div>
 		{/if}
 	</section>
@@ -295,6 +304,7 @@
 	.class-pill[data-class='HS'] { color: var(--hs); border-color: var(--hs); }
 	.class-pill[data-class='LS'] { color: var(--ls); border-color: var(--ls); }
 	.class-pill[data-class='NS'] { color: var(--ns); border-color: var(--ns); }
+	.class-pill[data-class='P'] { color: var(--pochven); border-color: var(--pochven); }
 	.intel-stats {
 		display: grid;
 		grid-template-columns: 1fr 1fr;

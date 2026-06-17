@@ -8,6 +8,7 @@ const conn = (id: string, a: string, b: string): Connection => ({
 	a: { system: a, sig: null },
 	b: { system: b, sig: null },
 	mass: 'fresh',
+	ttl_remaining_min: 1440,
 	eol: false
 });
 
