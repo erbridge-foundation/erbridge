@@ -54,6 +54,50 @@ test.describe('/maps/_proto', () => {
 		).toBeAttached();
 	});
 
+	test('collapse-all / expand-all drive the sections; legend honours collapse-all only', async ({
+		page
+	}) => {
+		const intel = page.getByRole('button', { name: 'System Intel' });
+		const legendToggle = () => page.getByRole('button', { name: /show legend|hide legend/i });
+
+		// Open the legend so we can watch collapse-all close it.
+		await page.getByRole('button', { name: /show legend/i }).click();
+		await expect(legendToggle()).toHaveAccessibleName(/hide legend/i);
+		await expect(intel).toHaveAttribute('aria-expanded', 'true');
+
+		// Collapse all: every section closes AND the legend closes.
+		await page.getByRole('button', { name: /collapse all sections/i }).click();
+		await expect(intel).toHaveAttribute('aria-expanded', 'false');
+		await expect(legendToggle()).toHaveAccessibleName(/show legend/i);
+
+		// Expand all: sections reopen, but the legend stays as the user left it
+		// (collapsed) — expand-all does NOT touch the legend.
+		await page.getByRole('button', { name: /expand all sections/i }).click();
+		await expect(intel).toHaveAttribute('aria-expanded', 'true');
+		await expect(legendToggle()).toHaveAccessibleName(/show legend/i);
+	});
+
+	test('locking the arrangement freezes the section + layout controls', async ({ page }) => {
+		const intel = page.getByRole('button', { name: 'System Intel' });
+		const flip = page.getByRole('button', { name: /move panel to the other side/i });
+		await expect(intel).toBeEnabled();
+		await expect(flip).toBeEnabled();
+
+		await page.getByRole('button', { name: 'Lock arrangement', exact: true }).click();
+
+		// Section toggles, flip, collapse/expand-all all disable; the lock flips to
+		// an unlock affordance.
+		await expect(intel).toBeDisabled();
+		await expect(flip).toBeDisabled();
+		await expect(page.getByRole('button', { name: /collapse all sections/i })).toBeDisabled();
+		await expect(page.getByRole('button', { name: /unlock arrangement/i })).toBeVisible();
+
+		// Unlock restores them.
+		await page.getByRole('button', { name: /unlock arrangement/i }).click();
+		await expect(intel).toBeEnabled();
+		await expect(flip).toBeEnabled();
+	});
+
 	test('colour-blind palette toggle swaps the canvas palette attribute', async ({ page }) => {
 		const flow = page.getByTestId('map-flow');
 		await expect(flow).toHaveAttribute('data-edge-palette', 'standard');

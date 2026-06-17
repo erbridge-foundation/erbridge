@@ -8,7 +8,8 @@
 	// alone (the StatusIcon / edge-encoding a11y rule).
 	import { m } from '$lib/paraglide/messages';
 
-	let { open = $bindable(false) }: { open?: boolean } = $props();
+	let { open = $bindable(false), locked = false }: { open?: boolean; locked?: boolean } =
+		$props();
 </script>
 
 <section class="legend" class:open data-testid="map-legend">
@@ -17,7 +18,8 @@
 		class="legend-header"
 		aria-expanded={open}
 		aria-label={open ? m.map_proto_legend_close() : m.map_proto_legend_open()}
-		onclick={() => (open = !open)}
+		onclick={() => !locked && (open = !open)}
+		disabled={locked}
 	>
 		<svg
 			class="chevron"

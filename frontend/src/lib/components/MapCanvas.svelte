@@ -99,8 +99,29 @@
 	// Legend: a show/hide key pinned to the sidebar bottom (starts collapsed).
 	let legendOpen = $state(false);
 	function flipSidebar(): void {
+		if (locked) return;
 		sidebarSide = sidebarSide === 'right' ? 'left' : 'right';
 	}
+
+	// Bulk collapse/expand of the sidebar sections, driven from the header. The
+	// per-section open state lives in MapSidebar, so we nudge an incrementing signal
+	// it watches rather than reaching into its state. Collapse-all ALSO collapses
+	// the legend (the user asked for it to honour collapse-all only — expand-all
+	// leaves the legend as the user set it).
+	let collapseAllSignal = $state(0);
+	let expandAllSignal = $state(0);
+	function collapseAll(): void {
+		collapseAllSignal++;
+		legendOpen = false;
+	}
+	function expandAll(): void {
+		expandAllSignal++;
+	}
+
+	// Lock the whole arrangement: freezes the layout gestures (flip, resize) and the
+	// section toggles, so a tuned panel can't be disturbed by a stray click. Purely
+	// a UI guard (session-only, prototype).
+	let locked = $state(false);
 
 	// ── Resizable sidebar ────────────────────────────────────────────────────────
 	// User-draggable width (session-only, like the other prototype prefs). A gripper
@@ -115,6 +136,7 @@
 	const clampWidth = (w: number) => Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, w));
 
 	function startResize(ev: PointerEvent): void {
+		if (locked) return;
 		ev.preventDefault();
 		resizing = true;
 		const startX = ev.clientX;
@@ -136,6 +158,7 @@
 	// Keyboard resize on the separator: ←/→ nudge, Home/End jump to the bounds. The
 	// dock side decides which arrow widens (toward the canvas).
 	function resizeKey(ev: KeyboardEvent): void {
+		if (locked) return;
 		const step = ev.shiftKey ? 32 : 8;
 		const widen = sidebarSide === 'right' ? 'ArrowLeft' : 'ArrowRight';
 		const narrow = sidebarSide === 'right' ? 'ArrowRight' : 'ArrowLeft';
@@ -520,9 +543,43 @@
 					<button
 						type="button"
 						class="icon-btn"
+						aria-label={m.map_proto_sidebar_collapse_all()}
+						title={m.map_proto_sidebar_collapse_all()}
+						onclick={collapseAll}
+						disabled={locked}
+					>
+						⊟
+					</button>
+					<button
+						type="button"
+						class="icon-btn"
+						aria-label={m.map_proto_sidebar_expand_all()}
+						title={m.map_proto_sidebar_expand_all()}
+						onclick={expandAll}
+						disabled={locked}
+					>
+						⊞
+					</button>
+					<button
+						type="button"
+						class="icon-btn"
+						class:active={locked}
+						aria-label={locked
+							? m.map_proto_sidebar_unlock()
+							: m.map_proto_sidebar_lock()}
+						title={locked ? m.map_proto_sidebar_unlock() : m.map_proto_sidebar_lock()}
+						aria-pressed={locked}
+						onclick={() => (locked = !locked)}
+					>
+						{locked ? '🔒' : '🔓'}
+					</button>
+					<button
+						type="button"
+						class="icon-btn"
 						aria-label={m.map_proto_sidebar_flip()}
 						title={m.map_proto_sidebar_flip()}
 						onclick={flipSidebar}
+						disabled={locked}
 					>
 						⇄
 					</button>
@@ -538,13 +595,17 @@
 					bind:showDirection
 					bind:colourblind={colourblindPalette}
 					bind:layoutOpen
+					{collapseAllSignal}
+					{expandAllSignal}
+					{locked}
 					onRedoLayout={redoLayout}
 					onReceiveUpdate={receiveUpdate}
 				/>
 				</div>
 
-				<!-- Legend: pinned footer, expands upward (see MapLegend). -->
-				<MapLegend bind:open={legendOpen} />
+				<!-- Legend: pinned footer, expands upward (see MapLegend). Honours
+				     collapse-all (collapseAll sets legendOpen=false); frozen when locked. -->
+				<MapLegend bind:open={legendOpen} {locked} />
 			</aside>
 		</div>
 	</div>
@@ -746,6 +807,7 @@
 	.sidebar-head {
 		display: flex;
 		justify-content: flex-end;
+		gap: 4px;
 		padding: 6px 8px;
 		border-bottom: 1px solid var(--space-700);
 	}
@@ -762,8 +824,17 @@
 		font-size: 0.85rem;
 		cursor: pointer;
 	}
-	.icon-btn:hover {
+	.icon-btn:hover:not(:disabled) {
 		background: var(--space-700);
+	}
+	/* The lock toggle when engaged: accent border so the locked state is visible. */
+	.icon-btn.active {
+		border-color: var(--sky);
+		color: var(--slate-100);
+	}
+	.icon-btn:disabled {
+		opacity: 0.4;
+		cursor: not-allowed;
 	}
 	.icon-btn:focus-visible {
 		outline: 2px solid var(--sky);

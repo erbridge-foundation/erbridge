@@ -17,6 +17,9 @@
 		showDirection = $bindable(),
 		colourblind = $bindable(),
 		layoutOpen = $bindable(),
+		collapseAllSignal = 0,
+		expandAllSignal = 0,
+		locked = false,
 		onRedoLayout,
 		onReceiveUpdate
 	}: {
@@ -30,6 +33,12 @@
 		showDirection: boolean;
 		colourblind: boolean;
 		layoutOpen: boolean;
+		/** Incrementing signals from the header's collapse-all / expand-all buttons —
+		 *  the parent owns the action, this component owns the per-section state. */
+		collapseAllSignal?: number;
+		expandAllSignal?: number;
+		/** When the arrangement is locked, section headers don't toggle. */
+		locked?: boolean;
 		onRedoLayout: (dir: LayoutDirection) => void;
 		onReceiveUpdate: () => void;
 	} = $props();
@@ -44,8 +53,31 @@
 	});
 	type SectionKey = keyof typeof open;
 	function toggle(k: SectionKey) {
+		if (locked) return;
 		open[k] = !open[k];
 	}
+	function setAll(value: boolean) {
+		for (const k of Object.keys(open) as SectionKey[]) open[k] = value;
+	}
+
+	// React to the header's bulk signals. The signals are counters so a repeat of
+	// the same action still fires; the very first values (0) seed without acting.
+	// svelte-ignore state_referenced_locally
+	let lastCollapse = collapseAllSignal;
+	// svelte-ignore state_referenced_locally
+	let lastExpand = expandAllSignal;
+	$effect(() => {
+		if (collapseAllSignal !== lastCollapse) {
+			lastCollapse = collapseAllSignal;
+			setAll(false);
+		}
+	});
+	$effect(() => {
+		if (expandAllSignal !== lastExpand) {
+			lastExpand = expandAllSignal;
+			setAll(true);
+		}
+	});
 
 	// Sample data for the placeholder sections (replaced by real chain-map data).
 	const sigs = [
@@ -66,6 +98,7 @@
 		class="section-header"
 		aria-expanded={open[key]}
 		onclick={() => toggle(key)}
+		disabled={locked}
 	>
 		<svg class="chevron" class:open={open[key]} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
 			<path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
