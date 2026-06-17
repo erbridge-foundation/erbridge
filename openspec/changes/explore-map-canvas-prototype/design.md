@@ -344,6 +344,95 @@ for that change: exact pill direction cue (chevron-pill vs caret vs typed-tag; m
 vs mark-named end) and whether the arrowhead is removed outright or kept dormant during
 transition.
 
+## DECISION (2026-06-17): the chain-mapping workflow drives the data model (sig-first, stub-birth, sig↔sig merge)
+
+Walking the actual "map the chain" workflow exposes what the model must represent. This is
+the driving scenario for [[project-chain-map-data-model]]; the propagation-group decision
+above is one projection of it.
+
+### The workflow (what a mapper actually does)
+
+1. **Undock in system_a, paste the in-game scan list into the tool.** The paste is a
+   per-system SNAPSHOT, columns: `ID · Type · Group · Name · Signal% · Distance`. It mixes
+   **Cosmic Signature** (must be scanned down; `%` climbs, Type/Group/Name fill in),
+   **Cosmic Anomaly** (already 100%, no scanning), and **Structure / Ship / …** rows. A
+   fresh sig is just an id at `0.0%` with blank Type/Group/Name.
+2. **A row with `Group == "Wormhole"` spawns a propagation group**, that sig becoming
+   `sig_a`, `system_a` = the pasted system (KNOWN). Far side null → a *dangling stub*. This
+   is the NORMAL birth state of every connection, not an edge case.
+3. **Warp to the hole, read the in-game info, update `sig_a`:** `type` (e.g. `E545`),
+   **destination class** ("Null-security systems" → NS), **max ship size** (Large), the
+   **lifetime** bucket ("Less than 1 day remaining") and **mass** bucket ("More than 50%
+   remaining"). So the wormhole type lives on the sig and IMPLIES the dest class — a
+   null-`system_b` stub can already render "→ NS". Mass/lifetime are transcribed from the
+   in-game text and map onto the encoding buckets we already built.
+4. **Jump through → now `system_b`'s id is known.** Paste system_b's scan list; its K162
+   back to system_a shows as a wormhole sig (e.g. `ABC-123`), which would spawn ITS OWN
+   stub group. The user then asserts the two are the same hole → **MERGE** (see below).
+
+### Falls out of the workflow (model requirements)
+
+- **`Signature` is FIRST-CLASS and system-owned**, not a field inside the connection. A
+  system has `signatures[]`: `id · group (Data/Gas/Relic/Combat/Wormhole/…) · name · scan% ·
+  distance`, and for wormholes also `type · dest_class · max_ship_size · mass · lifetime`.
+  Most sigs are NOT wormholes (they feed the Signatures intel panel). A **connection is the
+  projection of a wormhole-typed sig** (plus its discovered far end) onto an edge.
+- **Stub-birth + far-side-fill lifecycle.** `system_a:string` non-null, `sig_a` present from
+  birth; the far side (`system_b:string?`, `sig_b:Signature?`) fills over later steps. Dest
+  class is known from `sig_a.type` even while `system_b` is null (render "→ NS").
+- **Paste is a SYNC, not an insert.** Re-pasting a system's list diffs: add new, update %/
+  type/name, and **a wormhole sig that DISAPPEARED from the paste = the hole collapsed →
+  remove its connection.** So the Signatures panel drives connection lifecycle (birth AND
+  death).
+- **New attributes to carry:** `dest_class` and `max_ship_size` (both properties of the
+  wormhole type), plus mass + lifetime buckets (already modelled as mass/TTL).
+
+### MERGE: two stubs → one connection, bound SIG↔SIG (not sig→system)
+
+When the far side is scanned independently, the same hole exists as two stub groups (one per
+end). Merging them is a first-class op — and the bind MUST be **sig-to-sig**, because of the
+parallel-hole case:
+
+> system_a has TWO wormhole sigs to system_b (`WFH-937`, `XQK-201`); system_b therefore has
+> two K162s back (`ABC-123`, `DEF-456`). "ABC-123 leads to system_a" is AMBIGUOUS — it can't
+> say which of system_a's two holes it pairs with. The assertion must be "`ABC-123` is the
+> far end of **`WFH-937`**."
+
+So:
+
+- **A connection's identity IS the sig-pair `(sig_a, sig_b)`** — the natural composite key.
+  Parallel holes between the same system pair are distinct *because their sig-pairs differ*
+  (this is also why we already bow parallel edges apart in render).
+- **Merge binds `sig_b` → a specific `sig_a`.** The system_id is DERIVED from the chosen sig.
+  Mechanics: delete the far-side stub group, fill the near group's far end
+  (`sig_b`, `system_b`). Each parallel pair merges independently.
+- **Invariant: each wormhole sig is in ≤ 1 connection.** Binding checks neither side is
+  already paired. Merge is symmetric + idempotent (binding A→B ≡ B→A; twice = no-op).
+- **Auto-inference is best-effort and IMPOSSIBLE for same-type parallels** (two identical
+  holes to the same system can't be auto-paired) → **manual sig-to-sig binding is the
+  required path**, with auto-suggest only when a candidate is unique (e.g. unique dest-class
+  match, far end still null).
+- **SSE consequence:** a merge is NOT a single whole-replace — it's a **remove (far stub) +
+  replace (near group)**, ideally delivered together. So the event contract needs a remove
+  alongside replace-by-`conn.id`; whole-replace still governs the per-group payload.
+
+### Open sub-questions for the eventual change
+
+- **Merge trigger:** manual sig-to-sig only, auto-suggest + confirm, or full auto when
+  unambiguous? (Leaning: manual default, auto-suggest when unique.)
+- **Collapse detection ownership:** does pasting a sig list own connection death
+  (sig-vanished → remove), or is collapse a separate signal (EoL job / eve-scout)? Ties to
+  the EoL-liveness fork below.
+- **Multi-user races:** two pilots scan the two ends; both stubs land on the server before
+  either merges. The merge is a human assertion that reconciles them — needs a defined
+  resolution (and an UNMERGE / mis-merge undo, probably out of v1 scope).
+- **Distance/scan%/anomaly/structure rows:** how much of the non-wormhole paste the tool
+  persists vs. shows transiently in the Signatures panel.
+
+**Status:** captured, NOT implemented. This is the chain-map data model's driving scenario;
+it and the propagation-group decision are the same future change-family (model + SSE
+contract + client store + render).
+
 ## TRACK 2 (backend model) FORKS — STILL OPEN (resume here for the model session)
 
 - **localState never confirmed:** if I locally add `J999999` and a real connection never
