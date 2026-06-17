@@ -102,6 +102,51 @@
 		sidebarSide = sidebarSide === 'right' ? 'left' : 'right';
 	}
 
+	// ── Resizable sidebar ────────────────────────────────────────────────────────
+	// User-draggable width (session-only, like the other prototype prefs). A gripper
+	// on the inner edge (the one meeting the canvas) drives this; clamped so it can't
+	// swallow the canvas or collapse to nothing. The drag direction depends on the
+	// dock side: pulling toward the canvas widens it either way.
+	const SIDEBAR_MIN = 220;
+	const SIDEBAR_MAX = 560;
+	let sidebarWidth = $state(288);
+	let resizing = $state(false);
+
+	const clampWidth = (w: number) => Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, w));
+
+	function startResize(ev: PointerEvent): void {
+		ev.preventDefault();
+		resizing = true;
+		const startX = ev.clientX;
+		const startW = sidebarWidth;
+		// Right-docked: dragging LEFT (negative dx) widens. Left-docked: mirror.
+		const dir = sidebarSide === 'right' ? -1 : 1;
+		const onMove = (e: PointerEvent) => {
+			sidebarWidth = clampWidth(startW + dir * (e.clientX - startX));
+		};
+		const onUp = () => {
+			resizing = false;
+			window.removeEventListener('pointermove', onMove);
+			window.removeEventListener('pointerup', onUp);
+		};
+		window.addEventListener('pointermove', onMove);
+		window.addEventListener('pointerup', onUp);
+	}
+
+	// Keyboard resize on the separator: ←/→ nudge, Home/End jump to the bounds. The
+	// dock side decides which arrow widens (toward the canvas).
+	function resizeKey(ev: KeyboardEvent): void {
+		const step = ev.shiftKey ? 32 : 8;
+		const widen = sidebarSide === 'right' ? 'ArrowLeft' : 'ArrowRight';
+		const narrow = sidebarSide === 'right' ? 'ArrowRight' : 'ArrowLeft';
+		if (ev.key === widen) sidebarWidth = clampWidth(sidebarWidth + step);
+		else if (ev.key === narrow) sidebarWidth = clampWidth(sidebarWidth - step);
+		else if (ev.key === 'Home') sidebarWidth = SIDEBAR_MIN;
+		else if (ev.key === 'End') sidebarWidth = SIDEBAR_MAX;
+		else return;
+		ev.preventDefault();
+	}
+
 	const presentIds = $derived(renderableSystems(union, activeTab, localState.ghostSystems));
 	const ghostIds = $derived(new Set(localState.ghostSystems.map((s) => s.id)));
 
@@ -425,7 +470,34 @@
 			</SvelteFlow>
 		</div>
 
-		<div class="sidebar-outer" class:collapsed={!sidebarOpen} data-side={sidebarSide}>
+		<div
+			class="sidebar-outer"
+			class:collapsed={!sidebarOpen}
+			class:resizing
+			data-side={sidebarSide}
+			style={sidebarOpen ? `width: ${sidebarWidth}px;` : ''}
+		>
+			<!-- Resize gripper on the inner edge (meets the canvas). Drag to widen/
+			     narrow; arrow keys nudge for keyboard users. Hidden when collapsed. -->
+			{#if sidebarOpen}
+				<!-- A focusable, operable window splitter is a legitimate `separator`
+				     widget (drag + arrow-key resize); Svelte's a11y lint flags any
+				     `separator` as non-interactive, so silence it for this element. -->
+				<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+				<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+				<div
+					class="sidebar-resizer"
+					role="separator"
+					aria-orientation="vertical"
+					aria-label={m.map_proto_sidebar_resize()}
+					aria-valuenow={sidebarWidth}
+					aria-valuemin={SIDEBAR_MIN}
+					aria-valuemax={SIDEBAR_MAX}
+					tabindex="0"
+					onpointerdown={startResize}
+					onkeydown={resizeKey}
+				></div>
+			{/if}
 			<!-- Collapse/expand toggle, overflowing the sidebar's inner edge. -->
 			<button
 				type="button"
@@ -537,16 +609,61 @@
 		flex: none;
 		position: relative;
 		display: flex;
+		/* Width is set inline from `sidebarWidth` when open; the collapse animation
+		   below overrides it. Defaults here for any no-inline-style fallback. */
 		width: 288px;
 		transition: width 0.2s ease;
 	}
 	.sidebar-outer.collapsed {
-		width: 14px;
+		width: 14px !important;
+	}
+	/* During an active drag, kill the width transition so it tracks the pointer. */
+	.sidebar-outer.resizing {
+		transition: none;
+		user-select: none;
 	}
 	@media (prefers-reduced-motion: reduce) {
 		.sidebar-outer {
 			transition: none;
 		}
+	}
+
+	/* Resize gripper: a thin hit-strip on the inner edge that meets the canvas. The
+	   docked side decides which edge; widened hit area, slim visible line. */
+	.sidebar-resizer {
+		position: absolute;
+		top: 0;
+		bottom: 0;
+		width: 8px;
+		z-index: 25;
+		cursor: ew-resize;
+		touch-action: none;
+	}
+	.sidebar-outer[data-side='right'] .sidebar-resizer {
+		left: -4px;
+	}
+	.sidebar-outer[data-side='left'] .sidebar-resizer {
+		right: -4px;
+	}
+	.sidebar-resizer::after {
+		content: '';
+		position: absolute;
+		top: 0;
+		bottom: 0;
+		left: 50%;
+		width: 1px;
+		background: var(--space-700);
+		transform: translateX(-50%);
+		transition: background 0.15s;
+	}
+	.sidebar-resizer:hover::after,
+	.sidebar-outer.resizing .sidebar-resizer::after {
+		background: var(--sky);
+		width: 2px;
+	}
+	.sidebar-resizer:focus-visible {
+		outline: 2px solid var(--sky);
+		outline-offset: -2px;
 	}
 
 	.sidebar {

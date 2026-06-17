@@ -401,6 +401,7 @@
 	"map_proto_sidebar_open": "Ouvrir les commandes",
 	"map_proto_sidebar_close": "Fermer les commandes",
 	"map_proto_sidebar_flip": "Déplacer le panneau de l'autre côté",
+	"map_proto_sidebar_resize": "Redimensionner le panneau",
 	"map_proto_section_system_intel": "Renseignements système",
 	"map_proto_section_signatures": "Signatures",
 	"map_proto_section_pilots": "Pilotes",

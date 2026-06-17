@@ -401,6 +401,7 @@
 	"map_proto_sidebar_open": "Steuerung öffnen",
 	"map_proto_sidebar_close": "Steuerung schließen",
 	"map_proto_sidebar_flip": "Panel auf die andere Seite verschieben",
+	"map_proto_sidebar_resize": "Panelgröße ändern",
 	"map_proto_section_system_intel": "System-Intel",
 	"map_proto_section_signatures": "Signaturen",
 	"map_proto_section_pilots": "Piloten",

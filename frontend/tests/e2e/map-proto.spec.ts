@@ -62,6 +62,25 @@ test.describe('/maps/_proto', () => {
 		await expect(flow).toHaveAttribute('data-edge-palette', 'colourblind');
 	});
 
+	test('the sidebar is resizable — dragging the gripper widens it', async ({ page }) => {
+		const sidebar = page.locator('.sidebar-outer');
+		const startW = (await sidebar.boundingBox())!.width;
+
+		// The gripper sits on the inner edge; right-docked, so dragging LEFT widens.
+		const grip = page.getByRole('separator', { name: /resize panel/i });
+		const gb = (await grip.boundingBox())!;
+		await page.mouse.move(gb.x + gb.width / 2, gb.y + gb.height / 2);
+		await page.mouse.down();
+		await page.mouse.move(gb.x - 120, gb.y + gb.height / 2, { steps: 8 });
+		await page.mouse.up();
+
+		const wider = (await sidebar.boundingBox())!.width;
+		expect(wider).toBeGreaterThan(startW + 60);
+
+		// The separator reports the new width for assistive tech.
+		expect(Number(await grip.getAttribute('aria-valuenow'))).toBeGreaterThan(startW);
+	});
+
 	test('edges float — the connection path follows a node as it is dragged', async ({ page }) => {
 		// The Jita→J100001 edge path. Floating edges anchor to each node's perimeter,
 		// so dragging an endpoint recomputes the bezier path's `d`.

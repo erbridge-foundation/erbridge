@@ -401,6 +401,7 @@
 	"map_proto_sidebar_open": "Open controls",
 	"map_proto_sidebar_close": "Close controls",
 	"map_proto_sidebar_flip": "Move panel to the other side",
+	"map_proto_sidebar_resize": "Resize panel",
 	"map_proto_section_system_intel": "System Intel",
 	"map_proto_section_signatures": "Signatures",
 	"map_proto_section_pilots": "Pilots",
