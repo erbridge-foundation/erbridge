@@ -59,13 +59,17 @@
 		{ dir: 'BT', label: m.map_proto_layout_bt }
 	];
 
-	// Per-section open state. Sample sections start open (as in the wireframe).
+	// Per-section open state. Sections start COLLAPSED so the open sidebar presents a
+	// tidy list of headers; the user expands the ones they want. (Persisting which
+	// sections the user leaves open is a real-route concern — it belongs with the
+	// unified per-user prefs storage decision deferred to Track 2, not a localStorage
+	// island in the proto.)
 	let open = $state({
-		intel: true,
-		signatures: true,
-		pilots: true,
-		structures: true,
-		tweaks: true
+		intel: false,
+		signatures: false,
+		pilots: false,
+		structures: false,
+		tweaks: false
 	});
 	type SectionKey = keyof typeof open;
 	function toggle(k: SectionKey) {

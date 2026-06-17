@@ -33,6 +33,11 @@ test.describe('/maps/_proto', () => {
 		await page.goto('/maps/_proto');
 		// Nodes render from the position-less fixture.
 		await expect(node(page, 'Jita')).toBeVisible();
+		// Sidebar sections start COLLAPSED on load; expand them so the tests that
+		// exercise the in-section controls (layout, receive-update, colour-blind…)
+		// can reach them. The collapsed-by-default behaviour is asserted by the
+		// collapse-all/expand-all test, which reloads to observe the true default.
+		await page.getByRole('button', { name: /expand all sections/i }).click();
 	});
 
 	test('renders nodes and edges from the position-less fixture', async ({ page }) => {
@@ -60,17 +65,26 @@ test.describe('/maps/_proto', () => {
 		const intel = page.getByRole('button', { name: 'System Intel' });
 		const legendToggle = () => page.getByRole('button', { name: /show legend|hide legend/i });
 
+		// Reload to undo the beforeEach expand and observe the true default: sections
+		// start COLLAPSED, so the open sidebar shows a tidy list of headers.
+		await page.reload();
+		await expect(node(page, 'Jita')).toBeVisible();
+		await expect(intel).toHaveAttribute('aria-expanded', 'false');
+
+		// Expand all: every section opens.
+		await page.getByRole('button', { name: /expand all sections/i }).click();
+		await expect(intel).toHaveAttribute('aria-expanded', 'true');
+
 		// Open the legend so we can watch collapse-all close it.
 		await page.getByRole('button', { name: /show legend/i }).click();
 		await expect(legendToggle()).toHaveAccessibleName(/hide legend/i);
-		await expect(intel).toHaveAttribute('aria-expanded', 'true');
 
 		// Collapse all: every section closes AND the legend closes.
 		await page.getByRole('button', { name: /collapse all sections/i }).click();
 		await expect(intel).toHaveAttribute('aria-expanded', 'false');
 		await expect(legendToggle()).toHaveAccessibleName(/show legend/i);
 
-		// Expand all: sections reopen, but the legend stays as the user left it
+		// Expand all again: sections reopen, but the legend stays as the user left it
 		// (collapsed) — expand-all does NOT touch the legend.
 		await page.getByRole('button', { name: /expand all sections/i }).click();
 		await expect(intel).toHaveAttribute('aria-expanded', 'true');
@@ -101,7 +115,8 @@ test.describe('/maps/_proto', () => {
 	test('colour-blind palette toggle swaps the canvas palette attribute', async ({ page }) => {
 		const flow = page.getByTestId('map-flow');
 		await expect(flow).toHaveAttribute('data-edge-palette', 'standard');
-		// The toggle lives in the Map Canvas Tweaks sidebar section (open by default).
+		// The toggle lives in the Map Canvas Tweaks sidebar section (expanded by the
+		// beforeEach expand-all).
 		await page.getByLabel('Colour-blind palette').check();
 		await expect(flow).toHaveAttribute('data-edge-palette', 'colourblind');
 	});
