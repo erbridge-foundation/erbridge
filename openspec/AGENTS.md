@@ -133,9 +133,10 @@ paraglide i18n. Load functions **forward cookies** to the backend.
   `StatusIcon` (shape-distinct severity glyph: `ok`/`warning`/`error`),
   `MapCanvas` (reusable Svelte-Flow map canvas; consumes a position-less graph) +
   `components/map/` custom nodes/edges (`SystemNode`, `ConnectionEdge`,
-  `ConnectionEdgeLabel`, `floating-edge` perimeter-anchored bezier geometry) — the
-  theme seam; edges float to the node side facing their neighbour; meaning is
-  text, colour decorates.
+  `ConnectionEdgeLabel`, `floating-edge` perimeter-anchored bezier geometry) plus
+  the docked `MapSidebar` (intel sections + canvas tweaks) and `MapLegend` (the
+  show/hide encoding key pinned to the sidebar bottom) — the theme seam; edges
+  float to the node side facing their neighbour; meaning is text, colour decorates.
 - `map/` — map-canvas logic (sandbox): `types` (position-less graph contract +
   `MapEvent` SSE union; mass + four-state/three-tier TTL + `SystemClass` incl.
   Pochven `P`), `edge-encoding` (pure resolver: mass+TTL → line width/colour/dash/

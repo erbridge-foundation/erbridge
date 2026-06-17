@@ -149,7 +149,7 @@ describe('resolveEdgeEncoding (the one config object)', () => {
 		expect(imminent.ttlBucket).toBe('imminent');
 	});
 
-	it('alert = worstOf(mass, ttl): a fresh-mass < 1h edge is danger and breathes', () => {
+	it('alert is TTL-driven: a fresh-mass < 1h edge is danger and breathes', () => {
 		const enc = resolveEdgeEncoding('fresh', 45);
 		expect(enc.alert.level).toBe('danger');
 		expect(enc.alert.breatheClass).toBe('halo-red');

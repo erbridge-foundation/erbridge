@@ -8,7 +8,7 @@
  * Channel ownership (the spec's key principle — separate READING from ALERTING):
  *   MASS  → line thickness + colour.        (a thin red line is its own alarm)
  *   TTL   → dash pattern + a single glyph.   (hue-independent + an unambiguous tiebreaker)
- *   ALERT → casing (halo) + filled badge.    (worstOf(mass, ttl); owns "loudest")
+ *   ALERT → casing (halo) + filled badge.    (PURE TTL; owns the "loudest" cue)
  *
  * Mass never gets a glyph (avoids two icons fighting on a crit-mass + EOL edge);
  * the glyph is TTL-owned. A fresh + stable edge fires NOTHING and stays calm.
@@ -49,7 +49,8 @@ export interface TtlEncoding {
 }
 
 /** The derived alert layer — the casing (under-stroke halo) + label badge that
- *  own "attention". Fires on worst-of(mass, ttl); `level === 'none'` is calm. */
+ *  own "attention". Fires on the TTL visual ALONE (mass plays no part — see
+ *  resolveAlert); `level === 'none'` is calm. */
 export interface AlertEncoding {
 	level: 'none' | 'warning' | 'danger';
 	/** Casing colour token (only meaningful when level !== 'none'). */
@@ -131,8 +132,8 @@ export function resolveTtl(visual: TtlVisual): TtlEncoding {
 }
 
 /**
- * Resolve the derived alert layer = worstOf(mass, ttl) over the THREE visual
- * tiers:
+ * Resolve the derived alert layer from the TTL visual alone, over the THREE
+ * visual tiers:
  *   above 4 h        → none      (calm)
  *   < 4 h            → warning   (amber, gentle breath)
  *   < 1 h OR imminent → critical (red danger, deep breath) ← the loud signal

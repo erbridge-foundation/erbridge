@@ -131,6 +131,25 @@ test.describe('/maps/_proto', () => {
 		expect(Math.abs(reseeded.x - dragged.x) + Math.abs(reseeded.y - dragged.y)).toBeGreaterThan(30);
 	});
 
+	test('the legend toggles open/closed and keys the encoding', async ({ page }) => {
+		// Collapsed by default: only the header shows, body is absent.
+		const open = page.getByRole('button', { name: /show legend/i });
+		await expect(open).toBeVisible();
+		await expect(page.getByRole('heading', { name: /connection mass/i })).toHaveCount(0);
+
+		// Expand: the encoding groups appear (mass / ttl / systems / other).
+		await open.click();
+		const legend = page.getByTestId('map-legend');
+		await expect(legend.getByRole('heading', { name: /connection mass/i })).toBeVisible();
+		await expect(legend.getByRole('heading', { name: /time to live/i })).toBeVisible();
+		// Meaning is text beside each swatch (a11y rule): the mass labels are present.
+		await expect(legend.getByText('fresh', { exact: true })).toBeVisible();
+
+		// Collapse again.
+		await page.getByRole('button', { name: /hide legend/i }).click();
+		await expect(page.getByRole('heading', { name: /connection mass/i })).toHaveCount(0);
+	});
+
 	test('each tab is its own placement snowflake — a drag stays with its tab', async ({ page }) => {
 		// J100001 renders in both the Home tab (it is Home's root) and the wildcard
 		// `*` tab (which shows every system), so it is the shared node that proves a

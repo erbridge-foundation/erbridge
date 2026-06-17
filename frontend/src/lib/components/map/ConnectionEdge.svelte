@@ -187,7 +187,8 @@
 
 {#if geom}
 	<!-- ALERT CASING: a wider, translucent under-stroke drawn BELOW the main line
-	     (not a blur filter), owning "attention" for worst-of(mass, ttl). Only the
+	     (not a blur filter), owning "attention" for the TTL alert (PURE TTL —
+	     mass adds no glow). Only the
 	     halo breathes (a CSS class keyed off ttl); the line/dash/label stay still.
 	     Under prefers-reduced-motion the global app.css rule kills the animation,
 	     and the resting width/opacity are set to the breath MIDPOINT so the static

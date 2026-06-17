@@ -17,6 +17,7 @@
 	import SystemNode from '$lib/components/map/SystemNode.svelte';
 	import ConnectionEdge from '$lib/components/map/ConnectionEdge.svelte';
 	import MapSidebar from '$lib/components/map/MapSidebar.svelte';
+	import MapLegend from '$lib/components/map/MapLegend.svelte';
 	import { layoutSeed, renderableSystems } from '$lib/map/layout';
 	import { combine, dropConfirmedGhosts } from '$lib/map/reconcile';
 	import { resolveCollisions } from '$lib/map/resolve-collisions';
@@ -95,6 +96,8 @@
 	// ── Sidebar (holds the intel sections + canvas tweaks; collapses + docks) ────
 	let sidebarOpen = $state(true);
 	let sidebarSide = $state<'left' | 'right'>('right');
+	// Legend: a show/hide key pinned to the sidebar bottom (starts collapsed).
+	let legendOpen = $state(false);
 	function flipSidebar(): void {
 		sidebarSide = sidebarSide === 'right' ? 'left' : 'right';
 	}
@@ -438,6 +441,9 @@
 			</button>
 
 			<aside class="sidebar" aria-label={m.map_proto_sidebar_label()}>
+				<!-- Scrolling region: the top-down intel sections. It is the flex
+				     child that yields, so the pinned legend below expands upward. -->
+				<div class="sidebar-scroll">
 				<header class="sidebar-head">
 					<button
 						type="button"
@@ -463,6 +469,10 @@
 					onRedoLayout={redoLayout}
 					onReceiveUpdate={receiveUpdate}
 				/>
+				</div>
+
+				<!-- Legend: pinned footer, expands upward (see MapLegend). -->
+				<MapLegend bind:open={legendOpen} />
 			</aside>
 		</div>
 	</div>
@@ -544,7 +554,15 @@
 		display: flex;
 		flex-direction: column;
 		min-width: 0;
+		min-height: 0;
 		background: var(--space-900);
+		overflow: hidden;
+	}
+	/* The intel sections scroll; the legend is pinned below them (it lives outside
+	   this region), so a tall legend never pushes the sections offscreen. */
+	.sidebar-scroll {
+		flex: 1;
+		min-height: 0;
 		overflow-y: auto;
 		overflow-x: hidden;
 	}
