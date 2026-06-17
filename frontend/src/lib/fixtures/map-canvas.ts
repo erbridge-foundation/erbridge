@@ -128,9 +128,12 @@ const connections: Connection[] = [
 	{
 		// Named (C247) on J100001, K162 on J100002. Half mass, < 4 h left → reduced
 		// width + long dash + amber clock glyph + a gentle amber WARNING casing.
+		// REVERSED orientation: K162 is on the upstream (J100001) side, the named hole
+		// on J100002 — so the arrow points back UP-chain. (Direction is per-hole data,
+		// not a uniform flow; ~40% of the fixture's holes read this way.)
 		id: "c-j1-j2",
-		a: { system: "J100001", sig: { id: "DEF-002", type: "C247" } },
-		b: { system: "J100002", sig: { id: "XYZ-101", type: "K162" } },
+		a: { system: "J100001", sig: { id: "DEF-002", type: "K162" } },
+		b: { system: "J100002", sig: { id: "XYZ-101", type: "C247" } },
 		mass: "half",
 		ttl_remaining_min: 180,
 		eol: false,
@@ -167,9 +170,10 @@ const connections: Connection[] = [
 		eol: false,
 	},
 	{
+		// REVERSED orientation: K162 upstream (J100004), named hole on J100005.
 		id: "c-j4-j5",
-		a: { system: "J100004", sig: { id: "VWX-301", type: "M267" } },
-		b: { system: "J100005", sig: { id: "YZA-302", type: "K162" } },
+		a: { system: "J100004", sig: { id: "VWX-301", type: "K162" } },
+		b: { system: "J100005", sig: { id: "YZA-302", type: "M267" } },
 		mass: "fresh",
 		ttl_remaining_min: 900,
 		eol: false,
@@ -193,10 +197,11 @@ const connections: Connection[] = [
 	},
 	{
 		// A wormhole into Pochven (Triglavian space) off J100004, so the P tier
-		// renders. Named C729 on the J-space side, K162 in Pochven.
+		// renders. REVERSED orientation: K162 on the J-space side, named C729 in
+		// Pochven — the arrow points back up-chain toward J100004.
 		id: "c-j4-krirald",
-		a: { system: "J100004", sig: { id: "TRG-401", type: "C729" } },
-		b: { system: "Krirald", sig: { id: "TRG-402", type: "K162" } },
+		a: { system: "J100004", sig: { id: "TRG-401", type: "K162" } },
+		b: { system: "Krirald", sig: { id: "TRG-402", type: "C729" } },
 		mass: "fresh",
 		ttl_remaining_min: 1600,
 		eol: false,
@@ -216,9 +221,12 @@ const connections: Connection[] = [
 	// the canvas shows two parallel edges bowed apart for exactly one pair — kept
 	// away from the busier core so the encoding demo stays readable.
 	{
+		// REVERSED orientation, so the two parallel holes between J100006↔J100007 point
+		// OPPOSITE ways — a clean demo that direction is per-hole, not per-pair: K162 on
+		// J100007, named Z142 on J100006.
 		id: "c-j6-j7-b",
-		a: { system: "J100006", sig: { id: "NOP-801", type: "Z142" } },
-		b: { system: "J100007", sig: { id: "QRS-802", type: "K162" } },
+		a: { system: "J100006", sig: { id: "NOP-801", type: "K162" } },
+		b: { system: "J100007", sig: { id: "QRS-802", type: "Z142" } },
 		mass: "half",
 		ttl_remaining_min: 1100,
 		eol: false,
