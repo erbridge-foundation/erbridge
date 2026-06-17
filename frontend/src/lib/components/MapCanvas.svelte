@@ -72,8 +72,15 @@
 
 	// The map's flow direction. Set by the one-shot initial layout and by a
 	// "redo layout" action; it tells `placeIncoming` which way a new node steps.
+	// The selected layout style (persists; the segmented control sets it). Feeds the
+	// initial seed, the manual "Redo layout" button, incremental new-node placement
+	// (`placeIncoming` steps in this direction), and the auto-layout reflow.
 	let layoutDir = $state<LayoutDirection>('LR');
-	let layoutOpen = $state(false);
+	// Auto-layout: when ON, every map change re-runs the whole layout in the selected
+	// style (drags discarded — layout is machine-owned). When OFF, a map change keeps
+	// existing positions and only the new node is placed incrementally (today's
+	// behaviour). Session-only, like the other prototype prefs.
+	let autoLayout = $state(false);
 
 	// ── Display controls (prototype-only, no persistence) ───────────────────────
 	// Edge thickness is corp-tunable so people can find a value they like; the
@@ -358,21 +365,26 @@
 		repel();
 	}
 
-	// ── Redo layout (one-shot) ───────────────────────────────────────────────────
-	// Re-run the one-shot layout for the active tab in a new direction. The
-	// node-sync effect preserves LIVE positions for kept nodes (so it can't reflow
-	// them on its own), so we apply the fresh seed to `nodes` directly AND update
-	// the tab's seed map. `layoutDir` updates so subsequent SSE adds step the new way.
-	function redoLayout(dir: LayoutDirection): void {
-		layoutDir = dir;
-		const seed = layoutSeed(union, activeTab, dir, presentIds);
+	// ── Layout ───────────────────────────────────────────────────────────────────
+	// Re-run the whole layout for the active tab in the selected style. The node-sync
+	// effect preserves LIVE positions for kept nodes (so it can't reflow them on its
+	// own), so we apply the fresh seed to `nodes` directly AND update the tab's seed
+	// map. Any manual drags for this tab are discarded — a reflow is machine-owned.
+	function reflow(): void {
+		const seed = layoutSeed(union, activeTab, layoutDir, presentIds);
 		seedByTab[activeTab.id] = { ...seed };
 		nodes = nodes.map((n) => (seed[n.id] ? { ...n, position: { ...seed[n.id] } } : n));
-		// Drop the remembered arrangement for this tab so leaving and returning
-		// shows the reseeded layout, not the pre-redo one. The next switch away
-		// will re-snapshot the fresh positions.
+		// Drop the remembered arrangement for this tab so leaving and returning shows
+		// the reflowed layout, not the pre-reflow one. The next switch away re-snapshots.
 		delete posByTab[activeTab.id];
-		layoutOpen = false;
+	}
+
+	// The segmented control sets the selected style. With auto-layout ON, changing the
+	// style immediately reflows; OFF, it just records the choice (the manual Redo
+	// button or the next incremental placement will use it).
+	function selectLayout(dir: LayoutDirection): void {
+		layoutDir = dir;
+		if (autoLayout) reflow();
 	}
 
 	function selectTab(id: string): void {
@@ -381,7 +393,9 @@
 
 	// ── Simulated SSE ────────────────────────────────────────────────────────────
 	// Pull the next scripted event from the host and apply it to the canvas's own
-	// graph, placing incrementally — never a whole-map re-layout.
+	// graph. With auto-layout OFF this places incrementally (a new node steps out
+	// from its anchor; existing drags are kept). With auto-layout ON the whole map
+	// is reflowed in the selected style after the change lands.
 	function applyEvent(ev: MapEvent): void {
 		switch (ev.kind) {
 			case 'add-system':
@@ -397,6 +411,9 @@
 				graph = { ...graph, connections: graph.connections.filter((c) => c.id !== ev.id) };
 				break;
 		}
+		// Auto-layout: reflow the whole map once the graph mutation has flushed into
+		// the derived union/presentIds (next microtask), so layout sees the new set.
+		if (autoLayout) queueMicrotask(reflow);
 	}
 
 	// Add a system reached through `anchor`: drop it one flow-step out from the
@@ -623,11 +640,13 @@
 					bind:showWhType={showWhTypeLabels}
 					bind:showDirection
 					bind:colourblind={colourblindPalette}
-					bind:layoutOpen
+					{layoutDir}
+					bind:autoLayout
 					{collapseAllSignal}
 					{expandAllSignal}
 					{locked}
-					onRedoLayout={redoLayout}
+					onSelectLayout={selectLayout}
+					onRedoLayout={reflow}
 					onReceiveUpdate={receiveUpdate}
 				/>
 				</div>

@@ -16,10 +16,12 @@
 		showWhType = $bindable(),
 		showDirection = $bindable(),
 		colourblind = $bindable(),
-		layoutOpen = $bindable(),
+		layoutDir,
+		autoLayout = $bindable(),
 		collapseAllSignal = 0,
 		expandAllSignal = 0,
 		locked = false,
+		onSelectLayout,
 		onRedoLayout,
 		onReceiveUpdate
 	}: {
@@ -32,16 +34,30 @@
 		showWhType: boolean;
 		showDirection: boolean;
 		colourblind: boolean;
-		layoutOpen: boolean;
+		/** The currently-selected layout style (highlights the segmented control). */
+		layoutDir: LayoutDirection;
+		/** When ON, a map change reflows the whole map in the selected style. */
+		autoLayout: boolean;
 		/** Incrementing signals from the header's collapse-all / expand-all buttons —
 		 *  the parent owns the action, this component owns the per-section state. */
 		collapseAllSignal?: number;
 		expandAllSignal?: number;
 		/** When the arrangement is locked, section headers don't toggle. */
 		locked?: boolean;
-		onRedoLayout: (dir: LayoutDirection) => void;
+		/** Set the selected layout style (the parent reflows immediately if auto is on). */
+		onSelectLayout: (dir: LayoutDirection) => void;
+		/** Manually reflow the whole map now, in the selected style. */
+		onRedoLayout: () => void;
 		onReceiveUpdate: () => void;
 	} = $props();
+
+	// The four layout styles, in segmented-control order, with their labels.
+	const layoutStyles: { dir: LayoutDirection; label: () => string }[] = [
+		{ dir: 'LR', label: m.map_proto_layout_lr },
+		{ dir: 'RL', label: m.map_proto_layout_rl },
+		{ dir: 'TB', label: m.map_proto_layout_tb },
+		{ dir: 'BT', label: m.map_proto_layout_bt }
+	];
 
 	// Per-section open state. Sample sections start open (as in the wireframe).
 	let open = $state({
@@ -199,23 +215,36 @@
 					{m.map_proto_receive_update()}
 				</button>
 
-				<button
-					type="button"
-					class="ctl-btn"
-					aria-expanded={layoutOpen}
-					onclick={() => (layoutOpen = !layoutOpen)}
-				>
-					{m.map_proto_layout_heading()}
-				</button>
-				{#if layoutOpen}
-					<div class="layout-options" role="group" aria-label={m.map_proto_layout_toggle()}>
-						<button type="button" onclick={() => onRedoLayout('LR')}>{m.map_proto_layout_lr()}</button>
-						<button type="button" onclick={() => onRedoLayout('RL')}>{m.map_proto_layout_rl()}</button>
-						<button type="button" onclick={() => onRedoLayout('TB')}>{m.map_proto_layout_tb()}</button>
-						<button type="button" onclick={() => onRedoLayout('BT')}>{m.map_proto_layout_bt()}</button>
-						<button type="button" onclick={() => onRedoLayout('radial')}>{m.map_proto_layout_radial()}</button>
+				<div class="layout-control">
+					<span class="layout-label" id="layout-style-label">
+						{m.map_proto_layout_heading()}
+					</span>
+					<div
+						class="layout-segmented"
+						role="group"
+						aria-labelledby="layout-style-label"
+					>
+						{#each layoutStyles as style (style.dir)}
+							<button
+								type="button"
+								class="seg-btn"
+								aria-pressed={layoutDir === style.dir}
+								onclick={() => onSelectLayout(style.dir)}
+							>
+								{style.label()}
+							</button>
+						{/each}
 					</div>
-				{/if}
+
+					<label class="toggle">
+						<input type="checkbox" bind:checked={autoLayout} />
+						<span>{m.map_proto_layout_auto()}</span>
+					</label>
+
+					<button type="button" class="ctl-btn" onclick={onRedoLayout}>
+						{m.map_proto_layout_redo()}
+					</button>
+				</div>
 
 				<label class="thickness">
 					<span class="row">
@@ -454,8 +483,7 @@
 		padding: 0.6rem 12px 0.7rem;
 		color: var(--slate-200);
 	}
-	.ctl-btn,
-	.layout-options button {
+	.ctl-btn {
 		padding: 0.35rem 0.6rem;
 		background: var(--space-800);
 		border: 1px solid var(--space-700);
@@ -467,19 +495,50 @@
 		cursor: pointer;
 	}
 	.ctl-btn:focus-visible,
-	.layout-options button:focus-visible,
+	.seg-btn:focus-visible,
 	.tweaks input:focus-visible {
 		outline: 2px solid var(--sky);
 		outline-offset: 2px;
 	}
-	.layout-options {
+	/* Layout control: a label, a 4-way segmented style picker, the auto toggle,
+	   and the manual Redo button. */
+	.layout-control {
 		display: flex;
 		flex-direction: column;
-		gap: 0.2rem;
-		padding: 0.3rem;
+		gap: 0.4rem;
+		padding: 0.4rem;
 		background: var(--space-950);
 		border: 1px solid var(--space-700);
 		border-radius: 4px;
+	}
+	.layout-label {
+		font-size: 0.7rem;
+		font-weight: 700;
+		color: var(--slate-200);
+	}
+	.layout-segmented {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 0.2rem;
+	}
+	.seg-btn {
+		padding: 0.3rem 0.4rem;
+		background: var(--space-800);
+		border: 1px solid var(--space-700);
+		border-radius: 4px;
+		color: var(--slate-300);
+		font: inherit;
+		font-size: 0.7rem;
+		text-align: center;
+		cursor: pointer;
+	}
+	/* The selected style: sky border + tint, brighter text. aria-pressed is the
+	   source of truth (not colour alone) — the pressed state is exposed to AT. */
+	.seg-btn[aria-pressed='true'] {
+		border-color: var(--sky);
+		background: var(--space-700);
+		color: var(--slate-100);
+		font-weight: 700;
 	}
 	.thickness {
 		display: flex;

@@ -221,13 +221,30 @@ The three canvas forks are closed. Implementable change: **`build-map-canvas-pro
   dropped id → forget, new id → seed, kept id → keep saved. The storage *backend*
   (localStorage vs per-user server state) is a **Track-2** decision, deferred with the model.
 
-- **Fork 2 — layout: RESOLVED → hand-roll BFS (no lib).**
+- **Fork 2 — layout: RESOLVED → hand-roll BFS + barycenter ordering (no lib).**
   svelte-flow has NO built-in auto-layout (verified — *"we believe you know your app's
   requirements best… choose the best tool"*; it renders positions you give it). Our graph
-  is root-anchored (`tab.roots`) and shallow, so the three wireframe layouts are all
-  BFS-derived: `rank = BFS hops from roots`; L→R `x=rank,y=sibling`; T→B swaps; radial
-  `(angle=sibling, r=rank)`. ~40 lines, deterministic, zero deps → **`@xyflow/svelte`
-  stays the ONLY new dependency.** Reach for a lib only if hand-rolled radial gets ugly.
+  is root-anchored (`tab.roots`) and shallow: `rank = BFS hops from roots`; L→R
+  `x=rank,y=sibling`; T→B swaps (RL/BT mirror). **`@xyflow/svelte` stays the ONLY map dep.**
+
+  - **ELK.js spiked then REJECTED (2026-06-17).** Tried `elkjs` `layered` for crossing
+    reduction; the layouts were clean, BUT ELK's `layout()` is a **Promise**, and going
+    async dragged in disproportionate machinery for a shallow-tree seed: an epoch guard for
+    stale resolves, a `FitOnSeed` child to re-`fitView` after late positions, `fitSignal`
+    plumbing, and `expect.poll`/settle reworks across the e2e suite — plus an initial-load
+    fit bug (nodes mount at origin before ELK resolves). Per CLAUDE.md proportionality, the
+    async blast radius outweighed "reduce crossings on a shallow root-anchored graph". Reverted
+    whole, dropped the dep.
+  - **What actually fixed crossings: a synchronous barycenter sibling-ordering pass**
+    (`orderRanks` in `layout.ts`). The crossing problem was only ever *sibling order within a
+    rank* (was raw `graph.systems` insertion order). Order each rank by the mean index of its
+    neighbours in the adjacent rank; 2 down/up sweeps converge on shallow chains. Seats children
+    beside parents, uncrosses edges — ~visually on par with ELK's `layered` on the fixture, ~40
+    lines, pure + sync + deterministic, zero deps, no fit machinery (the `<SvelteFlow fitView>`
+    prop just works because positions exist at mount).
+  - **`radial` DROPPED (2026-06-17, user-decided).** Only the four cardinal flows remain
+    (LR/RL/TB/BT). Removed from `LayoutDirection`, `positionFor`/`placeGutter`, `placeIncoming`,
+    the sidebar button, and the `map_proto_layout_radial` i18n key ×3 locales.
 
 - **Fork 3 — a11y rendering: RESOLVED → badge text carries meaning, colour decorates.**
   Matches the shipped StatusIcon principle ([[project-status-icon]]). Wireframe already

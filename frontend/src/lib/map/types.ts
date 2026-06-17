@@ -233,10 +233,9 @@ export interface XY {
 /** id → position. What layout produces and placement persists. */
 export type Positions = Record<string, XY>;
 
-/** Layout direction for the one-shot "redo layout" action (Fork 2). The four
- *  cardinal flows rank away from the roots in that screen direction; `radial`
- *  fans ranks in concentric rings around the root. */
-export type LayoutDirection = 'LR' | 'RL' | 'TB' | 'BT' | 'radial';
+/** Layout direction for the one-shot "redo layout" action (Fork 2). Each cardinal
+ *  flow ranks away from the roots in that screen direction. */
+export type LayoutDirection = 'LR' | 'RL' | 'TB' | 'BT';
 
 /**
  * A live update from the server, modelled as the SSE event the real backend will

@@ -29,18 +29,6 @@ describe('placeIncoming', () => {
 		expect(p.x).toBe(anchor.x);
 	});
 
-	it('radial pushes outward from the origin (farther than the anchor)', () => {
-		const p = placeIncoming(anchor, 'radial');
-		expect(Math.hypot(p.x, p.y)).toBeGreaterThan(Math.hypot(anchor.x, anchor.y));
-	});
-
-	it('radial at the origin still steps off-anchor (no NaN from a zero bearing)', () => {
-		const p = placeIncoming({ x: 0, y: 0 }, 'radial');
-		expect(Number.isFinite(p.x)).toBe(true);
-		expect(Number.isFinite(p.y)).toBe(true);
-		expect(Math.hypot(p.x, p.y)).toBeGreaterThan(0);
-	});
-
 	it('is pure — does not mutate the anchor', () => {
 		const a: XY = { x: 5, y: 7 };
 		placeIncoming(a, 'LR');

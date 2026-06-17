@@ -174,7 +174,7 @@ test.describe('/maps/_proto', () => {
 		expect(Math.abs(afterReload.x - afterDrag.x) + Math.abs(afterReload.y - afterDrag.y)).toBeGreaterThan(40);
 	});
 
-	test('redo layout reseeds node positions', async ({ page }) => {
+	test('selecting a style then Redo layout reseeds node positions', async ({ page }) => {
 		// Drag a node well away first.
 		const box = await node(page, 'J100001').boundingBox();
 		if (!box) throw new Error('no box');
@@ -184,14 +184,44 @@ test.describe('/maps/_proto', () => {
 		await page.mouse.up();
 		const dragged = await nodePosition(page, 'J100001');
 
-		// Open the layout slide-out and pick top→bottom.
-		await page.getByRole('button', { name: /redo layout/i }).click();
-		await page.getByRole('button', { name: /top.*bottom/i }).click();
+		// Pick the top→bottom style on the segmented control. With auto OFF this only
+		// records the choice (the dragged node must NOT move yet).
+		const tb = page.getByRole('button', { name: /top.*bottom/i });
+		await tb.click();
+		await expect(tb).toHaveAttribute('aria-pressed', 'true');
+		const afterSelect = await nodePosition(page, 'J100001');
+		expect(Math.abs(afterSelect.x - dragged.x) + Math.abs(afterSelect.y - dragged.y)).toBeLessThan(2);
 
+		// Now the manual Redo button reflows in the selected style → the node leaves
+		// the dragged spot.
+		await page.getByRole('button', { name: /redo layout/i }).click();
 		await expect(node(page, 'J100001')).toBeVisible();
 		const reseeded = await nodePosition(page, 'J100001');
-		// The node moved off the dragged spot (back onto the BFS grid).
 		expect(Math.abs(reseeded.x - dragged.x) + Math.abs(reseeded.y - dragged.y)).toBeGreaterThan(30);
+	});
+
+	test('auto-layout reflows the whole map when an event arrives', async ({ page }) => {
+		// Drag a node away; with auto-layout ON, the next received event reflows the
+		// whole map and discards the drag.
+		const box = await node(page, 'J100001').boundingBox();
+		if (!box) throw new Error('no box');
+		await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+		await page.mouse.down();
+		await page.mouse.move(box.x + 220, box.y + 160, { steps: 8 });
+		await page.mouse.up();
+		const dragged = await nodePosition(page, 'J100001');
+
+		await page.getByLabel(/auto-layout on changes/i).check();
+		// Apply one scripted SSE event.
+		await page.getByRole('button', { name: /receive update/i }).click();
+
+		// The dragged node was reflowed back onto the grid (auto = machine-owned).
+		await expect
+			.poll(async () => {
+				const p = await nodePosition(page, 'J100001');
+				return Math.abs(p.x - dragged.x) + Math.abs(p.y - dragged.y);
+			})
+			.toBeGreaterThan(30);
 	});
 
 	test('the legend toggles open/closed and keys the encoding', async ({ page }) => {

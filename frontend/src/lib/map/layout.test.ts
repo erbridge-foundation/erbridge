@@ -89,15 +89,6 @@ describe('layoutSeed', () => {
 		expect(pos.C.x).not.toBe(pos.E.x);
 	});
 
-	it('radial puts a lone root at the origin and pushes deeper ranks out', () => {
-		const g = graph();
-		const pos = layoutSeed(g, tab(['A']), 'radial', present(g));
-		expect(pos.A).toEqual({ x: 0, y: 0 });
-		const rB = Math.hypot(pos.B.x, pos.B.y);
-		const rC = Math.hypot(pos.C.x, pos.C.y);
-		expect(rC).toBeGreaterThan(rB);
-	});
-
 	it('ranks multi-root tabs by the MINIMUM hop across the root set', () => {
 		const g = graph();
 		// Roots A and D. C is 1 hop from D but 2 from A → min rank 1.
@@ -115,6 +106,31 @@ describe('layoutSeed', () => {
 		const pos = layoutSeed(g, tab(['A']), 'LR', present(g));
 		// X has no connection → gutter, to the left of the root column (x < A.x).
 		expect(pos.X.x).toBeLessThan(pos.A.x);
+	});
+
+	it('orders siblings to follow their parents (barycenter crossing-reduction)', () => {
+		// Two roots R1 (top) and R2 (below). R1 connects to child Lo, R2 to child
+		// Hi — but Lo/Hi are listed in the WRONG order (Hi first). A naive
+		// insertion-order layout would seat Hi above Lo, crossing both edges. The
+		// barycenter pass must reseat them so each child sits beside its parent:
+		// R1's child above R2's child (no crossing).
+		const sys: System[] = ['R1', 'R2', 'Hi', 'Lo'].map((id) => ({
+			id,
+			name: id,
+			class: 'C2',
+			statics: []
+		}));
+		const g: CombinedGraph = {
+			systems: sys,
+			connections: [conn('r1lo', 'R1', 'Lo'), conn('r2hi', 'R2', 'Hi')],
+			tabs: []
+		};
+		const pos = layoutSeed(g, tab(['R1', 'R2']), 'LR', new Set(sys.map((s) => s.id)));
+		// R1 is the first root (y = 0), R2 sits below it (greater y).
+		expect(pos.R2.y).toBeGreaterThan(pos.R1.y);
+		// Crossing-free ⇒ R1's child (Lo) sits ABOVE R2's child (Hi), mirroring the
+		// roots — even though Hi was listed first.
+		expect(pos.Lo.y).toBeLessThan(pos.Hi.y);
 	});
 });
 

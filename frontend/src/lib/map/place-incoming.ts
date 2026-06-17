@@ -20,14 +20,11 @@ import type { LayoutDirection, XY } from './types';
 // node sits a column/row out from its anchor, consistent with the initial seed.
 const STEP_X = 260;
 const STEP_Y = 150;
-const STEP_R = 220;
 
 /**
  * The ideal slot for a node arriving through `anchor`, one step along the flow
  * direction:
  *   LR → +x   RL → -x   TB → +y   BT → -y
- *   radial → pushed outward from the origin along the anchor's bearing (a node
- *            with no bearing, i.e. the anchor at the origin, steps +x).
  */
 export function placeIncoming(anchor: XY, dir: LayoutDirection): XY {
 	switch (dir) {
@@ -39,14 +36,5 @@ export function placeIncoming(anchor: XY, dir: LayoutDirection): XY {
 			return { x: anchor.x, y: anchor.y + STEP_Y };
 		case 'BT':
 			return { x: anchor.x, y: anchor.y - STEP_Y };
-		case 'radial': {
-			// Step outward from the origin along the anchor's bearing. At the origin
-			// there is no bearing — step +x so the node is still placed off-anchor.
-			const len = Math.hypot(anchor.x, anchor.y);
-			if (len === 0) return { x: STEP_R, y: 0 };
-			const ux = anchor.x / len;
-			const uy = anchor.y / len;
-			return { x: Math.round(anchor.x + ux * STEP_R), y: Math.round(anchor.y + uy * STEP_R) };
-		}
 	}
 }
