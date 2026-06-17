@@ -131,6 +131,42 @@ test.describe('/maps/_proto', () => {
 		expect(Math.abs(reseeded.x - dragged.x) + Math.abs(reseeded.y - dragged.y)).toBeGreaterThan(30);
 	});
 
+	test('each tab is its own placement snowflake — a drag stays with its tab', async ({ page }) => {
+		// J100001 renders in both the Home tab (it is Home's root) and the wildcard
+		// `*` tab (which shows every system), so it is the shared node that proves a
+		// tab does NOT inherit another tab's arrangement.
+		const homeSpot = await nodePosition(page, 'J100001');
+
+		// Drag it well away on the Home tab.
+		const box = await node(page, 'J100001').boundingBox();
+		if (!box) throw new Error('no box');
+		await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+		await page.mouse.down();
+		await page.mouse.move(box.x + 200, box.y + 150, { steps: 8 });
+		await page.mouse.up();
+		const homeDragged = await nodePosition(page, 'J100001');
+		expect(
+			Math.abs(homeDragged.x - homeSpot.x) + Math.abs(homeDragged.y - homeSpot.y)
+		).toBeGreaterThan(40);
+
+		// Switch to the wildcard tab: J100001 must take that tab's OWN seed, not the
+		// Home drag — the two tabs are independent snowflakes.
+		await page.getByRole('button', { name: '*', exact: true }).click();
+		await expect(node(page, 'J100001')).toBeVisible();
+		const wildSpot = await nodePosition(page, 'J100001');
+		expect(
+			Math.abs(wildSpot.x - homeDragged.x) + Math.abs(wildSpot.y - homeDragged.y)
+		).toBeGreaterThan(40);
+
+		// Switch back to Home: the node returns to where it was dragged THERE — the
+		// tab remembered its own arrangement across the round-trip.
+		await page.getByRole('button', { name: 'Home', exact: true }).click();
+		await expect(node(page, 'J100001')).toBeVisible();
+		const homeReturn = await nodePosition(page, 'J100001');
+		expect(Math.abs(homeReturn.x - homeDragged.x)).toBeLessThan(30);
+		expect(Math.abs(homeReturn.y - homeDragged.y)).toBeLessThan(30);
+	});
+
 	test('receive update replays scripted SSE events incrementally', async ({ page }) => {
 		const receive = page.getByRole('button', { name: /receive update/i });
 

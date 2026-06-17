@@ -109,6 +109,13 @@
 	// position; `seedPos` only supplies the FIRST position a node ever gets.
 	let seedByTab = $state<Record<string, Positions>>({});
 
+	// Each tab is its own placement snowflake: the live positions (seed + drags +
+	// ripples) a node has WHILE a tab is active are remembered against that tab, so
+	// leaving and returning restores that tab's arrangement instead of dragging the
+	// previous tab's layout along. A system shared by two tabs can therefore sit in
+	// a different spot in each. Session-only (like seeds) — a reload re-lays-out.
+	let posByTab = $state<Record<string, Positions>>({});
+
 	// Lay out the active tab exactly once, in an effect (NOT a derived — mutating
 	// state mid-derivation is unsafe). This is the one-shot initial layout.
 	$effect(() => {
@@ -206,22 +213,56 @@
 			null
 	);
 
+	// Which tab the live `nodes` array currently reflects. A change means the user
+	// switched tabs, so the node-sync effect restores the new tab's snowflake
+	// instead of carrying the old tab's live positions over.
+	// svelte-ignore state_referenced_locally
+	let renderedTabId = $state(activeTabId);
+
 	// Reconcile the desired node set INTO the live array rather than replacing it,
 	// so Svelte-Flow-owned per-node state (selection, drag) survives a rebuild.
 	// A wholesale `nodes = desiredNodes` clobbers `selected` (and would drop drag
 	// state) every time placement saves on drag-stop — that's the selection bug.
 	// We update data/position on kept nodes, add new ones at their seed, and drop
 	// departed ones; existing nodes keep their live position (Svelte Flow owns it).
+	//
+	// On a TAB SWITCH the carried-over live array belongs to the OLD tab, so we
+	// first snapshot it against that tab (`posByTab`) and then place each node from
+	// the NEW tab's remembered positions (or its seed) — making each tab its own
+	// placement snowflake rather than letting one tab's drags follow into another.
 	$effect(() => {
 		const desired = desiredNodes;
+		const id = activeTab.id;
+		const switched = id !== untrack(() => renderedTabId);
+
 		// Read the live array WITHOUT depending on it (untrack) — this effect must
-		// react to `desiredNodes` only, not to its own write to `nodes`.
+		// react to `desiredNodes` (and the tab id) only, not to its own write.
 		const live = untrack(() => nodes);
+
+		if (switched) {
+			// Remember the outgoing tab's live arrangement before leaving it.
+			const prev = untrack(() => renderedTabId);
+			if (prev) {
+				const snapshot: Positions = {};
+				for (const n of live) snapshot[n.id] = { ...n.position };
+				posByTab[prev] = snapshot;
+			}
+			// Rebuild from the incoming tab's remembered positions, falling back to
+			// its seed. Selection is tab-local too, so it does not carry over.
+			const remembered = untrack(() => posByTab)[id] ?? {};
+			renderedTabId = id;
+			nodes = desired.map((dn) => ({
+				...dn,
+				position: remembered[dn.id] ?? dn.position
+			}));
+			return;
+		}
+
+		// Same tab: preserve each kept node's live position + selection, refresh data.
 		const byId = new Map(live.map((n) => [n.id, n]));
 		nodes = desired.map((dn) => {
 			const cur = byId.get(dn.id);
 			if (!cur) return dn; // new node → take the seed position + data
-			// Kept node: preserve its live position + selection, refresh data.
 			return { ...cur, type: dn.type, data: dn.data };
 		});
 	});
@@ -256,6 +297,10 @@
 		const seed = layoutSeed(union, activeTab, dir, presentIds);
 		seedByTab[activeTab.id] = { ...seed };
 		nodes = nodes.map((n) => (seed[n.id] ? { ...n, position: { ...seed[n.id] } } : n));
+		// Drop the remembered arrangement for this tab so leaving and returning
+		// shows the reseeded layout, not the pre-redo one. The next switch away
+		// will re-snapshot the fresh positions.
+		delete posByTab[activeTab.id];
 		layoutOpen = false;
 	}
 
