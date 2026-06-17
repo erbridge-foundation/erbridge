@@ -43,7 +43,7 @@
 	};
 
 	// Perpendicular separation (px) between adjacent parallel siblings.
-	const PARALLEL_GAP = 26;
+	const PARALLEL_GAP = 44;
 
 	let { source, target, data }: EdgeProps = $props();
 
