@@ -5,59 +5,31 @@
 	// SAMPLE data for now — they're wired to the chain-map model on the backend
 	// track. Lives under components/map/ as part of the canvas theme seam.
 	import { m } from '$lib/paraglide/messages';
-	import type { System, LayoutDirection } from '$lib/map/types';
+	import type { System } from '$lib/map/types';
 
 	let {
 		selected,
-		thickness = $bindable(),
-		thicknessMin,
-		thicknessMax,
-		showMass = $bindable(),
-		showWhType = $bindable(),
-		showDirection = $bindable(),
 		colourblind = $bindable(),
-		layoutDir,
-		autoLayout = $bindable(),
 		collapseAllSignal = 0,
 		expandAllSignal = 0,
 		locked = false,
-		onSelectLayout,
 		onRedoLayout,
 		onReceiveUpdate
 	}: {
 		/** The system the intel sections describe (a stand-in for canvas selection). */
 		selected: System | null;
-		thickness: number;
-		thicknessMin: number;
-		thicknessMax: number;
-		showMass: boolean;
-		showWhType: boolean;
-		showDirection: boolean;
+		/** Throwaway colour-blind A/B switch (removed at promotion); kept in Tweaks. */
 		colourblind: boolean;
-		/** The currently-selected layout style (highlights the segmented control). */
-		layoutDir: LayoutDirection;
-		/** When ON, a map change reflows the whole map in the selected style. */
-		autoLayout: boolean;
 		/** Incrementing signals from the header's collapse-all / expand-all buttons —
 		 *  the parent owns the action, this component owns the per-section state. */
 		collapseAllSignal?: number;
 		expandAllSignal?: number;
 		/** When the arrangement is locked, section headers don't toggle. */
 		locked?: boolean;
-		/** Set the selected layout style (the parent reflows immediately if auto is on). */
-		onSelectLayout: (dir: LayoutDirection) => void;
-		/** Manually reflow the whole map now, in the selected style. */
+		/** Manually reflow the whole map now, in the selected style ("Apply layout"). */
 		onRedoLayout: () => void;
 		onReceiveUpdate: () => void;
 	} = $props();
-
-	// The four layout styles, in segmented-control order, with their labels.
-	const layoutStyles: { dir: LayoutDirection; label: () => string }[] = [
-		{ dir: 'LR', label: m.map_proto_layout_lr },
-		{ dir: 'RL', label: m.map_proto_layout_rl },
-		{ dir: 'TB', label: m.map_proto_layout_tb },
-		{ dir: 'BT', label: m.map_proto_layout_bt }
-	];
 
 	// Per-section open state. Sections start COLLAPSED so the open sidebar presents a
 	// tidy list of headers; the user expands the ones they want. (Persisting which
@@ -210,7 +182,11 @@
 		{/if}
 	</section>
 
-	<!-- Map Canvas Tweaks (prototype display controls) -->
+	<!-- Map Canvas Tweaks (prototype ACTIONS). Sits just above the legend, away from
+	     the real map-data sections (intel / sigs / pilots / structures). Display
+	     PREFERENCES (thickness, label toggles, layout style + auto) live in the cog →
+	     Map Preferences dialog now; this keeps only one-shot actions + the throwaway
+	     colour-blind A/B switch (removed at promotion). -->
 	<section class="sidebar-section">
 		{@render header('tweaks', m.map_proto_section_tweaks())}
 		{#if open.tweaks}
@@ -218,64 +194,9 @@
 				<button type="button" class="ctl-btn" onclick={onReceiveUpdate}>
 					{m.map_proto_receive_update()}
 				</button>
-
-				<div class="layout-control">
-					<span class="layout-label" id="layout-style-label">
-						{m.map_proto_layout_heading()}
-					</span>
-					<div
-						class="layout-segmented"
-						role="group"
-						aria-labelledby="layout-style-label"
-					>
-						{#each layoutStyles as style (style.dir)}
-							<button
-								type="button"
-								class="seg-btn"
-								aria-pressed={layoutDir === style.dir}
-								onclick={() => onSelectLayout(style.dir)}
-							>
-								{style.label()}
-							</button>
-						{/each}
-					</div>
-
-					<label class="toggle">
-						<input type="checkbox" bind:checked={autoLayout} />
-						<span>{m.map_proto_layout_auto()}</span>
-					</label>
-
-					<button type="button" class="ctl-btn" onclick={onRedoLayout}>
-						{m.map_proto_layout_redo()}
-					</button>
-				</div>
-
-				<label class="thickness">
-					<span class="row">
-						<span>{m.map_proto_edge_thickness()}</span>
-						<output class="thickness-value">{thickness}</output>
-					</span>
-					<input
-						type="range"
-						min={thicknessMin}
-						max={thicknessMax}
-						step="1"
-						bind:value={thickness}
-						aria-label={m.map_proto_edge_thickness()}
-					/>
-				</label>
-				<label class="toggle">
-					<input type="checkbox" bind:checked={showMass} />
-					<span>{m.map_proto_show_mass_labels()}</span>
-				</label>
-				<label class="toggle">
-					<input type="checkbox" bind:checked={showWhType} />
-					<span>{m.map_proto_show_whtype_labels()}</span>
-				</label>
-				<label class="toggle">
-					<input type="checkbox" bind:checked={showDirection} />
-					<span>{m.map_proto_show_direction()}</span>
-				</label>
+				<button type="button" class="ctl-btn" onclick={onRedoLayout}>
+					{m.map_proto_layout_redo()}
+				</button>
 				<label class="toggle">
 					<input type="checkbox" bind:checked={colourblind} />
 					<span>{m.map_proto_colourblind_palette()}</span>
@@ -499,75 +420,9 @@
 		cursor: pointer;
 	}
 	.ctl-btn:focus-visible,
-	.seg-btn:focus-visible,
 	.tweaks input:focus-visible {
 		outline: 2px solid var(--sky);
 		outline-offset: 2px;
-	}
-	/* Layout control: a label, a 4-way segmented style picker, the auto toggle,
-	   and the manual Redo button. */
-	.layout-control {
-		display: flex;
-		flex-direction: column;
-		gap: 0.4rem;
-		padding: 0.4rem;
-		background: var(--space-950);
-		border: 1px solid var(--space-700);
-		border-radius: 4px;
-	}
-	.layout-label {
-		font-size: 0.7rem;
-		font-weight: 700;
-		color: var(--slate-200);
-	}
-	.layout-segmented {
-		display: grid;
-		grid-template-columns: 1fr 1fr;
-		gap: 0.2rem;
-	}
-	.seg-btn {
-		padding: 0.3rem 0.4rem;
-		background: var(--space-800);
-		border: 1px solid var(--space-700);
-		border-radius: 4px;
-		color: var(--slate-300);
-		font: inherit;
-		font-size: 0.7rem;
-		text-align: center;
-		cursor: pointer;
-	}
-	/* The selected style: sky border + tint, brighter text. aria-pressed is the
-	   source of truth (not colour alone) — the pressed state is exposed to AT. */
-	.seg-btn[aria-pressed='true'] {
-		border-color: var(--sky);
-		background: var(--space-700);
-		color: var(--slate-100);
-		font-weight: 700;
-	}
-	.thickness {
-		display: flex;
-		flex-direction: column;
-		gap: 0.25rem;
-		font-size: 0.7rem;
-	}
-	.thickness .row {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-	}
-	.thickness-value {
-		min-width: 1.5em;
-		padding: 0 0.3rem;
-		text-align: center;
-		background: var(--space-800);
-		border-radius: 3px;
-		font-weight: 700;
-		color: var(--slate-100);
-	}
-	.thickness input[type='range'] {
-		width: 100%;
-		accent-color: var(--sky);
-		cursor: pointer;
 	}
 	.toggle {
 		display: flex;

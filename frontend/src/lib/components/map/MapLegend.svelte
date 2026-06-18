@@ -55,12 +55,12 @@
 				</li>
 			</ul>
 
-			<!-- TTL: three visual tiers (calm shows no glyph; warning a clock; critical
-			     an octagon) — shape-distinct, matching ConnectionEdgeLabel. -->
+			<!-- TTL: three visual tiers shown by the LINE TEXTURE the edge draws — solid
+			     (calm) / dashed (warning) / dash-dot (critical), the stroke-dasharray
+			     values straight from edge-encoding. The mid-edge glyph was dropped (the
+			     midpoint is now the direction arrow), so the texture + the alert glow
+			     below are the TTL cues. -->
 			<h3 class="group">{m.map_proto_legend_group_ttl()}</h3>
-			<!-- Each TTL row shows BOTH cues the edge uses: the line texture (solid /
-			     dashed / dash-dot — the stroke-dasharray values from edge-encoding)
-			     AND the escalating glyph. Calm is a solid line with no glyph. -->
 			<ul class="rows">
 				<li>
 					<span class="dash" aria-hidden="true">
@@ -68,7 +68,6 @@
 							<line x1="0" y1="3" x2="28" y2="3" stroke="var(--slate-400)" stroke-width="2.5" />
 						</svg>
 					</span>
-					<span class="glyph" aria-hidden="true"></span>
 					<span class="label">{m.map_proto_legend_ttl_calm()}</span>
 				</li>
 				<li>
@@ -83,19 +82,6 @@
 								stroke-width="2.5"
 								stroke-linecap="round"
 								stroke-dasharray="14 8"
-							/>
-						</svg>
-					</span>
-					<span class="glyph" style="color: var(--alert-warning);" aria-hidden="true">
-						<svg viewBox="0 0 16 16">
-							<circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" stroke-width="1.5" />
-							<path
-								d="M8 4.5V8l2.5 1.5"
-								fill="none"
-								stroke="currentColor"
-								stroke-width="1.5"
-								stroke-linecap="round"
-								stroke-linejoin="round"
 							/>
 						</svg>
 					</span>
@@ -114,25 +100,6 @@
 								stroke-linecap="round"
 								stroke-dasharray="9 9 2 9"
 							/>
-						</svg>
-					</span>
-					<span class="glyph" style="color: var(--alert-danger);" aria-hidden="true">
-						<svg viewBox="0 0 16 16">
-							<path
-								d="M5.2 1.5h5.6L14.5 5.2v5.6L10.8 14.5H5.2L1.5 10.8V5.2z"
-								fill="none"
-								stroke="currentColor"
-								stroke-width="1.5"
-								stroke-linejoin="round"
-							/>
-							<path
-								d="M8 4.5v4"
-								fill="none"
-								stroke="currentColor"
-								stroke-width="1.5"
-								stroke-linecap="round"
-							/>
-							<circle cx="8" cy="11" r="0.9" fill="currentColor" />
 						</svg>
 					</span>
 					<span class="label">{m.map_proto_legend_ttl_critical()}</span>

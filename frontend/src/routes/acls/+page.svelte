@@ -3,6 +3,7 @@
 	import { m } from '$lib/paraglide/messages';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import Modal from '$lib/components/Modal.svelte';
+	import DialogActions from '$lib/components/DialogActions.svelte';
 	import type { AclDto } from '$lib/api';
 	import type { PageData, ActionData } from './$types';
 
@@ -124,12 +125,12 @@
 			{#if createError}
 				<p class="inline-error" role="alert">{createError}</p>
 			{/if}
-			<div class="dialog-actions">
+			<DialogActions>
 				<button type="button" class="btn ghost" onclick={() => (createOpen = false)}>
 					{m.dialog_cancel()}
 				</button>
 				<button type="submit" class="btn primary">{m.acls_create_submit()}</button>
-			</div>
+			</DialogActions>
 		</form>
 	{/snippet}
 </Modal>
@@ -257,13 +258,6 @@
 	.rename-form input:focus {
 		outline: none;
 		border-color: var(--sky);
-	}
-
-	.dialog-actions {
-		display: flex;
-		justify-content: flex-end;
-		gap: 12px;
-		margin-top: 4px;
 	}
 
 	.btn {

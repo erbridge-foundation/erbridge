@@ -117,7 +117,7 @@ const systems: System[] = [
 const connections: Connection[] = [
 	{
 		// Both ends scanned: Jita holds the K162, J100001 the named side.
-		// Fresh + stable — the CALM baseline: fat solid green line, no glyph, no halo.
+		// Fresh + stable — the CALM baseline: fat solid green line, no halo.
 		id: "c-jita-j1",
 		a: { system: "Jita", sig: { id: "ABC-001", type: "K162" } },
 		b: { system: "J100001", sig: { id: "XYZ-100", type: "R943" } },
@@ -127,7 +127,7 @@ const connections: Connection[] = [
 	},
 	{
 		// Named (C247) on J100001, K162 on J100002. Half mass, < 4 h left → reduced
-		// width + long dash + amber clock glyph + a gentle amber WARNING casing.
+		// width + long dash + a gentle amber WARNING casing.
 		// REVERSED orientation: K162 is on the upstream (J100001) side, the named hole
 		// on J100002 — so the arrow points back UP-chain. (Direction is per-hole data,
 		// not a uniform flow; ~40% of the fixture's holes read this way.)

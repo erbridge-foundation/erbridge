@@ -7,11 +7,13 @@
  *
  * Channel ownership (the spec's key principle — separate READING from ALERTING):
  *   MASS  → line thickness + colour.        (a thin red line is its own alarm)
- *   TTL   → dash pattern + a single glyph.   (hue-independent + an unambiguous tiebreaker)
- *   ALERT → casing (halo) + filled badge.    (PURE TTL; owns the "loudest" cue)
+ *   TTL   → dash pattern.                    (hue-independent texture; calm/warning/critical)
+ *   ALERT → casing (halo) + label border.    (PURE TTL; owns the "loudest" cue)
  *
- * Mass never gets a glyph (avoids two icons fighting on a crit-mass + EOL edge);
- * the glyph is TTL-owned. A fresh + stable edge fires NOTHING and stays calm.
+ * TTL no longer emits a mid-edge glyph — the dashed line + breathing casing already
+ * carry it, and the midpoint is now home to the rotated direction arrow instead. The
+ * precise four-state TTL text survives as sr-only on the centre label (a11y / forced-
+ * colors). A fresh + stable edge fires NOTHING and stays calm.
  */
 
 import type { Mass, TtlState, TtlVisual } from './types';
@@ -21,13 +23,6 @@ import { ttlState, ttlVisual } from './types';
  *  thickness, dash, glyph, motion, and the alert layer are identical across
  *  palettes (so swapping is a one-line change). */
 export type Palette = 'standard' | 'colourblind';
-
-/** The TTL glyph escalates clock → octagon across the three VISUAL tiers (calm
- *  shows none, warning a clock, critical an octagon); the triangle is retained in
- *  the union for callers but the three-tier visual doesn't emit it. The edge
- *  component maps these names to an inline SVG (shape-distinct, not colour-only),
- *  echoing the StatusIcon approach. */
-export type TtlGlyph = 'none' | 'clock' | 'triangle' | 'octagon';
 
 /** Resolved mass channels: how wide + what colour the main line is. */
 export interface MassEncoding {
@@ -39,13 +34,12 @@ export interface MassEncoding {
 	colourVar: string;
 }
 
-/** Resolved TTL channels: dash pattern + which glyph + whether/how it breathes. */
+/** Resolved TTL channels: just the dash pattern now (the mid-edge glyph was
+ *  dropped — texture + the alert casing carry TTL, and the midpoint is the
+ *  direction arrow's home). */
 export interface TtlEncoding {
 	/** SVG `stroke-dasharray` value, or `''` for a solid line (stable). */
 	dashArray: string;
-	glyph: TtlGlyph;
-	/** Tint token for the glyph (neutral / warning / danger). */
-	glyphColourVar: string;
 }
 
 /** The derived alert layer — the casing (under-stroke halo) + label badge that
@@ -93,7 +87,7 @@ const MASS_COLOUR_VAR: Record<Mass, string> = {
 	critical: 'var(--mass-critical)'
 };
 
-// ── TTL → dash + glyph, keyed off the THREE visual tiers ──────────────────────
+// ── TTL → dash, keyed off the THREE visual tiers ──────────────────────────────
 // The four TTL states collapse to three visuals (see TtlVisual): lt1h + imminent
 // share the critical visual. Dash gaps are kept wide enough to survive round
 // line-caps (which extend each dash by ½ stroke-width on both ends — the reason
@@ -104,31 +98,15 @@ const TTL_DASH: Record<TtlVisual, string> = {
 	critical: '9 9 2 9' // dash-dot — the loud "act now / too late" texture
 };
 
-const TTL_GLYPH: Record<TtlVisual, TtlGlyph> = {
-	calm: 'none',
-	warning: 'clock',
-	critical: 'octagon'
-};
-
-const TTL_GLYPH_COLOUR_VAR: Record<TtlVisual, string> = {
-	calm: 'transparent',
-	warning: 'var(--alert-warning)',
-	critical: 'var(--alert-danger)'
-};
-
 /** Resolve the mass channels. Palette is irrelevant to width and only renames
  *  nothing (the var is constant) — it's passed for symmetry / future use. */
 export function resolveMass(mass: Mass): MassEncoding {
 	return { width: MASS_WIDTH[mass], colourVar: MASS_COLOUR_VAR[mass] };
 }
 
-/** Resolve the TTL dash + glyph from the three-tier visual. */
+/** Resolve the TTL dash from the three-tier visual. */
 export function resolveTtl(visual: TtlVisual): TtlEncoding {
-	return {
-		dashArray: TTL_DASH[visual],
-		glyph: TTL_GLYPH[visual],
-		glyphColourVar: TTL_GLYPH_COLOUR_VAR[visual]
-	};
+	return { dashArray: TTL_DASH[visual] };
 }
 
 /**

@@ -17,6 +17,7 @@
 	import SystemNode from '$lib/components/map/SystemNode.svelte';
 	import ConnectionEdge from '$lib/components/map/ConnectionEdge.svelte';
 	import MapSidebar from '$lib/components/map/MapSidebar.svelte';
+	import MapPreferences from '$lib/components/map/MapPreferences.svelte';
 	import MapLegend from '$lib/components/map/MapLegend.svelte';
 	import { layoutSeed, renderableSystems } from '$lib/map/layout';
 	import { combine, dropConfirmedGhosts } from '$lib/map/reconcile';
@@ -91,13 +92,20 @@
 	let edgeThickness = $state(2);
 	let showMassLabels = $state(true);
 	let showWhTypeLabels = $state(true);
+	// "Show signatures": the per-end sig-id pills on each connection (which signature
+	// in each system leads to the hole). On by default.
+	let showSignatures = $state(true);
 	// "Show direction": a single arrow per connection toward the K162 end (or a
 	// neutral marker when the direction is undetermined). On by default.
 	let showDirection = $state(true);
 	// Colour-blind palette toggle (prototype A/B switch). Swaps ONLY the three mass
-	// hues, via a `data-edge-palette` attribute on the canvas wrapper that the
-	// app.css token override keys off — see the edge-encoding spec §2.
+	// hues, via a `data-edge-palette` attribute on the STAGE wrapper (covers both the
+	// canvas edges and the legend swatches) that the app.css token override keys off
+	// — see the edge-encoding spec §2.
 	let colourblindPalette = $state(false);
+	// Map Preferences dialog (the cog on the tab bar). Holds the display PREFERENCES
+	// (thickness, label toggles, layout style + auto); session-only for now.
+	let prefsOpen = $state(false);
 
 	// ── Sidebar (holds the intel sections + canvas tweaks; collapses + docks) ────
 	let sidebarOpen = $state(true);
@@ -247,8 +255,8 @@
 				c.a.sig?.type ||
 				c.b.sig?.type ||
 				'';
-			// No endpoint arrowhead: direction is a → glyph the edge component draws
-			// just outside the named end (it derives the named end from `arrowTo`).
+			// No endpoint arrowhead: direction is a → arrow the edge component draws at
+			// the midpoint, rotated along the line (it derives the named end from `arrowTo`).
 			return {
 				id: c.id,
 				type: 'connection',
@@ -259,8 +267,10 @@
 					mass: c.mass,
 					eol: c.eol,
 					ttl_remaining_min: c.ttl_remaining_min,
-					sig_a: c.a.sig?.id,
-					sig_b: c.b.sig?.id,
+					// Sig pills are gated by the toggle: when off, simply withhold the ids
+					// and the edge renders no endpoint pills (no new edge prop needed).
+					sig_a: showSignatures ? c.a.sig?.id : undefined,
+					sig_b: showSignatures ? c.b.sig?.id : undefined,
 					arrowTo,
 					showDirection,
 					thickness: edgeThickness,
@@ -460,31 +470,64 @@
 </script>
 
 <div class="map-canvas">
-	<!-- Tabs: local UI state, multi-root + wildcard are just tabs with roots/flags. -->
-	<nav class="tabs" aria-label={m.map_proto_tabs_label()}>
-		{#each tabs as tab (tab.id)}
-			<button
-				type="button"
-				class="tab"
-				class:active={tab.id === activeTabId}
-				aria-pressed={tab.id === activeTabId}
-				onclick={() => selectTab(tab.id)}
+	<!-- Tab bar: the root tabs on the left, the map-preferences cog on the right. -->
+	<div class="tab-bar">
+		<!-- Tabs: local UI state, multi-root + wildcard are just tabs with roots/flags. -->
+		<nav class="tabs" aria-label={m.map_proto_tabs_label()}>
+			{#each tabs as tab (tab.id)}
+				<button
+					type="button"
+					class="tab"
+					class:active={tab.id === activeTabId}
+					aria-pressed={tab.id === activeTabId}
+					onclick={() => selectTab(tab.id)}
+				>
+					{tab.label}
+				</button>
+			{/each}
+		</nav>
+
+		<!-- Map preferences: a cog opening the per-user display-prefs dialog. -->
+		<button
+			type="button"
+			class="prefs-cog"
+			aria-label={m.map_proto_prefs_open()}
+			title={m.map_proto_prefs_open()}
+			onclick={() => (prefsOpen = true)}
+			disabled={locked}
+		>
+			<svg
+				viewBox="0 0 24 24"
+				fill="none"
+				stroke="currentColor"
+				stroke-width="1.8"
+				stroke-linecap="round"
+				stroke-linejoin="round"
+				aria-hidden="true"
 			>
-				{tab.label}
-			</button>
-		{/each}
-	</nav>
+				<circle cx="12" cy="12" r="3" />
+				<path
+					d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"
+				/>
+			</svg>
+		</button>
+	</div>
 
 	<!-- Canvas + a docked, collapsible sidebar (System Intel / Signatures / Pilots
 	     / Structures + Map Canvas Tweaks). `data-side` flips which edge it docks to;
 	     the sidebar-outer animates WIDTH on collapse (wireframe slide), so the
 	     content stays mounted and the canvas reflows smoothly. -->
-	<div class="stage" data-side={sidebarSide}>
-		<div
-			class="flow"
-			data-testid="map-flow"
-			data-edge-palette={colourblindPalette ? 'colourblind' : 'standard'}
-		>
+	<!-- `data-edge-palette` sits on the STAGE (not just the flow) so the colour-blind
+	     mass-hue swap in app.css cascades to BOTH the canvas edges AND the legend
+	     swatches in the sidebar — the legend reads the same --mass-* tokens, so it
+	     must live under the same palette scope to recolour in lock-step. -->
+	<div
+		class="stage"
+		data-side={sidebarSide}
+		data-testid="map-stage"
+		data-edge-palette={colourblindPalette ? 'colourblind' : 'standard'}
+	>
+		<div class="flow" data-testid="map-flow">
 			<SvelteFlow
 				bind:nodes
 				bind:edges
@@ -632,19 +675,10 @@
 
 				<MapSidebar
 					selected={selectedSystem}
-					bind:thickness={edgeThickness}
-					thicknessMin={THICKNESS_MIN}
-					thicknessMax={THICKNESS_MAX}
-					bind:showMass={showMassLabels}
-					bind:showWhType={showWhTypeLabels}
-					bind:showDirection
 					bind:colourblind={colourblindPalette}
-					{layoutDir}
-					bind:autoLayout
 					{collapseAllSignal}
 					{expandAllSignal}
 					{locked}
-					onSelectLayout={selectLayout}
 					onRedoLayout={reflow}
 					onReceiveUpdate={receiveUpdate}
 				/>
@@ -658,6 +692,23 @@
 	</div>
 </div>
 
+<!-- Map Preferences dialog (opened by the tab-bar cog). Its edits bind back to the
+     canvas state and apply live; the blurred backdrop keeps the canvas visible behind
+     so the changes preview as you make them. Session-only for now. -->
+<MapPreferences
+	bind:open={prefsOpen}
+	bind:thickness={edgeThickness}
+	thicknessMin={THICKNESS_MIN}
+	thicknessMax={THICKNESS_MAX}
+	bind:showMass={showMassLabels}
+	bind:showWhType={showWhTypeLabels}
+	bind:showSignatures
+	bind:showDirection
+	{layoutDir}
+	bind:autoLayout
+	onSelectLayout={selectLayout}
+/>
+
 <style>
 	.map-canvas {
 		flex: 1;
@@ -666,12 +717,55 @@
 		min-height: 0;
 		overflow: hidden;
 	}
-	.tabs {
+	/* Tab bar: tabs on the left, the preferences cog pinned to the right. */
+	.tab-bar {
 		display: flex;
-		gap: 0.25rem;
+		align-items: center;
+		gap: 0.5rem;
 		padding: 0.4rem 0.6rem;
 		background: var(--space-900);
 		border-bottom: 1px solid var(--space-700);
+	}
+	.tabs {
+		display: flex;
+		flex: 1;
+		gap: 0.25rem;
+		min-width: 0;
+		overflow-x: auto;
+	}
+	/* Preferences cog: a quiet icon button at the right end of the tab bar. */
+	.prefs-cog {
+		flex: none;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 28px;
+		height: 28px;
+		padding: 0;
+		background: transparent;
+		border: 1px solid var(--space-700);
+		border-radius: 4px;
+		color: var(--slate-400);
+		cursor: pointer;
+		transition:
+			color 0.15s,
+			background 0.15s;
+	}
+	.prefs-cog svg {
+		width: 16px;
+		height: 16px;
+	}
+	.prefs-cog:hover:not(:disabled) {
+		color: var(--slate-100);
+		background: var(--space-800);
+	}
+	.prefs-cog:focus-visible {
+		outline: 2px solid var(--sky);
+		outline-offset: 2px;
+	}
+	.prefs-cog:disabled {
+		opacity: 0.4;
+		cursor: not-allowed;
 	}
 	.tab {
 		padding: 0.25rem 0.7rem;
@@ -803,12 +897,16 @@
 		border-right: 1px solid var(--space-700);
 	}
 
-	/* Collapse/expand toggle, a round button overflowing the inner edge. */
+	/* Collapse/expand toggle, a round button overflowing the inner edge. It sits ABOVE
+	   the resize gripper (z-index 25) so its full circle is clickable — otherwise the
+	   1px grab line ran down the middle of the button and split its hit area, forcing a
+	   click to either side. The resizer is still grabbable along the rest of the height
+	   (the button only occupies a 24px band at mid-height). */
 	.sidebar-toggle {
 		position: absolute;
 		top: 50%;
 		transform: translateY(-50%);
-		z-index: 20;
+		z-index: 30;
 		width: 24px;
 		height: 24px;
 		display: flex;

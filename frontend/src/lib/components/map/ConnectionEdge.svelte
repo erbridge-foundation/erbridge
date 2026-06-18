@@ -13,7 +13,8 @@
 	} from '@xyflow/svelte';
 	import ConnectionEdgeLabel from './ConnectionEdgeLabel.svelte';
 	import { getEdgeParams } from './floating-edge';
-	import type { Mass } from '$lib/map/types';
+	import { m } from '$lib/paraglide/messages';
+	import type { Mass, TtlState } from '$lib/map/types';
 	import { resolveEdgeEncoding } from '$lib/map/edge-encoding';
 
 	type ConnData = {
@@ -67,9 +68,11 @@
 	// How far (px) from a node's perimeter the sig endpoint label sits, nudged
 	// along the edge toward the midpoint so it hugs the node like the wireframe.
 	const SIG_INSET = 0.16;
-	// The direction glyph sits closer to the node than the sig pill, just outside the
-	// named ("from"/non-K162) end, pointing down-line toward the K162 end.
-	const DIR_INSET = 0.34;
+	// The direction arrow lives at the midpoint (labelX/labelY). When the centre
+	// text label is also present, nudge the TEXT this far (px) perpendicular off the
+	// line so the rotated arrow keeps the exact midpoint to itself; the arrow alone
+	// (label hidden) sits dead-centre, unnudged.
+	const LABEL_NUDGE = 14;
 
 	const geom = $derived.by(() => {
 		if (!sourceNode.current || !targetNode.current) return null;
@@ -124,24 +127,23 @@
 		const sigSourceY = p.sy + (p.ty - p.sy) * SIG_INSET + bowY;
 		const sigTargetX = p.tx + (p.sx - p.tx) * SIG_INSET + bowX;
 		const sigTargetY = p.ty + (p.sy - p.ty) * SIG_INSET + bowY;
-		// Direction-glyph anchors: closer to each node than the sig pill, so the
-		// glyph reads as belonging to that end (the from/named end gets one).
-		const dirSourceX = p.sx + (p.tx - p.sx) * DIR_INSET + bowX;
-		const dirSourceY = p.sy + (p.ty - p.sy) * DIR_INSET + bowY;
-		const dirTargetX = p.tx + (p.sx - p.tx) * DIR_INSET + bowX;
-		const dirTargetY = p.ty + (p.sy - p.ty) * DIR_INSET + bowY;
+		// Unit perpendicular of the source→target line — used to push the centre TEXT
+		// label off-line so the rotated arrow can own the exact midpoint.
+		const dx = p.tx - p.sx;
+		const dy = p.ty - p.sy;
+		const len = Math.hypot(dx, dy) || 1;
+		const perpX = -dy / len;
+		const perpY = dx / len;
 		return {
 			path,
 			labelX,
 			labelY,
+			perpX,
+			perpY,
 			sigSourceX,
 			sigSourceY,
 			sigTargetX,
 			sigTargetY,
-			dirSourceX,
-			dirSourceY,
-			dirTargetX,
-			dirTargetY,
 			sx: p.sx,
 			sy: p.sy,
 			tx: p.tx,
@@ -165,11 +167,42 @@
 	const showLabel = $derived(
 		(d.showMass ?? true) || (d.showWhType ?? true) || enc.alert.level !== 'none'
 	);
+	// Whether the centre label paints a VISIBLE pill (mirrors ConnectionEdgeLabel's
+	// chrome rule: a non-empty wh-type or the mass cue). When false the label is still
+	// mounted on an alert edge — but only to carry its sr-only TTL text, so it must NOT
+	// intercept the line hover at the midpoint (the invisible div was stealing the
+	// pointer there, hand cursor + no tooltip). Drives both the off-line nudge and the
+	// wrapper's pointer-events below.
+	const labelVisible = $derived(((d.showWhType ?? true) && d.wh_type !== '') || (d.showMass ?? true));
 
-	// Direction is shown by a single ➤ glyph in its OWN label just outside the named
-	// ("from"/non-K162) end, rotated to point down-line toward the K162 end. No
-	// endpoint arrowhead. `arrowTo` is the K162 end → the named end is the other one;
-	// undetermined (arrowTo null) → no glyph.
+	// Native hover tooltip for the connection's status (type · mass · TTL state). It
+	// USED to hang off the mid-edge TTL glyph; that glyph is gone, so the tooltip now
+	// rides the LINE itself — a wide transparent hit-path below carries an SVG <title>
+	// so hovering anywhere along the stroke surfaces the status (a richer companion to
+	// the always-present sr-only text on the label).
+	const massText: Record<Mass, string> = {
+		fresh: m.map_proto_mass_fresh(),
+		half: m.map_proto_mass_half(),
+		critical: m.map_proto_mass_critical()
+	};
+	const ttlText: Record<TtlState, string> = {
+		stable: m.map_proto_ttl_stable(),
+		lt4h: m.map_proto_ttl_lt4h(),
+		lt1h: m.map_proto_ttl_lt1h(),
+		imminent: m.map_proto_ttl_imminent()
+	};
+	const connTitle = $derived(
+		[d.wh_type, m.map_proto_conn_tooltip_mass({ mass: massText[d.mass] }), ttlText[enc.ttlBucket]]
+			.filter(Boolean)
+			.join(' · ')
+	);
+
+	// Direction is shown by a single ➤ arrow at the MIDPOINT (where the dropped TTL
+	// glyph used to sit), rotated to lie along the line pointing from the named
+	// ("from"/non-K162) end toward the K162 end. No endpoint arrowhead. `arrowTo` is
+	// the K162 end → the named end is the other one; undetermined (arrowTo null) → no
+	// arrow (a meaningful absence: direction unknown). The arrow is the future hook
+	// for a tooltip surfacing the named/K162 sig data.
 	const namedEnd = $derived<'a' | 'b' | null>(
 		!d.showDirection || d.arrowTo == null ? null : d.arrowTo === 'a' ? 'b' : 'a'
 	);
@@ -204,7 +237,7 @@
 	{/if}
 
 	<!-- The line. Mass owns width + colour; TTL owns the dash. No endpoint arrowhead:
-	     direction is a → glyph just outside the named end (below). -->
+	     direction is a → arrow at the midpoint (below). -->
 	<BaseEdge
 		path={geom.path}
 		style="stroke: {stroke}; stroke-width: {thickness}; stroke-linecap: round; {enc.ttl
@@ -213,45 +246,86 @@
 			: ''}"
 	/>
 
-	<!-- Direction glyph: a chunky filled ➤ on a dark backing disc, in its own label
-	     just outside the named ("from") end, rotated to point down-line toward the
-	     K162 end. Absent when direction is undetermined. -->
+	<!-- Direction arrow: a filled triangle on a dark backing disc at the MIDPOINT,
+	     rotated to lie along the line pointing toward the K162 end. Absent when
+	     direction is undetermined. Drawn as plain SVG in the edge's own group (NOT an
+	     HTML EdgeLabel portal) so it sits in the same layer as the line, takes no
+	     pointer events, and never masks the hover tooltip below — getting out of
+	     svelte-flow's way instead of overriding its label wrapper. The disc fades from
+	     a dark core to transparent so it lifts the glyph off the stroke it rides on
+	     without printing a hard ring where it floats beside the line. -->
 	{#if namedEnd != null}
-		{@const dx = namedEnd === 'a' ? geom.dirSourceX : geom.dirTargetX}
-		{@const dy = namedEnd === 'a' ? geom.dirSourceY : geom.dirTargetY}
-		<EdgeLabel x={dx} y={dy} transparent>
-			<span class="dir-glyph" style="transform: rotate({dirAngle}deg);" aria-hidden="true"
-				>➤</span
-			>
-		</EdgeLabel>
+		<g
+			class="dir-arrow"
+			transform="translate({geom.labelX} {geom.labelY}) rotate({dirAngle})"
+			aria-hidden="true"
+		>
+			<!-- Backing disc as two stacked circles (a faint wide halo + a darker core)
+			     rather than a radial-gradient — self-contained per edge, so no shared
+			     <defs> id to manage. -->
+			<circle r="11" fill="var(--space-950)" opacity="0.55" />
+			<circle r="7.5" fill="var(--space-950)" />
+			<!-- Triangle pointing +x; the group rotation aims it down-line. -->
+			<path class="dir-tip" d="M-5 -5.5 L6.5 0 L-5 5.5 Z" />
+		</g>
 	{/if}
 
+	<!-- Hover hit-path: a wide, transparent stroke over the line carrying the native
+	     <title> tooltip, so hovering anywhere along the connection surfaces its status
+	     (the tooltip lived on the deleted glyph before; it rides the line now). Kept
+	     LAST so it is topmost — the hover falls to it (finger cursor + tooltip) even at
+	     the midpoint where the decorative arrow sits. Width floors at a comfortable
+	     hover target regardless of the mass-thin line. -->
+	<path
+		class="edge-hit"
+		d={geom.path}
+		fill="none"
+		stroke="transparent"
+		stroke-width={Math.max(thickness, 14)}
+	>
+		<title>{connTitle}</title>
+	</path>
+
+	<!-- Centre text label. A VISIBLE pill INHERITS the same hover tooltip as the line
+	     (so the connection status shows whether or not the labels are enabled, and on
+	     the pill itself); it is nudged off-line when the arrow shares the midpoint. When
+	     the label is only carrying sr-only TTL text (no visible pill on an alert edge),
+	     it gets `label-inert` → pointer-events:none, so its invisible div never steals
+	     the line hover at the midpoint (the hand-cursor / lost-tooltip bug) — the line
+	     beneath owns that pixel and shows the tooltip there. -->
 	{#if showLabel}
-		<EdgeLabel x={geom.labelX} y={geom.labelY} transparent>
+		{@const nudge = labelVisible && namedEnd != null ? LABEL_NUDGE : 0}
+		<EdgeLabel
+			x={geom.labelX + geom.perpX * nudge}
+			y={geom.labelY + geom.perpY * nudge}
+			transparent
+			class={labelVisible ? undefined : 'label-inert'}
+		>
 			<ConnectionEdgeLabel
 				wh_type={d.wh_type}
 				mass={d.mass}
 				ttlBucket={enc.ttlBucket}
-				glyph={enc.ttl.glyph}
-				glyphColourVar={enc.ttl.glyphColourVar}
 				alertLevel={enc.alert.level}
 				showMass={d.showMass ?? true}
 				showWhType={d.showWhType ?? true}
+				title={connTitle}
 			/>
 		</EdgeLabel>
 	{/if}
 
 	<!-- Sig endpoint labels: which signature in each system leads to this hole.
 	     Svelte Flow supports multiple <EdgeLabel>s per edge — these two sit near
-	     the endpoints, the type/mass label sits at the midpoint above. -->
+	     the endpoints, the type/mass label sits at the midpoint above. Each pill
+	     INHERITS the connection's hover tooltip (title), so hovering it surfaces the
+	     same status as the line. -->
 	{#if d.sig_a}
 		<EdgeLabel x={geom.sigSourceX} y={geom.sigSourceY} transparent>
-			<span class="sig-endpoint">{sigLabel(d.sig_a)}</span>
+			<span class="sig-endpoint" title={connTitle}>{sigLabel(d.sig_a)}</span>
 		</EdgeLabel>
 	{/if}
 	{#if d.sig_b}
 		<EdgeLabel x={geom.sigTargetX} y={geom.sigTargetY} transparent>
-			<span class="sig-endpoint">{sigLabel(d.sig_b)}</span>
+			<span class="sig-endpoint" title={connTitle}>{sigLabel(d.sig_b)}</span>
 		</EdgeLabel>
 	{/if}
 {/if}
@@ -268,6 +342,34 @@
 	   sensible mid-breath weight instead of collapsing to nothing (spec §6). */
 	:global(.edge-casing) {
 		fill: none;
+	}
+	/* The invisible hover hit-path opts back INTO pointer events (the edge layer sets
+	   none) so its <title> tooltip fires on hover; cursor hints it is interactive. */
+	.edge-hit {
+		pointer-events: stroke;
+		cursor: pointer;
+	}
+	/* Informational EdgeLabels (the sr-only-only centre label on alert edges + the sig
+	   pills) must NOT intercept the line hover where their wrapper boxes overlap the
+	   stroke — that was the hand-cursor / lost-tooltip bug (invisible div parked on the
+	   midpoint). They are never drag/click targets, so opt their wrappers out of pointer
+	   events. SvelteFlow hardcodes `pointer-events: all` inline on every EdgeLabel
+	   wrapper, so overriding it needs !important. (The VISIBLE centre pill keeps its
+	   default `all` — it is fine for a shown pill to be hoverable, and it is nudged
+	   off-line away from the stroke anyway.) */
+	:global(.svelte-flow__edge-label.label-inert) {
+		pointer-events: none !important;
+	}
+	/* The midpoint direction arrow is SVG in the edge group (not an HTML EdgeLabel), so
+	   it takes no pointer events and never masks the hover tooltip on the hit-path drawn
+	   after it. A sky drop-shadow gives the tip its own halo so it out-weighs the stroke
+	   it rides on, either way. */
+	.dir-arrow {
+		pointer-events: none;
+		filter: drop-shadow(0 0 2px rgb(2 6 23 / 0.9));
+	}
+	.dir-tip {
+		fill: var(--sky);
 	}
 	:global(.edge-casing.halo-amber) {
 		animation: breathe-soft 3.4s ease-in-out infinite;
@@ -312,37 +414,6 @@
 		line-height: 1.3;
 		color: var(--slate-300);
 		white-space: nowrap;
-		pointer-events: none;
-	}
-
-	/* Direction glyph: a chunky filled ➤ just outside the named end, rotated (inline
-	   style) to lie along the line pointing toward the K162 end. The sole direction
-	   cue now the endpoint arrowhead is gone. It rides ON the thick stroke, so it was
-	   getting lost against it (faint, sitting on the line) — give it a dark backing
-	   disc to lift it off the stroke and a heavier filled glyph so it out-weighs the
-	   line. The disc is a sized box with a radial centre that fades to transparent,
-	   so it dims the stroke under the glyph without printing a hard circle outline. */
-	.dir-glyph {
-		display: grid;
-		place-items: center;
-		width: 22px;
-		height: 22px;
-		/* Soft dark disc behind a chunky filled glyph: lifts it off the thick stroke
-		   it rides on (so the arrow doesn't merge into the line) without printing a
-		   hard outline where the glyph instead sits beside the line — the radial fade
-		   dissolves the disc edge into the dot-grid background. The sky drop-shadow
-		   gives the arrow its own halo so it out-weighs the stroke either way. */
-		background: radial-gradient(
-			circle,
-			var(--space-950) 0%,
-			var(--space-950) 50%,
-			rgb(2 6 23 / 0.55) 70%,
-			transparent 100%
-		);
-		font-size: 19px;
-		line-height: 1;
-		color: var(--sky);
-		filter: drop-shadow(0 0 2px rgb(2 6 23 / 0.9));
 		pointer-events: none;
 	}
 </style>

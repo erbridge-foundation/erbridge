@@ -3,30 +3,28 @@ import { afterEach, describe, it, expect } from 'vitest';
 import ConnectionEdgeLabel from './ConnectionEdgeLabel.svelte';
 import { resolveEdgeEncoding } from '$lib/map/edge-encoding';
 import type { Mass, TtlState } from '$lib/map/types';
-import type { TtlGlyph } from '$lib/map/edge-encoding';
 
 // globals: false in vitest.config → testing-library's auto-cleanup afterEach
-// isn't registered; do it explicitly so a prior render's glyph doesn't leak.
+// isn't registered; do it explicitly so a prior render's label doesn't leak.
 afterEach(cleanup);
 
 // The colour-INDEPENDENT encoding under test lives in ConnectionEdgeLabel
 // (factored out of ConnectionEdge so it renders without SvelteFlow's edge
 // pipeline, which needs measured node dimensions jsdom can't provide).
-// ConnectionEdge itself is thin plumbing (BaseEdge + casing + EdgeLabel) —
-// covered by the e2e canvas test. The mass+ttl→channel resolver is unit-tested
-// separately in edge-encoding.test.ts.
+// ConnectionEdge itself is thin plumbing (BaseEdge + casing + EdgeLabel + the
+// midpoint direction arrow) — covered by the e2e canvas test. The mass+ttl→channel
+// resolver is unit-tested separately in edge-encoding.test.ts.
 
 function renderLabel(props: {
 	wh_type: string;
 	mass: Mass;
 	ttlBucket: TtlState;
-	glyph: TtlGlyph;
-	glyphColourVar?: string;
 	alertLevel?: 'none' | 'warning' | 'danger';
+	showMass?: boolean;
+	showWhType?: boolean;
 }) {
 	return render(ConnectionEdgeLabel, {
 		props: {
-			glyphColourVar: 'var(--text-secondary)',
 			alertLevel: 'none' as const,
 			...props
 		}
@@ -35,59 +33,101 @@ function renderLabel(props: {
 
 describe('ConnectionEdgeLabel encoding (meaning never colour-only)', () => {
 	it('renders the wormhole type as TEXT', () => {
-		renderLabel({ wh_type: 'C247', mass: 'fresh', ttlBucket: 'stable', glyph: 'none' });
+		renderLabel({ wh_type: 'C247', mass: 'fresh', ttlBucket: 'stable' });
 		expect(screen.getByText('C247')).toBeInTheDocument();
 	});
 
 	it('renders mass as a TEXT cue, not colour alone (half)', () => {
-		renderLabel({ wh_type: 'D845', mass: 'half', ttlBucket: 'stable', glyph: 'none' });
+		renderLabel({ wh_type: 'D845', mass: 'half', ttlBucket: 'stable' });
 		expect(screen.getByText('half')).toBeInTheDocument();
 	});
 
 	it('renders mass as a TEXT cue, not colour alone (critical)', () => {
-		renderLabel({ wh_type: 'N968', mass: 'critical', ttlBucket: 'stable', glyph: 'none' });
+		renderLabel({ wh_type: 'N968', mass: 'critical', ttlBucket: 'stable' });
 		expect(screen.getByText('critical')).toBeInTheDocument();
 	});
 
-	it('shows NO TTL glyph for a stable connection (calm baseline)', () => {
+	it('emits NO TTL text for a stable connection (calm baseline)', () => {
 		const { container } = renderLabel({
 			wh_type: 'K162',
 			mass: 'fresh',
-			ttlBucket: 'stable',
-			glyph: 'none'
+			ttlBucket: 'stable'
 		});
-		expect(container.querySelector('.ttl-glyph')).toBeNull();
+		expect(container.querySelector('.sr-only')).toBeNull();
 	});
 
-	it('conveys low-TTL with a glyph AND screen-reader text (survives loss of shape/colour)', () => {
-		renderLabel({
+	it('conveys low-TTL as sr-only text (survives loss of colour AND motion)', () => {
+		const { container } = renderLabel({
 			wh_type: 'X702',
 			mass: 'half',
 			ttlBucket: 'lt1h',
-			glyph: 'clock',
-			glyphColourVar: 'var(--alert-warning)',
 			alertLevel: 'warning'
 		});
-		// The SVG glyph is present (decorative, aria-hidden)...
-		const svg = document.querySelector('.ttl-glyph svg');
-		expect(svg).not.toBeNull();
-		expect(svg?.getAttribute('aria-hidden')).toBe('true');
-		// ...as is the screen-reader text, so the state survives loss of the glyph.
-		// The text stays PRECISE (lt1h vs imminent) even though the visual collapses.
+		// The mid-edge glyph is gone; the precise four-state text carries the state for
+		// screen-reader / forced-colors / reduced-motion users.
+		expect(container.querySelector('.sr-only')).not.toBeNull();
 		expect(screen.getByText('less than 1 hour')).toBeInTheDocument();
 	});
 
-	it('renders the imminent glyph as a filled BADGE when the alert fires', () => {
+	it('keeps the precise four-state distinction in the sr-only text (imminent)', () => {
+		renderLabel({
+			wh_type: 'B274',
+			mass: 'fresh',
+			ttlBucket: 'imminent',
+			alertLevel: 'danger'
+		});
+		expect(screen.getByText('closure imminent')).toBeInTheDocument();
+	});
+
+	it('emits the TTL text even when the mass + wh-type cues are toggled off', () => {
+		// showLabel upstream keeps the label mounted on an alert; the sr-only text must
+		// still be present so the state survives a label stripped of its visible cues.
+		renderLabel({
+			wh_type: 'B274',
+			mass: 'fresh',
+			ttlBucket: 'imminent',
+			alertLevel: 'danger',
+			showMass: false,
+			showWhType: false
+		});
+		expect(screen.getByText('closure imminent')).toBeInTheDocument();
+	});
+
+	it('drops the pill chrome when no visible cue renders (no residual empty pill)', () => {
+		// Both cues off + only the sr-only TTL text → the label must NOT paint its
+		// border/background (that was the residual empty-pill bug on alert edges).
 		const { container } = renderLabel({
 			wh_type: 'B274',
 			mass: 'fresh',
 			ttlBucket: 'imminent',
-			glyph: 'octagon',
-			glyphColourVar: 'var(--alert-danger)',
-			alertLevel: 'danger'
+			alertLevel: 'danger',
+			showMass: false,
+			showWhType: false
 		});
-		expect(container.querySelector('.ttl-glyph.badged')).not.toBeNull();
-		expect(screen.getByText('closure imminent')).toBeInTheDocument();
+		expect(container.querySelector('.edge-label.chrome')).toBeNull();
+	});
+
+	it('keeps the chrome when a visible cue renders', () => {
+		const { container } = renderLabel({
+			wh_type: 'C247',
+			mass: 'half',
+			ttlBucket: 'lt4h',
+			alertLevel: 'warning'
+		});
+		expect(container.querySelector('.edge-label.chrome')).not.toBeNull();
+	});
+
+	it('drops the chrome when wh-type is empty and mass is off (no text to show)', () => {
+		// The named-type derivation yields '' for an all-K162 / unscanned hole; with
+		// mass off there is nothing visible, so no pill.
+		const { container } = renderLabel({
+			wh_type: '',
+			mass: 'fresh',
+			ttlBucket: 'lt4h',
+			alertLevel: 'warning',
+			showMass: false
+		});
+		expect(container.querySelector('.edge-label.chrome')).toBeNull();
 	});
 });
 
@@ -113,10 +153,9 @@ describe('resolveEdgeEncoding (the one config object)', () => {
 		expect(resolveEdgeEncoding('fresh', 5).ttlVisual).toBe('critical');
 	});
 
-	it('stable has no dash and no glyph (calm)', () => {
+	it('stable has no dash (solid, calm)', () => {
 		const enc = resolveEdgeEncoding('fresh', 2000);
 		expect(enc.ttl.dashArray).toBe('');
-		expect(enc.ttl.glyph).toBe('none');
 		expect(enc.alert.level).toBe('none');
 	});
 
@@ -124,10 +163,10 @@ describe('resolveEdgeEncoding (the one config object)', () => {
 		expect(resolveEdgeEncoding('fresh', 2000).alert.level).toBe('none');
 	});
 
-	it('< 4h is the gentle WARNING tier (amber clock, gentle breath)', () => {
+	it('< 4h is the gentle WARNING tier (amber dash, gentle breath)', () => {
 		const enc = resolveEdgeEncoding('fresh', 180);
 		expect(enc.alert.level).toBe('warning');
-		expect(enc.ttl.glyph).toBe('clock');
+		expect(enc.ttl.dashArray).toBe('14 8');
 		expect(enc.alert.breatheClass).toBe('halo-amber');
 	});
 
@@ -136,7 +175,7 @@ describe('resolveEdgeEncoding (the one config object)', () => {
 		expect(enc.ttlBucket).toBe('lt1h');
 		expect(enc.alert.level).toBe('danger');
 		expect(enc.alert.breatheClass).toBe('halo-red');
-		expect(enc.ttl.glyph).toBe('octagon');
+		expect(enc.ttl.dashArray).toBe('9 9 2 9');
 	});
 
 	it('imminent renders IDENTICALLY to < 1h (same critical visual)', () => {

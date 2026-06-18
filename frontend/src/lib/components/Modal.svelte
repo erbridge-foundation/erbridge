@@ -18,9 +18,16 @@
 		title: Snippet;
 		children: Snippet;
 		onClose: () => void;
+		/** Backdrop style. `dim` (default) is the opaque dark scrim used by form
+		 *  dialogs. `blur` keeps the content behind visible (blurred + lightly dimmed),
+		 *  for dialogs whose edits should preview live against what is behind them. */
+		backdrop?: 'dim' | 'blur';
+		/** Dialog max-width. `medium` (default, 440px) suits most forms; `small` (360px)
+		 *  for terse dialogs, `large` (640px) for wider content. */
+		size?: 'small' | 'medium' | 'large';
 	};
 
-	let { open, title, children, onClose }: Props = $props();
+	let { open, title, children, onClose, backdrop = 'dim', size = 'medium' }: Props = $props();
 
 	const instanceId = $props.id();
 	const titleId = `${instanceId}-title`;
@@ -133,6 +140,7 @@
 {#if open}
 	<div
 		class="backdrop"
+		class:blur={backdrop === 'blur'}
 		onpointerdown={onBackdropPointerDown}
 		onkeydown={onKeydown}
 		role="presentation"
@@ -141,6 +149,7 @@
 		<div
 			bind:this={dialogEl}
 			class="dialog"
+			data-size={size}
 			role="dialog"
 			aria-modal="true"
 			aria-labelledby={titleId}
@@ -165,6 +174,12 @@
 		padding: 24px;
 		background: rgba(0, 0, 0, 0.6);
 	}
+	/* The `blur` variant keeps what is behind visible (blurred + lightly dimmed) so a
+	   dialog whose edits preview live shows them happening behind it. */
+	.backdrop.blur {
+		background: rgba(0, 0, 0, 0.25);
+		backdrop-filter: blur(4px);
+	}
 
 	.dialog {
 		width: 100%;
@@ -177,6 +192,12 @@
 		border: 1px solid var(--space-700);
 		border-radius: 6px;
 		box-shadow: 0 24px 48px rgba(0, 0, 0, 0.5);
+	}
+	.dialog[data-size='small'] {
+		max-width: 360px;
+	}
+	.dialog[data-size='large'] {
+		max-width: 640px;
 	}
 
 	.title {

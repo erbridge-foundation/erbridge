@@ -46,11 +46,18 @@ test.describe('/maps/_proto', () => {
 		await expect(node(page, 'J100005')).toBeVisible();
 		// Edges render (svelte-flow draws each as an .svelte-flow__edge).
 		await expect(page.locator('.svelte-flow__edge').first()).toBeVisible();
-		// Mass cue is text, not colour alone.
-		await expect(page.getByText('critical').first()).toBeVisible();
-		// The imminent-closure connection surfaces its TTL state as text (the SVG
-		// glyph's accessible name) — meaning never relies on colour or shape alone.
-		await expect(page.getByText('closure imminent').first()).toBeVisible();
+		// Mass cue is text, not colour alone (the visible .mass label pill — scoped so
+		// it doesn't match the hover-tooltip <title> which also contains "critical").
+		await expect(page.locator('.mass', { hasText: 'critical' }).first()).toBeVisible();
+		// The imminent-closure connection surfaces its TTL state as sr-only text on the
+		// centre label — meaning never relies on colour or motion alone (the mid-edge
+		// glyph was dropped; this text now carries the precise four-state TTL).
+		await expect(page.getByText('closure imminent').first()).toBeAttached();
+		// Each connection carries a hover tooltip (<title> on the line's hit-path) with
+		// its status — the tooltip moved off the deleted glyph onto the line itself.
+		await expect(
+			page.locator('.edge-hit title', { hasText: /mass/ }).first()
+		).toBeAttached();
 		// And it draws a breathing danger casing (the alert under-stroke). The casing
 		// is a fill:none stroked path, which Playwright's visibility heuristic treats
 		// as hidden — assert it is attached (present in the rendered edge) instead.
@@ -94,15 +101,18 @@ test.describe('/maps/_proto', () => {
 	test('locking the arrangement freezes the section + layout controls', async ({ page }) => {
 		const intel = page.getByRole('button', { name: 'System Intel' });
 		const flip = page.getByRole('button', { name: /move panel to the other side/i });
+		const cog = page.getByRole('button', { name: 'Map preferences' });
 		await expect(intel).toBeEnabled();
 		await expect(flip).toBeEnabled();
+		await expect(cog).toBeEnabled();
 
 		await page.getByRole('button', { name: 'Lock arrangement', exact: true }).click();
 
-		// Section toggles, flip, collapse/expand-all all disable; the lock flips to
-		// an unlock affordance.
+		// Section toggles, flip, collapse/expand-all, and the preferences cog all
+		// disable; the lock flips to an unlock affordance.
 		await expect(intel).toBeDisabled();
 		await expect(flip).toBeDisabled();
+		await expect(cog).toBeDisabled();
 		await expect(page.getByRole('button', { name: /collapse all sections/i })).toBeDisabled();
 		await expect(page.getByRole('button', { name: /unlock arrangement/i })).toBeVisible();
 
@@ -110,15 +120,101 @@ test.describe('/maps/_proto', () => {
 		await page.getByRole('button', { name: /unlock arrangement/i }).click();
 		await expect(intel).toBeEnabled();
 		await expect(flip).toBeEnabled();
+		await expect(cog).toBeEnabled();
 	});
 
-	test('colour-blind palette toggle swaps the canvas palette attribute', async ({ page }) => {
-		const flow = page.getByTestId('map-flow');
-		await expect(flow).toHaveAttribute('data-edge-palette', 'standard');
+	test('colour-blind palette toggle swaps the palette attribute AND recolours the legend', async ({
+		page
+	}) => {
+		// The attribute sits on the STAGE (not just the flow) so the mass-hue swap
+		// cascades to BOTH the canvas edges and the legend swatches in the sidebar.
+		const stage = page.getByTestId('map-stage');
+		await expect(stage).toHaveAttribute('data-edge-palette', 'standard');
+
+		// Open the legend + read the fresh-mass swatch colour under the standard palette.
+		await page.getByRole('button', { name: /show legend/i }).click();
+		const freshSwatch = page.locator('.legend-body .line').first();
+		const standardColour = await freshSwatch.evaluate(
+			(el) => getComputedStyle(el).backgroundColor
+		);
+
 		// The toggle lives in the Map Canvas Tweaks sidebar section (expanded by the
 		// beforeEach expand-all).
 		await page.getByLabel('Colour-blind palette').check();
-		await expect(flow).toHaveAttribute('data-edge-palette', 'colourblind');
+		await expect(stage).toHaveAttribute('data-edge-palette', 'colourblind');
+
+		// The legend swatch must recolour in lock-step with the edges (the bug: it
+		// previously sat outside the palette scope and stayed the standard green).
+		const cbColour = await freshSwatch.evaluate((el) => getComputedStyle(el).backgroundColor);
+		expect(cbColour).not.toBe(standardColour);
+	});
+
+	test('the signature-labels toggle shows/hides the per-end sig pills', async ({ page }) => {
+		// On by default: the connection sig-id pills render (e.g. "ABC" from ABC-001).
+		// EdgeLabels mount in svelte-flow's label-renderer portal, not inside the edge
+		// <g>, so select the pill class page-wide.
+		const pills = page.locator('.sig-endpoint');
+		await expect(pills.first()).toBeVisible();
+		const shown = await pills.count();
+		expect(shown).toBeGreaterThan(0);
+
+		// The label toggles now live in the Map Preferences dialog (cog on the tab bar).
+		// Its blurred backdrop keeps the canvas visible behind, so the live change shows.
+		await page.getByRole('button', { name: 'Map preferences' }).click();
+
+		// Toggling it off withholds the ids → no pills render.
+		await page.getByLabel('Signature labels').uncheck();
+		await expect(pills).toHaveCount(0);
+
+		// Back on restores them.
+		await page.getByLabel('Signature labels').check();
+		await expect(pills.first()).toBeVisible();
+	});
+
+	test('the preferences cog opens a dialog whose edits apply live, and closes', async ({
+		page
+	}) => {
+		const dialog = page.getByRole('dialog', { name: 'Map preferences' });
+		await expect(dialog).toBeHidden();
+
+		// The cog on the tab bar opens the dialog.
+		await page.getByRole('button', { name: 'Map preferences' }).click();
+		await expect(dialog).toBeVisible();
+
+		// A pref toggled in the dialog applies live to the canvas behind it (the blurred
+		// backdrop keeps the canvas visible). Type labels off → the wh-type spans vanish.
+		await expect(page.locator('.edge-label .wh-type').first()).toBeVisible();
+		await dialog.getByLabel('Type labels').uncheck();
+		await expect(page.locator('.edge-label .wh-type')).toHaveCount(0);
+
+		// Escape closes it and restores focus to the cog. Escape == Cancel, so the
+		// Type-labels edit above is REVERTED — the wh-type spans come back.
+		await page.keyboard.press('Escape');
+		await expect(dialog).toBeHidden();
+		await expect(page.getByRole('button', { name: 'Map preferences' })).toBeFocused();
+		await expect(page.locator('.edge-label .wh-type').first()).toBeVisible();
+	});
+
+	test('OK keeps the live edits; Cancel reverts them', async ({ page }) => {
+		const dialog = page.getByRole('dialog', { name: 'Map preferences' });
+		const whType = page.locator('.edge-label .wh-type');
+
+		// OK KEEPS: turn Type labels off, click OK → the change persists after close.
+		await page.getByRole('button', { name: 'Map preferences' }).click();
+		await dialog.getByLabel('Type labels').uncheck();
+		await expect(whType).toHaveCount(0);
+		await dialog.getByRole('button', { name: 'OK' }).click();
+		await expect(dialog).toBeHidden();
+		await expect(whType).toHaveCount(0); // kept
+
+		// CANCEL REVERTS: reopen, turn Type labels back on, then Cancel → reverts to the
+		// on-open state (still off), not the mid-dialog edit.
+		await page.getByRole('button', { name: 'Map preferences' }).click();
+		await dialog.getByLabel('Type labels').check();
+		await expect(whType.first()).toBeVisible();
+		await dialog.getByRole('button', { name: 'cancel' }).click();
+		await expect(dialog).toBeHidden();
+		await expect(whType).toHaveCount(0); // reverted to the on-open (off) snapshot
 	});
 
 	test('the sidebar is resizable — dragging the gripper widens it', async ({ page }) => {
@@ -126,11 +222,15 @@ test.describe('/maps/_proto', () => {
 		const startW = (await sidebar.boundingBox())!.width;
 
 		// The gripper sits on the inner edge; right-docked, so dragging LEFT widens.
+		// Grab it NEAR THE TOP, clear of the collapse toggle which now sits over the
+		// gripper at mid-height (the toggle owns that 24px band; the gripper is grabbable
+		// along the rest of its height).
 		const grip = page.getByRole('separator', { name: /resize panel/i });
 		const gb = (await grip.boundingBox())!;
-		await page.mouse.move(gb.x + gb.width / 2, gb.y + gb.height / 2);
+		const grabY = gb.y + 40;
+		await page.mouse.move(gb.x + gb.width / 2, grabY);
 		await page.mouse.down();
-		await page.mouse.move(gb.x - 120, gb.y + gb.height / 2, { steps: 8 });
+		await page.mouse.move(gb.x - 120, grabY, { steps: 8 });
 		await page.mouse.up();
 
 		const wider = (await sidebar.boundingBox())!.width;
@@ -189,7 +289,7 @@ test.describe('/maps/_proto', () => {
 		expect(Math.abs(afterReload.x - afterDrag.x) + Math.abs(afterReload.y - afterDrag.y)).toBeGreaterThan(40);
 	});
 
-	test('selecting a style then Redo layout reseeds node positions', async ({ page }) => {
+	test('selecting a style then Apply layout reseeds node positions', async ({ page }) => {
 		// Drag a node well away first.
 		const box = await node(page, 'J100001').boundingBox();
 		if (!box) throw new Error('no box');
@@ -199,17 +299,21 @@ test.describe('/maps/_proto', () => {
 		await page.mouse.up();
 		const dragged = await nodePosition(page, 'J100001');
 
-		// Pick the top→bottom style on the segmented control. With auto OFF this only
-		// records the choice (the dragged node must NOT move yet).
+		// The layout style picker lives in the Map Preferences dialog now. Pick the
+		// top→bottom style; with auto OFF this only records the choice (the dragged node
+		// must NOT move yet). Confirm with OK (keep — Escape would Cancel/revert), then
+		// apply via the sidebar action.
+		await page.getByRole('button', { name: 'Map preferences' }).click();
 		const tb = page.getByRole('button', { name: /top.*bottom/i });
 		await tb.click();
 		await expect(tb).toHaveAttribute('aria-pressed', 'true');
 		const afterSelect = await nodePosition(page, 'J100001');
 		expect(Math.abs(afterSelect.x - dragged.x) + Math.abs(afterSelect.y - dragged.y)).toBeLessThan(2);
+		await page.getByRole('dialog', { name: 'Map preferences' }).getByRole('button', { name: 'OK' }).click();
 
-		// Now the manual Redo button reflows in the selected style → the node leaves
-		// the dragged spot.
-		await page.getByRole('button', { name: /redo layout/i }).click();
+		// Now the manual Apply layout button (sidebar Tweaks) reflows in the selected
+		// style → the node leaves the dragged spot.
+		await page.getByRole('button', { name: /apply layout/i }).click();
 		await expect(node(page, 'J100001')).toBeVisible();
 		const reseeded = await nodePosition(page, 'J100001');
 		expect(Math.abs(reseeded.x - dragged.x) + Math.abs(reseeded.y - dragged.y)).toBeGreaterThan(30);
@@ -226,7 +330,11 @@ test.describe('/maps/_proto', () => {
 		await page.mouse.up();
 		const dragged = await nodePosition(page, 'J100001');
 
+		// Auto-layout toggle is in the Map Preferences dialog; enable it then confirm
+		// with OK (keep — Escape would Cancel/revert the toggle).
+		await page.getByRole('button', { name: 'Map preferences' }).click();
 		await page.getByLabel(/auto-layout on changes/i).check();
+		await page.getByRole('dialog', { name: 'Map preferences' }).getByRole('button', { name: 'OK' }).click();
 		// Apply one scripted SSE event.
 		await page.getByRole('button', { name: /receive update/i }).click();
 
