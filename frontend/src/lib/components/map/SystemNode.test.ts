@@ -9,6 +9,8 @@ const sys = (over: Partial<System> = {}): System => ({
 	name: 'J100005',
 	class: 'C5',
 	statics: [{ wh_type: 'H900', dest: 'C5' }],
+	scans: [],
+	structures: [],
 	...over
 });
 

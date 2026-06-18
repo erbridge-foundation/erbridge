@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, fireEvent, cleanup } from '@testing-library/svelte';
+import { describe, it, expect, afterEach } from 'vitest';
+import { render, screen, cleanup } from '@testing-library/svelte';
 import MapPreferences from './MapPreferences.svelte';
 
 // globals: false in vitest.config → register cleanup explicitly.
@@ -16,9 +16,8 @@ function renderPrefs(overrides: Record<string, unknown> = {}) {
 			showWhType: true,
 			showSignatures: true,
 			showDirection: true,
-			layoutDir: 'LR' as const,
+			animateDirection: false,
 			autoLayout: false,
-			onSelectLayout: () => {},
 			...overrides
 		}
 	});
@@ -28,38 +27,32 @@ describe('MapPreferences', () => {
 	it('renders the display-preference controls when open', () => {
 		renderPrefs();
 		expect(screen.getByRole('dialog', { name: 'Map preferences' })).toBeInTheDocument();
-		// The four label toggles + the edge-thickness slider + the layout style picker.
+		// The four label toggles + the edge-thickness slider + the auto-layout toggle.
+		// (The layout STYLE picker + apply-now moved out to the tab-bar split-button.)
 		expect(screen.getByLabelText('Mass labels')).toBeInTheDocument();
 		expect(screen.getByLabelText('Type labels')).toBeInTheDocument();
 		expect(screen.getByLabelText('Signature labels')).toBeInTheDocument();
 		expect(screen.getByLabelText('Show direction')).toBeInTheDocument();
 		expect(screen.getByRole('slider', { name: 'Edge thickness' })).toBeInTheDocument();
-		expect(screen.getByRole('button', { name: 'Left → right' })).toBeInTheDocument();
+		// Auto-layout now lives with the other checkboxes, not in a layout sub-control.
 		expect(screen.getByLabelText('Auto-layout on changes')).toBeInTheDocument();
+		expect(screen.getByLabelText('Animate direction')).toBeInTheDocument();
+	});
+
+	it('disables the animate-direction toggle when direction is hidden', () => {
+		renderPrefs({ showDirection: false });
+		expect(screen.getByLabelText('Animate direction')).toBeDisabled();
+	});
+
+	it('no longer hosts the layout style picker (moved to the tab-bar split-button)', () => {
+		renderPrefs();
+		expect(screen.queryByRole('button', { name: 'Left → right' })).toBeNull();
+		expect(screen.queryByRole('button', { name: 'Top → bottom' })).toBeNull();
 	});
 
 	it('does NOT render the throwaway colour-blind toggle (that stays in the sidebar)', () => {
 		renderPrefs();
 		expect(screen.queryByLabelText('Colour-blind palette')).toBeNull();
-	});
-
-	it('marks the active layout style as pressed', () => {
-		renderPrefs({ layoutDir: 'TB' });
-		expect(screen.getByRole('button', { name: 'Top → bottom' })).toHaveAttribute(
-			'aria-pressed',
-			'true'
-		);
-		expect(screen.getByRole('button', { name: 'Left → right' })).toHaveAttribute(
-			'aria-pressed',
-			'false'
-		);
-	});
-
-	it('calls onSelectLayout when a style is picked', async () => {
-		const onSelectLayout = vi.fn();
-		renderPrefs({ onSelectLayout });
-		await fireEvent.click(screen.getByRole('button', { name: 'Bottom → top' }));
-		expect(onSelectLayout).toHaveBeenCalledWith('BT');
 	});
 
 	it('renders nothing when closed', () => {
@@ -71,24 +64,5 @@ describe('MapPreferences', () => {
 		renderPrefs();
 		expect(screen.getByRole('button', { name: 'cancel' })).toBeInTheDocument();
 		expect(screen.getByRole('button', { name: 'OK' })).toBeInTheDocument();
-	});
-
-	it('OK does not revert the layout style (keeps live edits)', async () => {
-		// On open the snapshot equals the current style, so neither OK nor Cancel should
-		// fire onSelectLayout when nothing changed — OK in particular must never revert.
-		const onSelectLayout = vi.fn();
-		renderPrefs({ layoutDir: 'LR', onSelectLayout });
-		await fireEvent.click(screen.getByRole('button', { name: 'OK' }));
-		expect(onSelectLayout).not.toHaveBeenCalled();
-	});
-
-	it('Cancel does not fire onSelectLayout when the style is unchanged since open', async () => {
-		// Cancel reverts the style ONLY if it changed; unchanged → no spurious reflow.
-		// (The behavioural revert of bindable prefs + a changed style is covered against
-		// the live canvas in the e2e suite, where two-way binding actually applies.)
-		const onSelectLayout = vi.fn();
-		renderPrefs({ layoutDir: 'TB', onSelectLayout });
-		await fireEvent.click(screen.getByRole('button', { name: 'cancel' }));
-		expect(onSelectLayout).not.toHaveBeenCalled();
 	});
 });

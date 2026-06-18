@@ -55,71 +55,22 @@
 				</li>
 			</ul>
 
-			<!-- TTL: three visual tiers shown by the LINE TEXTURE the edge draws — solid
-			     (calm) / dashed (warning) / dash-dot (critical), the stroke-dasharray
-			     values straight from edge-encoding. The mid-edge glyph was dropped (the
-			     midpoint is now the direction arrow), so the texture + the alert glow
-			     below are the TTL cues. -->
+			<!-- TTL: carried PURELY by the breathing background casing now (the dashed-
+			     line texture was dropped). Only the two tiers that SHOW a cue are listed —
+			     warning = amber pulse; critical = a stronger, LARGER red pulse. STABLE is
+			     the implicit default (no glow), so it gets no row: a grey-line swatch just
+			     had people hunting for a line that isn't drawn. The pulse cadence + sizes
+			     match the edge; reduced-motion freezes each at its MAX (so warning vs
+			     critical stay tellable apart by size). -->
 			<h3 class="group">{m.map_proto_legend_group_ttl()}</h3>
 			<ul class="rows">
 				<li>
-					<span class="dash" aria-hidden="true">
-						<svg viewBox="0 0 28 6" preserveAspectRatio="none">
-							<line x1="0" y1="3" x2="28" y2="3" stroke="var(--slate-400)" stroke-width="2.5" />
-						</svg>
-					</span>
-					<span class="label">{m.map_proto_legend_ttl_calm()}</span>
-				</li>
-				<li>
-					<span class="dash" aria-hidden="true">
-						<svg viewBox="0 0 28 6" preserveAspectRatio="none">
-							<line
-								x1="0"
-								y1="3"
-								x2="28"
-								y2="3"
-								stroke="var(--alert-warning)"
-								stroke-width="2.5"
-								stroke-linecap="round"
-								stroke-dasharray="14 8"
-							/>
-						</svg>
-					</span>
+					<span class="glow-cell" aria-hidden="true"><span class="glow glow-amber"></span></span>
 					<span class="label">{m.map_proto_legend_ttl_warning()}</span>
 				</li>
 				<li>
-					<span class="dash" aria-hidden="true">
-						<svg viewBox="0 0 28 6" preserveAspectRatio="none">
-							<line
-								x1="0"
-								y1="3"
-								x2="28"
-								y2="3"
-								stroke="var(--alert-danger)"
-								stroke-width="2.5"
-								stroke-linecap="round"
-								stroke-dasharray="9 9 2 9"
-							/>
-						</svg>
-					</span>
+					<span class="glow-cell" aria-hidden="true"><span class="glow glow-red"></span></span>
 					<span class="label">{m.map_proto_legend_ttl_critical()}</span>
-				</li>
-			</ul>
-
-			<!-- ALERT GLOW: the breathing under-stroke (casing) the edge draws on a
-			     flagged connection. It is PURE TTL — mass never adds a glow (a static
-			     halo on a crit-mass hole just read as broken), so the pulse is reserved
-			     entirely for the time axis. Amber pulse for warning, a stronger red
-			     pulse for critical; same cadence as the edge (frozen by reduced-motion). -->
-			<h3 class="group">{m.map_proto_legend_group_alert()}</h3>
-			<ul class="rows">
-				<li>
-					<span class="glow glow-amber" aria-hidden="true"></span>
-					<span class="label">{m.map_proto_legend_alert_warning()}</span>
-				</li>
-				<li>
-					<span class="glow glow-red" aria-hidden="true"></span>
-					<span class="label">{m.map_proto_legend_alert_danger()}</span>
 				</li>
 			</ul>
 
@@ -136,31 +87,12 @@
 				</li>
 			</ul>
 
-			<!-- OTHER: direction glyph + parallel-edge bowing. -->
+			<!-- OTHER: the direction glyph. -->
 			<h3 class="group">{m.map_proto_legend_group_other()}</h3>
 			<ul class="rows">
 				<li>
 					<span class="glyph dir" aria-hidden="true">→</span>
 					<span class="label">{m.map_proto_legend_direction()}</span>
-				</li>
-				<li>
-					<span class="glyph" aria-hidden="true">
-						<svg viewBox="0 0 16 16">
-							<path
-								d="M1 8C5 3 11 3 15 8"
-								fill="none"
-								stroke="var(--slate-400)"
-								stroke-width="1.5"
-							/>
-							<path
-								d="M1 8C5 13 11 13 15 8"
-								fill="none"
-								stroke="var(--slate-400)"
-								stroke-width="1.5"
-							/>
-						</svg>
-					</span>
-					<span class="label">{m.map_proto_legend_parallel()}</span>
 				</li>
 			</ul>
 		</div>
@@ -266,31 +198,13 @@
 		flex: none;
 	}
 
-	/* Line-texture sample: the real stroke-dasharray (solid / dashed / dash-dot)
-	   the TTL tier draws on the edge. Fixed-width box so the rows align. */
-	.dash {
-		width: 28px;
-		height: 6px;
-		flex: none;
-	}
-	.dash svg {
-		width: 100%;
-		height: 100%;
-		display: block;
-	}
-
-	/* Glyph cell: fixed box so labels align whether the cue is an SVG, a stroke
-	   sample, or a character. */
+	/* Glyph cell: fixed box so labels align (the direction arrow is a character). */
 	.glyph {
 		width: 22px;
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
 		flex: none;
-	}
-	.glyph svg {
-		width: 15px;
-		height: 15px;
 	}
 	.glyph.dir {
 		font-size: 16px;
@@ -299,42 +213,61 @@
 		color: var(--sky);
 	}
 
-	/* Alert-glow swatch: a short line segment wearing a soft, breathing halo —
-	   the same casing-over-line cue the edge draws. The halo (box-shadow) swells
-	   with the matching cadence; reduced-motion freezes it at a resting glow. The
-	   colours read the same tokens the edge casing uses. */
+	/* TTL swatch: the casing, drawn the SAME way the edge draws it — a translucent
+	   BAND of a definite width (a scaled-down stroke), NOT a blurred box-shadow. The
+	   edge casing is an SVG stroke (hard-edged, fades by opacity, no Gaussian blur),
+	   so the swatch is a solid translucent rectangle to match — same colour tokens +
+	   opacities as edge-encoding (warning amber @0.3, critical halo-red @0.5). Heights
+	   are the edge widths (16 / 26) scaled to swatch size, so critical reads LARGER.
+	   No line core: the real line keeps its mass colour, so the legend shows only the
+	   cue that changes. Breathes height+opacity from the PEAK so a reduced-motion
+	   freeze lands on the max (matching the edge). */
+	.glow-cell {
+		width: 22px;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		flex: none;
+	}
 	.glow {
 		width: 22px;
-		height: 3px;
 		border-radius: 2px;
 		flex: none;
 	}
 	.glow-amber {
+		height: 6px;
 		background: var(--alert-warning);
-		box-shadow: 0 0 5px 1px var(--alert-warning);
+		opacity: 0.3;
 		animation: legend-breathe-amber 3.4s ease-in-out infinite;
 	}
 	.glow-red {
-		background: var(--alert-danger);
-		box-shadow: 0 0 6px 2px var(--alert-danger-halo);
+		height: 10px;
+		background: var(--alert-danger-halo);
+		opacity: 0.5;
 		animation: legend-breathe-red 2.8s ease-in-out infinite;
 	}
+	/* PEAK at 0%/100% (matches the resting height/opacity), trough at 50% → freeze =
+	   max, mirroring the edge casing's width pulse. */
 	@keyframes legend-breathe-amber {
 		0%,
 		100% {
-			box-shadow: 0 0 4px 0 var(--alert-warning);
+			height: 6px;
+			opacity: 0.3;
 		}
 		50% {
-			box-shadow: 0 0 8px 2px var(--alert-warning);
+			height: 4px;
+			opacity: 0.16;
 		}
 	}
 	@keyframes legend-breathe-red {
 		0%,
 		100% {
-			box-shadow: 0 0 5px 1px var(--alert-danger-halo);
+			height: 10px;
+			opacity: 0.5;
 		}
 		50% {
-			box-shadow: 0 0 11px 4px var(--alert-danger-halo);
+			height: 5px;
+			opacity: 0.16;
 		}
 	}
 	@media (prefers-reduced-motion: reduce) {

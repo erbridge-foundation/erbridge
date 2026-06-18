@@ -7,13 +7,17 @@
  *
  * Channel ownership (the spec's key principle — separate READING from ALERTING):
  *   MASS  → line thickness + colour.        (a thin red line is its own alarm)
- *   TTL   → dash pattern.                    (hue-independent texture; calm/warning/critical)
- *   ALERT → casing (halo) + label border.    (PURE TTL; owns the "loudest" cue)
+ *   TTL   → the breathing casing (halo) ALONE.  (calm = none / warning / critical)
+ *   LABEL → border + sr-text echo the TTL alert level.
  *
- * TTL no longer emits a mid-edge glyph — the dashed line + breathing casing already
- * carry it, and the midpoint is now home to the rotated direction arrow instead. The
- * precise four-state TTL text survives as sr-only on the centre label (a11y / forced-
- * colors). A fresh + stable edge fires NOTHING and stays calm.
+ * TTL is carried PURELY by the pulsing background casing now — the dashed-line
+ * texture was dropped (it competed with mass colour and read as visual noise). The
+ * line is always solid; the halo pulses for warning/critical and is calm (absent)
+ * above 4 h. Under prefers-reduced-motion the pulse FREEZES at its MAX width (the
+ * loudest, largest state — not a midpoint), and warning vs critical freeze at
+ * DISTINCT sizes so the tiers stay tellable apart without colour or motion (plus the
+ * sr-only four-state text + the optional mass/time labels). The midpoint is home to
+ * the rotated direction arrow. A fresh + stable edge fires NOTHING and stays calm.
  */
 
 import type { Mass, TtlState, TtlVisual } from './types';
@@ -34,35 +38,30 @@ export interface MassEncoding {
 	colourVar: string;
 }
 
-/** Resolved TTL channels: just the dash pattern now (the mid-edge glyph was
- *  dropped — texture + the alert casing carry TTL, and the midpoint is the
- *  direction arrow's home). */
-export interface TtlEncoding {
-	/** SVG `stroke-dasharray` value, or `''` for a solid line (stable). */
-	dashArray: string;
-}
-
 /** The derived alert layer — the casing (under-stroke halo) + label badge that
- *  own "attention". Fires on the TTL visual ALONE (mass plays no part — see
- *  resolveAlert); `level === 'none'` is calm. */
+ *  own "attention", and the SOLE TTL channel now (the dashed line was dropped).
+ *  Fires on the TTL visual ALONE (mass plays no part — see resolveAlert);
+ *  `level === 'none'` is calm. */
 export interface AlertEncoding {
 	level: 'none' | 'warning' | 'danger';
 	/** Casing colour token (only meaningful when level !== 'none'). */
 	casingColourVar: string;
-	/** Casing base width / opacity (the resting state; the breathing animation
-	 *  swells around these — see the .halo-* CSS in ConnectionEdge). */
+	/** Casing MAX width / opacity = the breath PEAK, and the resting state the
+	 *  component renders inline. The breathing animation swells UP TO this from a
+	 *  smaller trough, so a reduced-motion freeze lands on the max (loudest) state.
+	 *  warning vs danger have DISTINCT max widths so the frozen tiers are tellable
+	 *  apart by SIZE, not colour alone. */
 	casingWidth: number;
 	casingOpacity: number;
 	/** Which breathing keyframe class to apply, or `''` for no motion. Under
-	 *  prefers-reduced-motion the component drops the class and renders the casing
-	 *  static at the breath midpoint instead. */
+	 *  prefers-reduced-motion the global app.css rule freezes the animation, leaving
+	 *  the casing at its inline MAX (peak) state. */
 	breatheClass: '' | 'halo-amber' | 'halo-red';
 }
 
 /** Everything an edge needs to render, resolved from the two raw variables. */
 export interface EdgeEncoding {
 	mass: MassEncoding;
-	ttl: TtlEncoding;
 	alert: AlertEncoding;
 	/** The four-state bucketed TTL, surfaced so the label text/tests can read the
 	 *  precise state (lt1h vs imminent) even though the VISUAL collapses them. */
@@ -87,26 +86,10 @@ const MASS_COLOUR_VAR: Record<Mass, string> = {
 	critical: 'var(--mass-critical)'
 };
 
-// ── TTL → dash, keyed off the THREE visual tiers ──────────────────────────────
-// The four TTL states collapse to three visuals (see TtlVisual): lt1h + imminent
-// share the critical visual. Dash gaps are kept wide enough to survive round
-// line-caps (which extend each dash by ½ stroke-width on both ends — the reason
-// dense dashes read solid).
-const TTL_DASH: Record<TtlVisual, string> = {
-	calm: '',
-	warning: '14 8',
-	critical: '9 9 2 9' // dash-dot — the loud "act now / too late" texture
-};
-
 /** Resolve the mass channels. Palette is irrelevant to width and only renames
  *  nothing (the var is constant) — it's passed for symmetry / future use. */
 export function resolveMass(mass: Mass): MassEncoding {
 	return { width: MASS_WIDTH[mass], colourVar: MASS_COLOUR_VAR[mass] };
-}
-
-/** Resolve the TTL dash from the three-tier visual. */
-export function resolveTtl(visual: TtlVisual): TtlEncoding {
-	return { dashArray: TTL_DASH[visual] };
 }
 
 /**
@@ -130,8 +113,10 @@ export function resolveAlert(visual: TtlVisual): AlertEncoding {
 			// The casing uses the richer halo red (not the vermillion line/glyph tint)
 			// so the glow actually reads as an alarm against the dark canvas.
 			casingColourVar: 'var(--alert-danger-halo)',
-			casingWidth: 13,
-			casingOpacity: 0.28,
+			// MAX (peak) width — large, so a frozen (reduced-motion) critical reads as
+			// the loudest state AND is clearly bigger than a frozen warning.
+			casingWidth: 26,
+			casingOpacity: 0.5,
 			breatheClass: 'halo-red'
 		};
 	}
@@ -139,8 +124,10 @@ export function resolveAlert(visual: TtlVisual): AlertEncoding {
 		return {
 			level: 'warning',
 			casingColourVar: 'var(--alert-warning)',
-			casingWidth: 11,
-			casingOpacity: 0.18,
+			// MAX (peak) width — distinctly SMALLER than critical's, so size alone
+			// separates the two when frozen.
+			casingWidth: 16,
+			casingOpacity: 0.3,
 			breatheClass: 'halo-amber'
 		};
 	}
@@ -166,7 +153,6 @@ export function resolveEdgeEncoding(
 	const visual = ttlVisual(ttlBucket);
 	return {
 		mass: resolveMass(mass),
-		ttl: resolveTtl(visual),
 		alert: resolveAlert(visual),
 		ttlBucket,
 		ttlVisual: visual

@@ -48,6 +48,8 @@
 	/* Pochven (Triglavian space) — a saturated magenta-crimson, distinct from the
 	   lighter C6/NS reds and the C4 pink so its own space type reads at a glance. */
 	--pochven: #e11d74;
+	/* Drifter wormhole — a distinctive teal/cyan, well clear of the other tiers. */
+	--drifter: #2dd4bf;
 	/* Connection mass hues (standard palette). These are the spec's edge-encoding
 	   values; the colour-blind palette below swaps ONLY these three (Okabe-Ito
 	   blue/orange/vermillion), leaving thickness, dash, glyph, motion identical —
@@ -200,6 +202,7 @@ html[data-reduce-motion="on"] *::after {
 		--ls: #fde047;
 		--ns: #fecaca;
 		--pochven: #f9a8d4;
+		--drifter: #5eead4;
 		--mass-fresh: #86efac;
 		--mass-half: #fcd34d;
 		--mass-critical: #fca5a5;
@@ -244,6 +247,7 @@ html[data-high-contrast="on"] {
 	--ls: #fde047;
 	--ns: #fecaca;
 	--pochven: #f9a8d4;
+	--drifter: #5eead4;
 	--mass-fresh: #86efac;
 	--mass-half: #fcd34d;
 	--mass-critical: #fca5a5;

@@ -5,7 +5,8 @@
 	// SAMPLE data for now — they're wired to the chain-map model on the backend
 	// track. Lives under components/map/ as part of the canvas theme seam.
 	import { m } from '$lib/paraglide/messages';
-	import type { System } from '$lib/map/types';
+	import type { ScanResult, Structure, System } from '$lib/map/types';
+	import { relativeTime, localAndEveTime } from '$lib/map/relative-time';
 
 	let {
 		selected,
@@ -71,13 +72,52 @@
 		}
 	});
 
-	// Sample data for the placeholder sections (replaced by real chain-map data).
-	const sigs = [
-		{ id: 'ABC-123', group: 'WH', colour: 'var(--c3)', info: 'C3a → J234567', when: '2m' },
-		{ id: 'DEF-456', group: 'WH', colour: 'var(--hs)', info: 'HSa → Jita', when: '5m' },
-		{ id: 'GHI-789', group: 'REL', colour: 'var(--amber)', info: 'Unknown', when: '12m' },
-		{ id: 'JKL-012', group: 'DAT', colour: 'var(--sky)', info: 'Unknown', when: '1h' }
-	];
+	// Signatures + Structures bind to the SELECTED system (read-only this phase).
+	const scans = $derived<ScanResult[]>(selected?.scans ?? []);
+	const structures = $derived<Structure[]>(selected?.structures ?? []);
+
+	/** The Type cell: the site classification when known, else the scanner category
+	 *  ("Cosmic Signature" etc.). */
+	function scanType(s: ScanResult): string {
+		return s.site_type ?? s.group;
+	}
+	/** This is a wormholers' tool — wormhole sigs read differently from cosmic
+	 *  sites, so they get their own colour in the table. */
+	function isWormhole(s: ScanResult): boolean {
+		return s.site_type === 'Wormhole';
+	}
+	/** The Info cell: resolved name, the wh-type code for typed wormholes, or a
+	 *  generic "Unknown" while the scan is still unidentified. */
+	function scanInfo(s: ScanResult): string {
+		if (s.name) return s.name;
+		if (s.wh_type) return s.wh_type;
+		return m.map_proto_sig_unknown();
+	}
+	/** A full provenance line for the native row tooltip (the custom tooltip
+	 *  component is deferred to the paste/CRUD phase). Timestamps are shown in both
+	 *  the user's local time AND EVE time (UTC) — see localAndEveTime. */
+	function provenance(meta: { created_at: string; created_by: number; updated_at: string; updated_by: number }): string {
+		return (
+			`Created ${localAndEveTime(meta.created_at)} by ${meta.created_by}\n` +
+			`Updated ${localAndEveTime(meta.updated_at)} by ${meta.updated_by}`
+		);
+	}
+	function sourceLabel(src: Structure['source']): string {
+		return src === 'scanner'
+			? m.map_proto_struct_source_scanner()
+			: src === 'dscan'
+				? m.map_proto_struct_source_dscan()
+				: m.map_proto_struct_source_overview();
+	}
+	function timerLabel(state: NonNullable<Structure['timer']>['state']): string {
+		return state === 'reinforced'
+			? m.map_proto_struct_timer_reinforced()
+			: state === 'anchoring'
+				? m.map_proto_struct_timer_anchoring()
+				: m.map_proto_struct_timer_unanchoring();
+	}
+
+	// Pilots stay SAMPLE — pilots aren't modelled until the pilot-search work.
 	const pilots = [
 		{ name: 'Alara Voss', ship: 'Loki', online: true },
 		{ name: 'Drek Omara', ship: 'Tengu', online: true }
@@ -133,24 +173,35 @@
 		{/if}
 	</section>
 
-	<!-- Signatures (sample) -->
+	<!-- Signatures (bound to the selected system) -->
 	<section class="sidebar-section">
-		{@render header('signatures', m.map_proto_section_signatures(), sigs.length)}
+		{@render header('signatures', m.map_proto_section_signatures(), scans.length)}
 		{#if open.signatures}
 			<div class="section-body">
-				<table class="sig-table">
-					<thead><tr><th>ID</th><th>Type</th><th>Info</th><th class="right">When</th></tr></thead>
-					<tbody>
-						{#each sigs as s (s.id)}
-							<tr>
-								<td class="sig-id">{s.id}</td>
-								<td><span class="sig-group" style:color={s.colour}>{s.group}</span></td>
-								<td class="sig-info">{s.info}</td>
-								<td class="sig-when">{s.when}</td>
-							</tr>
-						{/each}
-					</tbody>
-				</table>
+				{#if scans.length}
+					<table class="sig-table">
+						<thead><tr>
+							<th>{m.map_proto_sig_col_id()}</th>
+							<th>{m.map_proto_sig_col_type()}</th>
+							<th>{m.map_proto_sig_col_info()}</th>
+							<th class="right">{m.map_proto_sig_col_updated()}</th>
+						</tr></thead>
+						<tbody>
+							{#each scans as s (s.sig_id)}
+								<tr title={provenance(s)} class:wormhole={isWormhole(s)}>
+									<td class="sig-id">{s.sig_id}</td>
+									<td><span class="sig-group">{scanType(s)}</span></td>
+									<td class="sig-info">{scanInfo(s)}</td>
+									<td class="sig-when">{relativeTime(s.updated_at)}</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				{:else}
+					<p class="empty-note">
+						{selected ? m.map_proto_sig_empty() : m.map_proto_no_selection()}
+					</p>
+				{/if}
 			</div>
 		{/if}
 	</section>
@@ -171,13 +222,29 @@
 		{/if}
 	</section>
 
-	<!-- Structures (sample) -->
+	<!-- Structures (bound to the selected system) -->
 	<section class="sidebar-section">
-		{@render header('structures', m.map_proto_section_structures(), 1)}
+		{@render header('structures', m.map_proto_section_structures(), structures.length)}
 		{#if open.structures}
 			<div class="section-body structures">
-				<div class="struct-name">Fort Nightfall</div>
-				<div class="struct-meta">Fortizar · Brave Collective</div>
+				{#if structures.length}
+					{#each structures as st (st.id)}
+						<div class="struct-row" title={provenance(st)}>
+							<div class="struct-name">{st.name}</div>
+							<div class="struct-meta">
+								{#if st.hull}{st.hull}{/if}{#if st.hull && st.owner} · {/if}{#if st.owner}{st.owner}{/if}
+								<span class="struct-source">{sourceLabel(st.source)}</span>
+								{#if st.timer}
+									<span class="struct-timer">{timerLabel(st.timer.state)}</span>
+								{/if}
+							</div>
+						</div>
+					{/each}
+				{:else}
+					<p class="empty-note">
+						{selected ? m.map_proto_struct_empty() : m.map_proto_no_selection()}
+					</p>
+				{/if}
 			</div>
 		{/if}
 	</section>
@@ -292,6 +359,7 @@
 	.class-pill[data-class='LS'] { color: var(--ls); border-color: var(--ls); }
 	.class-pill[data-class='NS'] { color: var(--ns); border-color: var(--ns); }
 	.class-pill[data-class='P'] { color: var(--pochven); border-color: var(--pochven); }
+	.class-pill[data-class='D'] { color: var(--drifter); border-color: var(--drifter); }
 	.intel-stats {
 		display: grid;
 		grid-template-columns: 1fr 1fr;
@@ -346,6 +414,16 @@
 	}
 	.sig-group {
 		font-weight: 600;
+		color: var(--slate-300);
+	}
+	/* Wormhole sigs are the headline content of a wormholers' tool — give the whole
+	   row a distinct sky tint so holes stand out from cosmic (data/relic/gas/ore)
+	   sites at a glance. */
+	.sig-table tr.wormhole .sig-group {
+		color: var(--sky);
+	}
+	.sig-table tr.wormhole .sig-info {
+		color: var(--sky);
 	}
 	.sig-info {
 		max-width: 90px;
@@ -392,12 +470,35 @@
 	.structures {
 		padding: 4px 12px 10px;
 	}
+	.struct-row + .struct-row {
+		margin-top: 8px;
+		padding-top: 8px;
+		border-top: 1px solid var(--space-800);
+	}
 	.struct-name {
 		color: var(--slate-300);
 		margin-bottom: 2px;
 	}
 	.struct-meta {
 		color: var(--slate-500);
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 6px;
+	}
+	.struct-source {
+		padding: 0 5px;
+		border: 1px solid var(--space-600);
+		border-radius: 3px;
+		font-size: 10px;
+		color: var(--slate-400);
+	}
+	.struct-timer {
+		padding: 0 5px;
+		border-radius: 3px;
+		font-size: 10px;
+		color: var(--alert-danger);
+		border: 1px solid var(--alert-danger);
 	}
 
 	/* Tweaks */

@@ -16,8 +16,20 @@
  *  (HS/LS/NS) describe the known-space anchor a chain hangs off. `P` is Pochven
  *  (Triglavian space) — its OWN distinct space type, not null- or low-sec: it
  *  displays a null-ish security status but is a separate region with its own
- *  access + connectivity rules, so the map tracks it as a first-class tier. */
-export type SystemClass = 'C1' | 'C2' | 'C3' | 'C4' | 'C5' | 'C6' | 'HS' | 'LS' | 'NS' | 'P';
+ *  access + connectivity rules, so the map tracks it as a first-class tier. `D` is
+ *  a Drifter wormhole */
+export type SystemClass =
+	| "C1"
+	| "C2"
+	| "C3"
+	| "C4"
+	| "C5"
+	| "C6"
+	| "HS"
+	| "LS"
+	| "NS"
+	| "P"
+	| "D";
 
 /** A static wormhole a system always spawns (e.g. a C5 system with a C5+HS pair).
  *  `dest` is the static's destination class (HS/LS/NS/C1–C6) — the only thing the
@@ -29,6 +41,143 @@ export interface SystemStatic {
 	dest: SystemClass;
 }
 
+/**
+ * Provenance / tracking metadata carried by every map record we author (scanned
+ * signatures, structures). Records the who/when of creation and last update so the
+ * sidebar can show recency and the paste-ingest pipeline (a later phase) can stamp
+ * updates in place.
+ *
+ * DECISION: every datetime in the model is an ISO-8601 string in **UTC**. The
+ * `*_by` fields are EVE character ids (numeric — EVE's id space is numeric); name
+ * resolution for display is a render-time concern, not stored here.
+ */
+export interface TrackingMeta {
+	created_at: string;
+	created_by: number;
+	updated_at: string;
+	updated_by: number;
+}
+
+/** Probe-scanner CATEGORY column — the scanner's top-level grouping, DISTINCT from
+ *  the per-site classification (`site_type`). The earlier prototype conflated the
+ *  two; they are separate axes. */
+export type ScanGroup =
+	| "Cosmic Signature"
+	| "Cosmic Anomaly"
+	| "Ship"
+	| "Structure";
+
+/**
+ * A scanned signature / anomaly in a system — the canonical EVE Probe Scanner row,
+ * plus our {@link TrackingMeta}. The wormhole TYPE that orients a connection lives
+ * on the scan (`wh_type`), not the connection.
+ *
+ * Notes:
+ *   - `group` (category) and `site_type` (classification) are DISTINCT axes.
+ *   - `distance_au` from the raw scanner export is deliberately OMITTED — it drifts
+ *     and is never used for identity (per the schema notes).
+ *   - `strength_pct` is DROPPED (user decision): scan progression is read off
+ *     `site_type` / `name` alone (see the scanIs* helpers), and recency comes from
+ *     `updated_at`, so the percentage carries no display weight here.
+ *   - `sig_id` is the STABLE primary key across the 0→100% scan; the paste-ingest
+ *     pipeline reconciles repeat scans in place by it.
+ */
+export interface ScanResult extends TrackingMeta {
+	/** In-game signature id, e.g. `ABC-123`. Stable across the scan; primary key. */
+	sig_id: string;
+	/** Scanner category (not the classification). */
+	group: ScanGroup;
+	/** Per-site classification: 'Wormhole' | 'Data Site' | 'Gas Site' | 'Ore Site' |
+	 *  'Relic Site' | 'Citadel' | … ; `null` until the site is identified. Map search
+	 *  (a later phase) keys off this ("gas" → site_type 'Gas Site', etc.). */
+	site_type: string | null;
+	/** Specific site name; `null` until the scan resolves it. */
+	name: string | null;
+	/** Wormhole TYPE code (`K162`, `H296`, …) — the one field BEYOND the raw scanner
+	 *  schema. The scanner only reports name 'Unstable Wormhole'; the map needs the
+	 *  code to derive direction. `null` unless this is a typed wormhole sig. */
+	wh_type: string | null;
+}
+
+/** A scan that hasn't been classified yet (site_type still unknown). */
+export function scanIsUnknown(r: ScanResult): boolean {
+	return r.site_type === null;
+}
+/** A scan classified but not yet fully resolved (type known, name not). */
+export function scanIsPartial(r: ScanResult): boolean {
+	return r.site_type !== null && r.name === null;
+}
+/** A fully-resolved scan (named). With strength_pct dropped, a name is the marker
+ *  of a completed scan. */
+export function scanIsResolved(r: ScanResult): boolean {
+	return r.name !== null;
+}
+
+/** Where a {@link Structure} record came from. Only `name` is reliable across all
+ *  three sources (see {@link Structure}). */
+export type StructureSource = "scanner" | "dscan" | "overview";
+
+/** A reinforcement / anchoring timer on a structure. Carried only by overview-paste
+ *  records (and not always); d-scan and scanner sources never have one. `ends_at`
+ *  is ISO-8601 UTC. */
+export interface StructureTimer {
+	state: "reinforced" | "anchoring" | "unanchoring";
+	ends_at: string;
+}
+
+/**
+ * A structure in a system — a DISTINCT first-class entity, NOT merely a
+ * {@link ScanResult}. Structures arrive THREE ways with very different fields, so
+ * almost everything is nullable; `name` is the only field present in all sources.
+ *
+ *   - `scanner`  : a probe-scan row (group 'Structure'); has `sig_id`, `hull`.
+ *   - `dscan`    : a d-scan paste row; has `type_id`, `hull`; NO `sig_id`, NO owner.
+ *   - `overview` : an overview-selected paste; `name` (+ sometimes `owner`/`timer`)
+ *                  ONLY — no `type_id`, no `hull`, no `sig_id`.
+ *
+ * Identity = `name` (reconcile by it), with `sig_id` agreement CONFIRMING a match
+ * when both records carry one. Carries the SAME {@link TrackingMeta} as a scan.
+ */
+export interface Structure extends TrackingMeta {
+	id: string;
+	/** The only field present across all three sources. */
+	name: string;
+	/** EVE type id of the hull — from d-scan. */
+	type_id: number | null;
+	/** Hull name ('Astrahus' / 'Fortizar' / …) — d-scan or scanner. */
+	hull: string | null;
+	/** Owning corp/alliance — manual or overview; never d-scan or scanner. */
+	owner: string | null;
+	/** Links to a {@link ScanResult} when the structure was also probe-scanned. */
+	sig_id: string | null;
+	/** Reinforcement/anchoring timer — overview-paste only, sometimes. */
+	timer: StructureTimer | null;
+	source: StructureSource;
+}
+
+/**
+ * D-scan structure hull allow-list. A d-scan paste is mostly noise (moons, planets,
+ * POCOs, the star, containers); the paste-ingest pipeline (a later phase) keeps only
+ * rows whose `type_text` hull is in this set and discards the rest. Declared here as
+ * the documented source of truth even though nothing consumes it yet — the parser
+ * will. POCOs (Customs Offices) are deliberately a SEPARATE class, tracked later.
+ */
+export const STRUCTURE_HULL_ALLOWLIST: readonly string[] = [
+	// Citadels
+	"Astrahus",
+	"Fortizar",
+	"Keepstar",
+	// Engineering complexes
+	"Raitaru",
+	"Azbel",
+	"Sotiyo",
+	// Refineries
+	"Athanor",
+	"Tatara",
+	// Faction / special (extend as samples arrive)
+	"Palatine Keepstar",
+];
+
 /** A system as the combined graph knows it. No coordinates — placement is separate. */
 export interface System {
 	/** Stable identity (J-code for wormholes, system name for k-space). Doubles as
@@ -38,12 +187,19 @@ export interface System {
 	name: string;
 	class: SystemClass;
 	statics: SystemStatic[];
+	/** In-system scanned signatures + anomalies (incl. scanned structures, which
+	 *  also appear as first-class {@link Structure}s). A wormhole scan
+	 *  (`site_type: 'Wormhole'`) is what a {@link Connection} references by system +
+	 *  sig_id. */
+	scans: ScanResult[];
+	/** First-class structures in the system (multi-source — see {@link Structure}). */
+	structures: Structure[];
 }
 
 /** Connection mass state. Drives line THICKNESS + colour, plus a TEXT cue on the
  *  edge label — mass is never colour-only (Fork 3). Thresholds follow the in-game
  *  stability text: fresh > 50%, reduced (half) < 50%, critical < 10%. */
-export type Mass = 'fresh' | 'half' | 'critical';
+export type Mass = "fresh" | "half" | "critical";
 
 /**
  * A wormhole type's MAXIMUM stable lifetime, in minutes, as the eve-scout import
@@ -67,7 +223,9 @@ export type MaxStableMin = 0 | 270 | 720 | 960 | 1440 | 2880;
 
 /** The known `max_stable_time` values, smallest first. The 0 marker sorts first
  *  but is the "unknown/no fixed lifetime" case, not the shortest-lived. */
-export const MAX_STABLE_MIN: readonly MaxStableMin[] = [0, 270, 720, 960, 1440, 2880];
+export const MAX_STABLE_MIN: readonly MaxStableMin[] = [
+	0, 270, 720, 960, 1440, 2880,
+];
 
 /**
  * The DISPLAYED time-to-live bucket — derived from how many minutes of life a
@@ -93,7 +251,7 @@ export const MAX_STABLE_MIN: readonly MaxStableMin[] = [0, 270, 720, 960, 1440, 
  * "anything above 4 h" — by design, so a healthy hole reads calm (no glyph,
  * solid line). Only the under-4-h escalation carries cues.
  */
-export type TtlState = 'stable' | 'lt4h' | 'lt1h' | 'imminent';
+export type TtlState = "stable" | "lt4h" | "lt1h" | "imminent";
 
 /**
  * The three VISUAL urgency tiers the edge encoding actually draws. The four
@@ -106,19 +264,19 @@ export type TtlState = 'stable' | 'lt4h' | 'lt1h' | 'imminent';
  * Mass-critical also forces at least `critical` on the alert layer independently
  * of TTL (a near-collapse-by-mass hole is its own emergency); see resolveAlert.
  */
-export type TtlVisual = 'calm' | 'warning' | 'critical';
+export type TtlVisual = "calm" | "warning" | "critical";
 
 /** Collapse a four-state {@link TtlState} onto the three visual tiers the map
  *  draws. `lt1h` and `imminent` are the SAME critical visual (see TtlState). */
 export function ttlVisual(state: TtlState): TtlVisual {
 	switch (state) {
-		case 'stable':
-			return 'calm';
-		case 'lt4h':
-			return 'warning';
-		case 'lt1h':
-		case 'imminent':
-			return 'critical';
+		case "stable":
+			return "calm";
+		case "lt4h":
+			return "warning";
+		case "lt1h":
+		case "imminent":
+			return "critical";
 	}
 }
 
@@ -126,10 +284,10 @@ export function ttlVisual(state: TtlState): TtlVisual {
  *  buckets (4 h / 1 h / imminent); confirm against real EVE EOL mechanics before
  *  the backend hardcodes them (see the edge-encoding spec's open questions). */
 export function ttlState(remainingMin: number): TtlState {
-	if (remainingMin < 15) return 'imminent';
-	if (remainingMin < 60) return 'lt1h';
-	if (remainingMin < 240) return 'lt4h';
-	return 'stable';
+	if (remainingMin < 15) return "imminent";
+	if (remainingMin < 60) return "lt1h";
+	if (remainingMin < 240) return "lt4h";
+	return "stable";
 }
 
 /** A scanned signature at a connection endpoint. The wormhole TYPE lives on the
@@ -186,13 +344,13 @@ export interface Connection {
  *  or `null` when neither side's type is known. Derived: the K162 side is the
  *  one typed `K162`; if only the NAMED side is known, the K162 is the other end.
  *  (K162 and named are complementary, so one known type orients the arrow.) */
-export function k162End(conn: Connection): 'a' | 'b' | null {
+export function k162End(conn: Connection): "a" | "b" | null {
 	const aType = conn.a.sig?.type ?? null;
 	const bType = conn.b.sig?.type ?? null;
 	// a is K162, or b is a known NAMED side ⇒ the K162 is the a end.
-	if (aType === 'K162' || (bType !== null && bType !== 'K162')) return 'a';
+	if (aType === "K162" || (bType !== null && bType !== "K162")) return "a";
 	// b is K162, or a is a known NAMED side ⇒ the K162 is the b end.
-	if (bType === 'K162' || (aType !== null && aType !== 'K162')) return 'b';
+	if (bType === "K162" || (aType !== null && aType !== "K162")) return "b";
 	return null; // both ends unknown → direction undetermined
 }
 
@@ -237,7 +395,7 @@ export type Positions = Record<string, XY>;
 
 /** Layout direction for the one-shot "redo layout" action (Fork 2). Each cardinal
  *  flow ranks away from the roots in that screen direction. */
-export type LayoutDirection = 'LR' | 'RL' | 'TB' | 'BT';
+export type LayoutDirection = "LR" | "RL" | "TB" | "BT";
 
 /**
  * A live update from the server, modelled as the SSE event the real backend will
@@ -254,7 +412,12 @@ export type LayoutDirection = 'LR' | 'RL' | 'TB' | 'BT';
  *   - `remove-connection` : a wormhole collapsed.
  */
 export type MapEvent =
-	| { kind: 'add-system'; system: System; anchor: string; connection: Connection }
-	| { kind: 'add-connection'; connection: Connection }
-	| { kind: 'remove-system'; id: string }
-	| { kind: 'remove-connection'; id: string };
+	| {
+			kind: "add-system";
+			system: System;
+			anchor: string;
+			connection: Connection;
+	  }
+	| { kind: "add-connection"; connection: Connection }
+	| { kind: "remove-system"; id: string }
+	| { kind: "remove-connection"; id: string };

@@ -31,6 +31,9 @@
 		 *  null when the direction is undetermined (both ends unidentified). */
 		arrowTo?: 'a' | 'b' | null;
 		showDirection?: boolean;
+		/** Taste preference: drift the direction arrow along the line. Separate from
+		 *  prefers-reduced-motion (the CSS still freezes it under that). Default off. */
+		animateDirection?: boolean;
 		/** User-tunable BASE thickness; the mass encoding overrides per-state width,
 		 *  but this still scales the floor so the corp slider keeps an effect. */
 		thickness?: number;
@@ -220,12 +223,12 @@
 
 {#if geom}
 	<!-- ALERT CASING: a wider, translucent under-stroke drawn BELOW the main line
-	     (not a blur filter), owning "attention" for the TTL alert (PURE TTL —
-	     mass adds no glow). Only the
-	     halo breathes (a CSS class keyed off ttl); the line/dash/label stay still.
-	     Under prefers-reduced-motion the global app.css rule kills the animation,
-	     and the resting width/opacity are set to the breath MIDPOINT so the static
-	     halo doesn't read dimmer than the animated one (spec §6). -->
+	     (not a blur filter). This is now the SOLE TTL channel (the dashed line was
+	     dropped) — calm fires nothing, warning/critical pulse. The inline width/
+	     opacity are the breath PEAK (max); the keyframes dip BELOW it and return, so
+	     under prefers-reduced-motion (global app.css kills the animation) the casing
+	     freezes at its MAX — the loudest, largest state — and warning vs critical
+	     freeze at distinct sizes (16 vs 26) so the tiers read apart without motion. -->
 	{#if enc.alert.level !== 'none'}
 		<BaseEdge
 			path={geom.path}
@@ -236,15 +239,10 @@
 		/>
 	{/if}
 
-	<!-- The line. Mass owns width + colour; TTL owns the dash. No endpoint arrowhead:
-	     direction is a → arrow at the midpoint (below). -->
-	<BaseEdge
-		path={geom.path}
-		style="stroke: {stroke}; stroke-width: {thickness}; stroke-linecap: round; {enc.ttl
-			.dashArray
-			? `stroke-dasharray: ${enc.ttl.dashArray};`
-			: ''}"
-	/>
+	<!-- The line. Mass owns width + colour; the line is ALWAYS solid now (TTL is
+	     carried purely by the breathing casing below — the dash texture was dropped).
+	     No endpoint arrowhead: direction is a → arrow at the midpoint (below). -->
+	<BaseEdge path={geom.path} style="stroke: {stroke}; stroke-width: {thickness}; stroke-linecap: round;" />
 
 	<!-- Direction arrow: a filled triangle on a dark backing disc at the MIDPOINT,
 	     rotated to lie along the line pointing toward the K162 end. Absent when
@@ -260,13 +258,23 @@
 			transform="translate({geom.labelX} {geom.labelY}) rotate({dirAngle})"
 			aria-hidden="true"
 		>
-			<!-- Backing disc as two stacked circles (a faint wide halo + a darker core)
-			     rather than a radial-gradient — self-contained per edge, so no shared
-			     <defs> id to manage. -->
-			<circle r="11" fill="var(--space-950)" opacity="0.55" />
-			<circle r="7.5" fill="var(--space-950)" />
-			<!-- Triangle pointing +x; the group rotation aims it down-line. -->
-			<path class="dir-tip" d="M-5 -5.5 L6.5 0 L-5 5.5 Z" />
+			<!-- A SINGLE semi-transparent ELLIPSE backing, stretched along the arrow's
+			     axis (wide on x, short on y) so it HUGS the shafted arrow instead of a
+			     circle's wasted vertical fill — far less opaque area, so the line/dot-grid
+			     reads through, including the centre. (Two stacked circles compounded their
+			     opacity into a near-solid core; one ellipse is uniform see-through.) The
+			     group rotation aims its long axis down-line with the arrow. -->
+			<ellipse rx="10" ry="6" fill="var(--space-950)" opacity="0.2" />
+			<!-- A SHAFTED arrow pointing +x (the group rotation aims it down-line). The
+			     shaft gives an unmistakable TAIL so the head is obviously the front —
+			     unambiguous at any angle/curve, unlike a symmetric triangle. When
+			     animation is on (and motion allowed), the inner group drifts ±x along
+			     the line toward the destination; the CSS freezes it under
+			     prefers-reduced-motion regardless of the preference. -->
+			<g class="dir-glyph" class:drift={d.animateDirection}>
+				<line class="dir-shaft" x1="-6.5" y1="0" x2="3" y2="0" />
+				<path class="dir-head" d="M1 -4.5 L8 0 L1 4.5 Z" />
+			</g>
 		</g>
 	{/if}
 
@@ -368,8 +376,30 @@
 		pointer-events: none;
 		filter: drop-shadow(0 0 2px rgb(2 6 23 / 0.9));
 	}
-	.dir-tip {
+	.dir-shaft {
+		stroke: var(--sky);
+		stroke-width: 2;
+		stroke-linecap: round;
+	}
+	.dir-head {
 		fill: var(--sky);
+	}
+	/* Opt-in motion: the glyph drifts a short distance along its own +x (which the
+	   parent group has already rotated to lie down-line), looping back — reads as
+	   "flowing toward the destination". Driven by the .drift class (the user's
+	   "animate direction" preference); prefers-reduced-motion freezes it below,
+	   independent of the preference, so it never moves for motion-sensitive users. */
+	.dir-glyph.drift {
+		animation: dir-drift 1.8s ease-in-out infinite;
+	}
+	@keyframes dir-drift {
+		0%,
+		100% {
+			transform: translateX(-3px);
+		}
+		50% {
+			transform: translateX(3px);
+		}
 	}
 	:global(.edge-casing.halo-amber) {
 		animation: breathe-soft 3.4s ease-in-out infinite;
@@ -377,28 +407,32 @@
 	:global(.edge-casing.halo-red) {
 		animation: breathe-deep 2.8s ease-in-out infinite;
 	}
+	/* PEAK is at 0%/100% (matching the inline max width/opacity), trough at 50%, so
+	   the breath swells DOWN-and-back from the max. A reduced-motion freeze snaps to
+	   the 0% keyframe = the MAX state (user requirement). Amber peaks at 16, red at
+	   26 — distinct frozen sizes. */
 	@keyframes breathe-soft {
 		0%,
 		100% {
-			stroke-opacity: 0.1;
-			stroke-width: 9;
+			stroke-opacity: 0.3;
+			stroke-width: 16;
 		}
 		50% {
-			stroke-opacity: 0.22;
-			stroke-width: 13;
+			stroke-opacity: 0.14;
+			stroke-width: 10;
 		}
 	}
 	@keyframes breathe-deep {
 		0%,
 		100% {
-			stroke-opacity: 0.12;
-			stroke-width: 11;
+			/* A wide swing on the richer halo red so the pulse clearly reads as an
+			   alarm — bigger, brighter peak than the amber breath. */
+			stroke-opacity: 0.5;
+			stroke-width: 26;
 		}
 		50% {
-			/* A wide swing on the richer halo red so the pulse clearly reads as an
-			   alarm — deeper trough, brighter + fatter peak than the amber breath. */
-			stroke-opacity: 0.5;
-			stroke-width: 22;
+			stroke-opacity: 0.16;
+			stroke-width: 13;
 		}
 	}
 

@@ -2,7 +2,14 @@ import { describe, it, expect } from 'vitest';
 import { combine, dropConfirmedGhosts } from './reconcile';
 import type { CombinedGraph, Connection, LocalState, System } from './types';
 
-const sys = (id: string): System => ({ id, name: id, class: 'C2', statics: [] });
+const sys = (id: string): System => ({
+	id,
+	name: id,
+	class: 'C2',
+	statics: [],
+	scans: [],
+	structures: []
+});
 const conn = (id: string, a: string, b: string): Connection => ({
 	id,
 	a: { system: a, sig: null },

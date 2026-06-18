@@ -9,18 +9,19 @@
 	import Modal from '$lib/components/Modal.svelte';
 	import DialogActions from '$lib/components/DialogActions.svelte';
 	import { m } from '$lib/paraglide/messages';
-	import type { LayoutDirection } from '$lib/map/types';
 
 	// Live edits preview on the canvas behind the (blurred) dialog. So Cancel must
 	// REVERT to where things stood when the dialog opened — snapshot the values on
 	// open, and write them back on cancel. OK simply closes, keeping the changes.
+	// (The layout STYLE picker + "apply now" moved out to the tab-bar split-button;
+	// only "auto-layout on changes" remains here, alongside the other toggles.)
 	type Snapshot = {
 		thickness: number;
 		showMass: boolean;
 		showWhType: boolean;
 		showSignatures: boolean;
 		showDirection: boolean;
-		layoutDir: LayoutDirection;
+		animateDirection: boolean;
 		autoLayout: boolean;
 	};
 
@@ -33,9 +34,8 @@
 		showWhType = $bindable(),
 		showSignatures = $bindable(),
 		showDirection = $bindable(),
-		layoutDir,
-		autoLayout = $bindable(),
-		onSelectLayout
+		animateDirection = $bindable(),
+		autoLayout = $bindable()
 	}: {
 		open: boolean;
 		thickness: number;
@@ -45,25 +45,15 @@
 		showWhType: boolean;
 		showSignatures: boolean;
 		showDirection: boolean;
-		/** The currently-selected layout style (highlights the segmented control). */
-		layoutDir: LayoutDirection;
+		/** Taste pref: drift the direction arrow along the line (default off, separate
+		 *  from prefers-reduced-motion). Only meaningful while showDirection is on. */
+		animateDirection: boolean;
 		/** When ON, a map change reflows the whole map in the selected style. */
 		autoLayout: boolean;
-		/** Set the selected layout style (the parent reflows immediately if auto is on). */
-		onSelectLayout: (dir: LayoutDirection) => void;
 	} = $props();
 
-	// The four layout styles, in segmented-control order, with their labels.
-	const layoutStyles: { dir: LayoutDirection; label: () => string }[] = [
-		{ dir: 'LR', label: m.map_proto_layout_lr },
-		{ dir: 'RL', label: m.map_proto_layout_rl },
-		{ dir: 'TB', label: m.map_proto_layout_tb },
-		{ dir: 'BT', label: m.map_proto_layout_bt }
-	];
-
 	// Snapshot the live values whenever the dialog transitions to open, so Cancel can
-	// restore them. `layoutDir` is not a bindable here (it is owned by the parent via
-	// onSelectLayout), so it is reverted through that callback.
+	// restore them.
 	let snapshot: Snapshot | null = null;
 	let wasOpen = false;
 	$effect(() => {
@@ -74,7 +64,7 @@
 				showWhType,
 				showSignatures,
 				showDirection,
-				layoutDir,
+				animateDirection,
 				autoLayout
 			};
 		}
@@ -95,8 +85,8 @@
 			showWhType = snapshot.showWhType;
 			showSignatures = snapshot.showSignatures;
 			showDirection = snapshot.showDirection;
+			animateDirection = snapshot.animateDirection;
 			autoLayout = snapshot.autoLayout;
-			if (layoutDir !== snapshot.layoutDir) onSelectLayout(snapshot.layoutDir);
 		}
 		open = false;
 	}
@@ -106,29 +96,6 @@
 	{#snippet title()}{m.map_proto_prefs_title()}{/snippet}
 
 	<div class="prefs">
-		<div class="layout-control">
-			<span class="layout-label" id="prefs-layout-style-label">
-				{m.map_proto_layout_heading()}
-			</span>
-			<div class="layout-segmented" role="group" aria-labelledby="prefs-layout-style-label">
-				{#each layoutStyles as style (style.dir)}
-					<button
-						type="button"
-						class="seg-btn"
-						aria-pressed={layoutDir === style.dir}
-						onclick={() => onSelectLayout(style.dir)}
-					>
-						{style.label()}
-					</button>
-				{/each}
-			</div>
-
-			<label class="toggle">
-				<input type="checkbox" bind:checked={autoLayout} />
-				<span>{m.map_proto_layout_auto()}</span>
-			</label>
-		</div>
-
 		<label class="thickness">
 			<span class="row">
 				<span>{m.map_proto_edge_thickness()}</span>
@@ -160,6 +127,15 @@
 			<input type="checkbox" bind:checked={showDirection} />
 			<span>{m.map_proto_show_direction()}</span>
 		</label>
+		<!-- Drift animation only matters while the arrow is shown; disable when not. -->
+		<label class="toggle" class:disabled={!showDirection}>
+			<input type="checkbox" bind:checked={animateDirection} disabled={!showDirection} />
+			<span>{m.map_proto_animate_direction()}</span>
+		</label>
+		<label class="toggle">
+			<input type="checkbox" bind:checked={autoLayout} />
+			<span>{m.map_proto_layout_auto()}</span>
+		</label>
 
 		<!-- Footer (shared DialogActions): Cancel (ghost, reverts the live edits) + OK
 		     (primary, keeps them). A value dialog, so both are type="button". -->
@@ -177,49 +153,9 @@
 		gap: 0.6rem;
 		color: var(--slate-200);
 	}
-	.seg-btn:focus-visible,
 	.prefs input:focus-visible {
 		outline: 2px solid var(--sky);
 		outline-offset: 2px;
-	}
-	/* Layout control: a label, a 4-way segmented style picker, the auto toggle. */
-	.layout-control {
-		display: flex;
-		flex-direction: column;
-		gap: 0.4rem;
-		padding: 0.5rem;
-		background: var(--space-950);
-		border: 1px solid var(--space-700);
-		border-radius: 4px;
-	}
-	.layout-label {
-		font-size: 0.75rem;
-		font-weight: 700;
-		color: var(--slate-200);
-	}
-	.layout-segmented {
-		display: grid;
-		grid-template-columns: 1fr 1fr;
-		gap: 0.25rem;
-	}
-	.seg-btn {
-		padding: 0.35rem 0.4rem;
-		background: var(--space-800);
-		border: 1px solid var(--space-700);
-		border-radius: 4px;
-		color: var(--slate-300);
-		font: inherit;
-		font-size: 0.75rem;
-		text-align: center;
-		cursor: pointer;
-	}
-	/* The selected style: sky border + tint, brighter text. aria-pressed is the
-	   source of truth (not colour alone) — the pressed state is exposed to AT. */
-	.seg-btn[aria-pressed='true'] {
-		border-color: var(--sky);
-		background: var(--space-700);
-		color: var(--slate-100);
-		font-weight: 700;
 	}
 	.thickness {
 		display: flex;
@@ -256,5 +192,12 @@
 	.toggle input {
 		accent-color: var(--sky);
 		cursor: pointer;
+	}
+	.toggle.disabled {
+		opacity: 0.45;
+		cursor: not-allowed;
+	}
+	.toggle.disabled input {
+		cursor: not-allowed;
 	}
 </style>

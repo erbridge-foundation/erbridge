@@ -9,7 +9,9 @@ function graph(): CombinedGraph {
 		id,
 		name: id,
 		class: 'C2',
-		statics: []
+		statics: [],
+		scans: [],
+		structures: []
 	}));
 	return {
 		systems,
@@ -107,7 +109,9 @@ describe('layoutSeed', () => {
 			id,
 			name: id,
 			class: 'C2',
-			statics: []
+			statics: [],
+			scans: [],
+			structures: []
 		}));
 		const g: CombinedGraph = {
 			systems: sys,
@@ -133,7 +137,9 @@ describe('renderableSystems', () => {
 		const g = graph();
 		// Drop X from the graph; add it back as a ghost so it still renders.
 		const noX: CombinedGraph = { ...g, systems: g.systems.filter((s) => s.id !== 'X') };
-		const ghosts: System[] = [{ id: 'X', name: 'X', class: 'C2', statics: [] }];
+		const ghosts: System[] = [
+			{ id: 'X', name: 'X', class: 'C2', statics: [], scans: [], structures: [] }
+		];
 		const ids = renderableSystems(noX, tab('A'), ghosts);
 		expect(ids).toContain('A');
 		expect(ids).toContain('D');

@@ -153,9 +153,8 @@ describe('resolveEdgeEncoding (the one config object)', () => {
 		expect(resolveEdgeEncoding('fresh', 5).ttlVisual).toBe('critical');
 	});
 
-	it('stable has no dash (solid, calm)', () => {
+	it('stable is calm — no alert casing (and the line is always solid now)', () => {
 		const enc = resolveEdgeEncoding('fresh', 2000);
-		expect(enc.ttl.dashArray).toBe('');
 		expect(enc.alert.level).toBe('none');
 	});
 
@@ -163,10 +162,9 @@ describe('resolveEdgeEncoding (the one config object)', () => {
 		expect(resolveEdgeEncoding('fresh', 2000).alert.level).toBe('none');
 	});
 
-	it('< 4h is the gentle WARNING tier (amber dash, gentle breath)', () => {
+	it('< 4h is the gentle WARNING tier (amber breath)', () => {
 		const enc = resolveEdgeEncoding('fresh', 180);
 		expect(enc.alert.level).toBe('warning');
-		expect(enc.ttl.dashArray).toBe('14 8');
 		expect(enc.alert.breatheClass).toBe('halo-amber');
 	});
 
@@ -175,13 +173,19 @@ describe('resolveEdgeEncoding (the one config object)', () => {
 		expect(enc.ttlBucket).toBe('lt1h');
 		expect(enc.alert.level).toBe('danger');
 		expect(enc.alert.breatheClass).toBe('halo-red');
-		expect(enc.ttl.dashArray).toBe('9 9 2 9');
+	});
+
+	it('warning vs critical freeze at DISTINCT casing sizes (size, not colour, tells them apart)', () => {
+		const warn = resolveEdgeEncoding('fresh', 180).alert;
+		const crit = resolveEdgeEncoding('fresh', 45).alert;
+		// Both are the breath PEAK (the reduced-motion frozen state); critical is
+		// clearly larger so the tiers stay tellable apart without motion or colour.
+		expect(crit.casingWidth).toBeGreaterThan(warn.casingWidth);
 	});
 
 	it('imminent renders IDENTICALLY to < 1h (same critical visual)', () => {
 		const lt1h = resolveEdgeEncoding('half', 45);
 		const imminent = resolveEdgeEncoding('half', 5);
-		expect(imminent.ttl).toEqual(lt1h.ttl);
 		expect(imminent.alert).toEqual(lt1h.alert);
 		// ...but the precise four-state bucket still differs for text/sorting.
 		expect(lt1h.ttlBucket).toBe('lt1h');
@@ -200,11 +204,5 @@ describe('resolveEdgeEncoding (the one config object)', () => {
 		const enc = resolveEdgeEncoding('critical', 2000);
 		expect(enc.alert.level).toBe('none');
 		expect(enc.alert.breatheClass).toBe('');
-	});
-
-	it('critical-tier dash-dot is retained even on the thinnest (critical-mass) line', () => {
-		const enc = resolveEdgeEncoding('critical', 5);
-		expect(enc.mass.width).toBe(2);
-		expect(enc.ttl.dashArray).toBe('9 9 2 9');
 	});
 });

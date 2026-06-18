@@ -66,6 +66,31 @@ test.describe('/maps/_proto', () => {
 		).toBeAttached();
 	});
 
+	test('the sidebar Signatures + Structures sections bind to the selected system', async ({
+		page
+	}) => {
+		// Select J100003 — it carries a spread of scanned signatures.
+		await node(page, 'J100003').click();
+		const sigSection = page.getByRole('button', { name: /^Signatures/ });
+		await expect(sigSection).toBeVisible();
+		// Real fixture scan names show in the signature table (read off updated_at,
+		// not the old hardcoded sample rows).
+		await expect(page.getByText('Average Frontier Deposit')).toBeVisible();
+		await expect(page.getByText('Ruined Rogue Drone Monument Site')).toBeVisible();
+		// Wormhole sigs are colour-distinguished — the WH row carries the .wormhole
+		// class (this is a wormholers' tool, so holes stand out from cosmic sites).
+		await expect(page.locator('.sig-table tr.wormhole')).toHaveCount(1);
+
+		// Select J100005 — it carries structures from two sources (scanner + overview),
+		// the latter with a reinforcement timer.
+		await node(page, 'J100005').click();
+		await expect(page.getByText('J100005 - Home Fort')).toBeVisible();
+		await expect(page.getByText('J100005 - Forward Op')).toBeVisible();
+		await expect(page.getByText('reinforced')).toBeVisible();
+		// The old hardcoded sample is gone.
+		await expect(page.getByText('Fort Nightfall')).toHaveCount(0);
+	});
+
 	test('collapse-all / expand-all drive the sections; legend honours collapse-all only', async ({
 		page
 	}) => {
@@ -195,6 +220,23 @@ test.describe('/maps/_proto', () => {
 		await expect(page.locator('.edge-label .wh-type').first()).toBeVisible();
 	});
 
+	test('the animate-direction preference toggles the drift class on direction arrows', async ({
+		page
+	}) => {
+		const dialog = page.getByRole('dialog', { name: 'Map preferences' });
+		// Direction arrows render and are static (no drift) by default.
+		await expect(page.locator('.dir-arrow').first()).toBeAttached();
+		await expect(page.locator('.dir-glyph.drift')).toHaveCount(0);
+
+		// Enable it in the dialog → the arrows gain the drift class (live preview).
+		await page.getByRole('button', { name: 'Map preferences' }).click();
+		await dialog.getByLabel('Animate direction').check();
+		await expect(page.locator('.dir-glyph.drift').first()).toBeAttached();
+		// Keep it (OK), then it persists after close.
+		await dialog.getByRole('button', { name: 'OK' }).click();
+		await expect(page.locator('.dir-glyph.drift').first()).toBeAttached();
+	});
+
 	test('OK keeps the live edits; Cancel reverts them', async ({ page }) => {
 		const dialog = page.getByRole('dialog', { name: 'Map preferences' });
 		const whType = page.locator('.edge-label .wh-type');
@@ -299,21 +341,17 @@ test.describe('/maps/_proto', () => {
 		await page.mouse.up();
 		const dragged = await nodePosition(page, 'J100001');
 
-		// The layout style picker lives in the Map Preferences dialog now. Pick the
-		// top→bottom style; with auto OFF this only records the choice (the dragged node
-		// must NOT move yet). Confirm with OK (keep — Escape would Cancel/revert), then
-		// apply via the sidebar action.
-		await page.getByRole('button', { name: 'Map preferences' }).click();
-		const tb = page.getByRole('button', { name: /top.*bottom/i });
-		await tb.click();
-		await expect(tb).toHaveAttribute('aria-pressed', 'true');
+		// The layout style picker is the tab-bar split-button now. Open its caret
+		// dropdown and pick the top→bottom style; with auto OFF this only records the
+		// choice (the dragged node must NOT move yet).
+		await page.getByRole('button', { name: 'Choose layout style' }).click();
+		await page.getByRole('menuitemradio', { name: /top.*bottom/i }).click();
 		const afterSelect = await nodePosition(page, 'J100001');
 		expect(Math.abs(afterSelect.x - dragged.x) + Math.abs(afterSelect.y - dragged.y)).toBeLessThan(2);
-		await page.getByRole('dialog', { name: 'Map preferences' }).getByRole('button', { name: 'OK' }).click();
 
-		// Now the manual Apply layout button (sidebar Tweaks) reflows in the selected
-		// style → the node leaves the dragged spot.
-		await page.getByRole('button', { name: /apply layout/i }).click();
+		// Now the action half (apply now) reflows in the selected style → the node
+		// leaves the dragged spot.
+		await page.getByRole('button', { name: /apply layout: top . bottom/i }).click();
 		await expect(node(page, 'J100001')).toBeVisible();
 		const reseeded = await nodePosition(page, 'J100001');
 		expect(Math.abs(reseeded.x - dragged.x) + Math.abs(reseeded.y - dragged.y)).toBeGreaterThan(30);
@@ -359,8 +397,8 @@ test.describe('/maps/_proto', () => {
 		await expect(legend.getByRole('heading', { name: /connection mass/i })).toBeVisible();
 		await expect(legend.getByRole('heading', { name: /time to live/i })).toBeVisible();
 		// Meaning is text beside each swatch (a11y rule): the mass labels are present.
-		// Scope to the mass group's row list — "stable" is shared with the TTL group's
-		// calm tier, so an unscoped getByText would match two elements.
+		// Scope to the mass group's row list (the TTL group no longer has a "stable"
+		// row — stable = no glow is the implicit default, so it gets no legend entry).
 		const massRows = legend.locator('.rows').first();
 		await expect(massRows.getByText('stable', { exact: true })).toBeVisible();
 

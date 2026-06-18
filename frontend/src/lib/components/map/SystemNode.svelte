@@ -21,8 +21,8 @@
 	const system = $derived(data.system);
 
 	// Class C1–C6 map to --c1..c6; the k-space tiers HS/LS/NS to --hs/--ls/--ns;
-	// Pochven (P) to --pochven. The badge always shows the class TEXT; this only
-	// picks the decorative colour.
+	// Pochven (P) to --pochven; Drifter (D) to --drifter. The badge always shows the
+	// class TEXT; this only picks the decorative colour.
 	const classColour: Record<SystemClass, string> = {
 		C1: 'var(--c1)',
 		C2: 'var(--c2)',
@@ -33,7 +33,8 @@
 		HS: 'var(--hs)',
 		LS: 'var(--ls)',
 		NS: 'var(--ns)',
-		P: 'var(--pochven)'
+		P: 'var(--pochven)',
+		D: 'var(--drifter)'
 	};
 </script>
 

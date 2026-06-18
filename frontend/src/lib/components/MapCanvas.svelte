@@ -18,6 +18,7 @@
 	import ConnectionEdge from '$lib/components/map/ConnectionEdge.svelte';
 	import MapSidebar from '$lib/components/map/MapSidebar.svelte';
 	import MapPreferences from '$lib/components/map/MapPreferences.svelte';
+	import LayoutMenu from '$lib/components/map/LayoutMenu.svelte';
 	import MapLegend from '$lib/components/map/MapLegend.svelte';
 	import { layoutSeed, renderableSystems } from '$lib/map/layout';
 	import { combine, dropConfirmedGhosts } from '$lib/map/reconcile';
@@ -98,6 +99,11 @@
 	// "Show direction": a single arrow per connection toward the K162 end (or a
 	// neutral marker when the direction is undetermined). On by default.
 	let showDirection = $state(true);
+	// "Animate direction": when on, the direction arrow drifts along the line toward
+	// its destination. A TASTE preference (default OFF — constant page motion annoys),
+	// SEPARATE from prefers-reduced-motion, which is an additional backstop that always
+	// freezes it. So it animates only when BOTH this is on AND the OS allows motion.
+	let animateDirection = $state(false);
 	// Colour-blind palette toggle (prototype A/B switch). Swaps ONLY the three mass
 	// hues, via a `data-edge-palette` attribute on the STAGE wrapper (covers both the
 	// canvas edges and the legend swatches) that the app.css token override keys off
@@ -143,11 +149,24 @@
 	// swallow the canvas or collapse to nothing. The drag direction depends on the
 	// dock side: pulling toward the canvas widens it either way.
 	const SIDEBAR_MIN = 220;
-	const SIDEBAR_MAX = 560;
+	// Comfortable default ceiling. Power users can pull WIDER — up to half the
+	// viewport — so the real max is dynamic (see SIDEBAR_MAX). 560 is just the floor
+	// for that max, so on a narrow window it never drops below the old comfortable
+	// size and stays > SIDEBAR_MIN.
+	const SIDEBAR_MAX_FLOOR = 560;
+	// Track the viewport so "up to half the screen" stays correct across resizes.
+	let innerWidth = $state(typeof window === 'undefined' ? 1280 : window.innerWidth);
+	const SIDEBAR_MAX = $derived(Math.max(SIDEBAR_MAX_FLOOR, Math.round(innerWidth / 2)));
 	let sidebarWidth = $state(288);
 	let resizing = $state(false);
 
 	const clampWidth = (w: number) => Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, w));
+
+	// If the viewport shrinks below twice the current width, pull the sidebar back in
+	// so it never exceeds half the (now smaller) screen.
+	$effect(() => {
+		if (sidebarWidth > SIDEBAR_MAX) sidebarWidth = SIDEBAR_MAX;
+	});
 
 	function startResize(ev: PointerEvent): void {
 		if (locked) return;
@@ -273,6 +292,7 @@
 					sig_b: showSignatures ? c.b.sig?.id : undefined,
 					arrowTo,
 					showDirection,
+					animateDirection,
 					thickness: edgeThickness,
 					showMass: showMassLabels,
 					showWhType: showWhTypeLabels,
@@ -469,6 +489,8 @@
 	}
 </script>
 
+<svelte:window bind:innerWidth />
+
 <div class="map-canvas">
 	<!-- Tab bar: the root tabs on the left, the map-preferences cog on the right. -->
 	<div class="tab-bar">
@@ -486,6 +508,15 @@
 				</button>
 			{/each}
 		</nav>
+
+		<!-- Layout split-button: apply the current style now (icon = current style) +
+		     a caret dropdown to pick LR/RL/TB/BT. Sits left of the preferences cog. -->
+		<LayoutMenu
+			{layoutDir}
+			onSelect={selectLayout}
+			onApply={reflow}
+			disabled={locked}
+		/>
 
 		<!-- Map preferences: a cog opening the per-user display-prefs dialog. -->
 		<button
@@ -704,9 +735,8 @@
 	bind:showWhType={showWhTypeLabels}
 	bind:showSignatures
 	bind:showDirection
-	{layoutDir}
+	bind:animateDirection
 	bind:autoLayout
-	onSelectLayout={selectLayout}
 />
 
 <style>
