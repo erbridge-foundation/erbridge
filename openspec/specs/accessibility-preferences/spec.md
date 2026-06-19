@@ -6,15 +6,21 @@ Defines the user-facing accessibility preferences in the SvelteKit frontend: the
 
 ### Requirement: /preferences route reachable from the user-menu
 
-The frontend SHALL serve a route at `/preferences` presenting the accessibility preference controls. The user-menu dropdown (`UserMenu.svelte`) `preferences` item SHALL be changed from a disabled `aria-disabled` placeholder into a real enabled `<a href="/preferences">`. The sibling `settings` item SHALL remain a disabled placeholder (out of scope for this change). The page SHALL be reachable by anonymous visitors (so accessibility can be configured before or without logging in, including from the login flow); when no account is present, controls operate on `localStorage` only.
+The frontend SHALL serve a route at `/preferences` presenting the accessibility preference controls. The user-menu dropdown (`UserMenu.svelte`) `preferences` item SHALL be changed from a disabled `aria-disabled` placeholder into a real enabled `<a href="/preferences">`. The sibling `settings` item SHALL remain a disabled placeholder (out of scope for this change). The `/preferences` route is gated behind authentication: `+layout.server.ts` SHALL NOT treat it as a public route, so an unauthenticated visit redirects to `/login`.
+
+Pre-login accessibility does NOT depend on the `/preferences` route being reachable: the stored preferences are applied before first paint by the inline bootstrap in `app.html` (reading `localStorage`) for every page including `/login`, and the `/login` page itself exposes the accessibility controls (a "maximize accessibility" preset and the locale selector) so a visitor can configure accessibility before or without logging in. When no account is present, controls operate on `localStorage` only.
 
 #### Scenario: preferences link enabled in user-menu
 - **WHEN** an authenticated user opens the user-menu dropdown
 - **THEN** the `preferences` item SHALL be an enabled link to `/preferences` (not `aria-disabled`), and the `settings` item SHALL remain disabled
 
-#### Scenario: Anonymous visitor reaches /preferences
+#### Scenario: Unauthenticated visitor is redirected from /preferences
 - **WHEN** a visitor with no session navigates to `/preferences`
-- **THEN** the page SHALL render the controls and operate against `localStorage`
+- **THEN** the load redirects to `/login` (303); the preference controls are not rendered
+
+#### Scenario: Pre-login accessibility is served without the /preferences route
+- **WHEN** a visitor with stored `localStorage` preferences loads `/login`
+- **THEN** those preferences are applied to `<html>` before first paint, and the login page's own accessibility controls let the visitor adjust them against `localStorage`
 
 ### Requirement: Accessibility preferences and their defaults
 
@@ -87,7 +93,7 @@ The Apply and Discard controls SHALL be styled so a previewed change cannot rend
 
 The `/preferences` page SHALL provide a **Reset to defaults** control that is available in every state (clean or dirty). Activating it SHALL set all five preferences to their default values, apply them to `<html>`, and persist them (localStorage, and synced to the backend for authenticated users).
 
-This control is the lock-out recovery guarantee: because `/preferences` is a robust page reachable from the user menu, and because the Reset control SHALL be styled to remain usable under any applied setting (fixed sizing independent of `text_size`, contrast independent of `high_contrast`), a user whose applied setting breaks another page can always return to `/preferences` and reset. The system SHALL NOT rely on a timed auto-revert for this guarantee.
+This control is the lock-out recovery guarantee: because `/preferences` is a robust page reachable from the user menu, and because the Reset control SHALL be styled to remain usable under any applied setting (fixed sizing independent of `text_size`, contrast independent of `high_contrast`), an authenticated user whose applied setting breaks another page can always return to `/preferences` and reset. An anonymous visitor whose `localStorage` setting breaks a page recovers via the equivalent contrast- and size-proof controls on `/login` (which is always reachable without a session). The system SHALL NOT rely on a timed auto-revert for this guarantee.
 
 #### Scenario: Reset restores all defaults
 - **WHEN** a user with one or more non-default preferences activates **Reset to defaults**

@@ -113,7 +113,11 @@ class `--c1..c6`, security `--hs/--ls/--ns`, mass `--mass-fresh/half/critical`),
 paraglide i18n. Load functions **forward cookies** to the backend.
 
 ### Routes (`routes/`)
-- Root `+layout.*`, `+page.*` — shell + landing.
+- Root `+layout.*`, `+page.*` — shell + landing. `+layout.server.ts` gates every
+  route on a `getMe` 401 → redirect to `/login`, except the public-route allowlist
+  (`/login`, `/blocked`, `/maps/_proto`). `+layout.svelte` renders a chrome-less
+  shell (no nav / update banner / error banner, centered `.app.chromeless`) for the
+  `CHROMELESS_ROUTES` set (`/login`, `/blocked`).
 - `account/`, `characters/`, `preferences/`, `about/`, `login/`, `blocked/` — user-facing.
 - `acls/` + `acls/[id]/` — ACL list + detail (MemberPicker-driven).
 - `maps/` + `maps/[slug]/` + `maps/[slug]/settings/` — map list / detail / settings.

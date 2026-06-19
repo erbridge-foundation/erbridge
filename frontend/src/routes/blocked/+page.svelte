@@ -28,12 +28,10 @@
 </main>
 
 <style>
+	/* The chrome-less app shell (.app.chromeless in +layout.svelte) centers this
+	   block in the viewport, mirroring how /login centers its card. The panel only
+	   needs its own padding here. */
 	.body {
-		flex: 1;
-		overflow: auto;
-		display: flex;
-		justify-content: center;
-		align-items: center;
 		padding: 24px;
 	}
 

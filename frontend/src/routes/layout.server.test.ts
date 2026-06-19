@@ -104,10 +104,28 @@ describe('+layout.server load', () => {
 		expect(result).toEqual({ me: null, meError: null, serverPrefs: null });
 	});
 
-	it('does NOT redirect unauthenticated user on /about (public route)', async () => {
+	it('redirects unauthenticated user on /about to /login (now gated)', async () => {
 		vi.mocked(getMe).mockRejectedValue(new ApiError('unauthenticated', 'auth required', 401));
 
-		const result = await load(makeEvent({ pathname: '/about' }));
+		await expect(load(makeEvent({ pathname: '/about' }))).rejects.toMatchObject({
+			status: 303,
+			location: '/login'
+		});
+	});
+
+	it('redirects unauthenticated user on /preferences to /login (now gated)', async () => {
+		vi.mocked(getMe).mockRejectedValue(new ApiError('unauthenticated', 'auth required', 401));
+
+		await expect(load(makeEvent({ pathname: '/preferences' }))).rejects.toMatchObject({
+			status: 303,
+			location: '/login'
+		});
+	});
+
+	it('does NOT redirect unauthenticated user on /blocked (public, chrome-less)', async () => {
+		vi.mocked(getMe).mockRejectedValue(new ApiError('unauthenticated', 'auth required', 401));
+
+		const result = await load(makeEvent({ pathname: '/blocked' }));
 
 		expect(result).toEqual({ me: null, meError: null, serverPrefs: null });
 	});

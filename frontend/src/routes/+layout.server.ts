@@ -6,15 +6,20 @@ import type { LayoutServerLoad } from './$types';
 export const load: LayoutServerLoad = async ({ fetch, url, locals, request }) => {
 	const isLoginRoute = url.pathname === '/login';
 	// Public routes render without an authenticated session: a getMe 401 must not
-	// redirect them to /login. /about is intentionally public (its purpose is to be
-	// findable); /login is public so unauthenticated visitors can sign in;
-	// /preferences is public so accessibility settings work before/without login;
-	// /maps/_proto is the disposable map-canvas sandbox (static fixture, no loader,
-	// no auth — see build-map-canvas-prototype). The real /maps/[slug] stays gated.
+	// redirect them to /login. The list is deliberately minimal — everything else
+	// is gated. /login is public so unauthenticated visitors can sign in; /blocked
+	// is the public information page a rejected/blocked login lands on (rendered
+	// chrome-less, like /login — see +layout.svelte); /maps/_proto is the
+	// disposable map-canvas sandbox (static fixture, no loader, no auth — see
+	// build-map-canvas-prototype). The real /maps/[slug] stays gated.
+	//
+	// /about and /preferences are NOT public: both are reached only from the
+	// authenticated user menu, and pre-login accessibility does not depend on the
+	// /preferences route being reachable — the preference store hydrates from
+	// localStorage via the inline bootstrap in app.html (and the login page's own
+	// controls), independent of any page load.
 	const isPublicRoute =
 		isLoginRoute ||
-		url.pathname === '/about' ||
-		url.pathname === '/preferences' ||
 		url.pathname === '/blocked' ||
 		url.pathname === '/maps/_proto';
 	const cookie = request.headers.get('cookie') ?? '';
@@ -23,7 +28,7 @@ export const load: LayoutServerLoad = async ({ fetch, url, locals, request }) =>
 		const me = await getMe(fetch, backend_internal_url(), cookie);
 		locals.me = me;
 
-		// Only /login bounces an already-authenticated user away; /about renders for everyone.
+		// Only /login bounces an already-authenticated user away.
 		if (isLoginRoute) {
 			redirect(303, '/');
 		}

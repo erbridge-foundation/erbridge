@@ -1,20 +1,20 @@
 ## Purpose
 
-Defines the `/about` page in the SvelteKit frontend, its content, and how it is reached from the rest of the UI. The page is publicly reachable — it does NOT require an authenticated session — and is the single user-visible surface for the project's version information, source code link, legal disclaimer, and acknowledgements.
+Defines the `/about` page in the SvelteKit frontend, its content, and how it is reached from the rest of the UI. The page is gated — it requires an authenticated session — and is the single user-visible surface for the project's version information, source code link, legal disclaimer, and acknowledgements.
 
 ## Requirements
 
-### Requirement: /about route is publicly reachable
+### Requirement: /about route is gated behind authentication
 
-The frontend SHALL serve a route at `/about`. The route SHALL be reachable without an authenticated session — `+layout.server.ts` SHALL treat `/about` as a public route so a `getMe` 401 does not redirect it to `/login` (alongside the existing `/login` exemption). An authenticated user visiting `/about` SHALL see the same content as an unauthenticated visitor (the page is invariant of identity).
+The frontend SHALL serve a route at `/about`, reachable only from the authenticated user-menu. `+layout.server.ts` SHALL NOT treat `/about` as a public route: an unauthenticated visit (a `getMe` 401) SHALL redirect to `/login` like any other gated page. The page's content is invariant of identity — an authenticated user always sees the same about information regardless of their account.
 
-#### Scenario: Unauthenticated visitor reaches /about
+#### Scenario: Unauthenticated visitor is redirected from /about
 - **WHEN** a visitor with no session cookie navigates to `/about`
-- **THEN** the page renders normally (no redirect to `/login`)
+- **THEN** the load redirects to `/login` (303); the about content is not rendered
 
 #### Scenario: Authenticated visitor reaches /about
 - **WHEN** a visitor with a valid session cookie navigates to `/about`
-- **THEN** the page renders the same content as for an unauthenticated visitor
+- **THEN** the page renders the about content (no redirect away to `/`)
 
 ### Requirement: /about is linked from the user-menu dropdown
 
@@ -22,7 +22,7 @@ The user-menu dropdown (`UserMenu.svelte`) SHALL include an `about` link that na
 
 (Re-ordered by the `accessibility-preferences` change: once `preferences` became a real route it took the top slot, and `about` moved down to sit just above `log out`. This supersedes the original "positioned above the preferences and settings placeholders / first item is about" ordering.)
 
-The user-menu is only visible to authenticated users (it is part of the GlobalNav user chip). Unauthenticated users reach `/about` by direct URL or external link.
+The user-menu is only visible to authenticated users (it is part of the GlobalNav user chip), and `/about` is the only entry point to the page — unauthenticated visits are redirected to `/login`.
 
 #### Scenario: about link present in user-menu
 - **WHEN** an authenticated user opens the user-menu dropdown

@@ -323,4 +323,21 @@ test.describe('/blocked landing', () => {
 			'/login'
 		);
 	});
+
+	test('renders chrome-less — no global nav', async ({ page }) => {
+		await page.goto('/blocked');
+		await expect(page.locator('header.global-nav')).toHaveCount(0);
+	});
+});
+
+test.describe('gated routes redirect unauthenticated visitors', () => {
+	test('/about redirects to /login with no session', async ({ page }) => {
+		await page.goto('/about');
+		await expect(page).toHaveURL(/\/login$/);
+	});
+
+	test('/preferences redirects to /login with no session', async ({ page }) => {
+		await page.goto('/preferences');
+		await expect(page).toHaveURL(/\/login$/);
+	});
 });

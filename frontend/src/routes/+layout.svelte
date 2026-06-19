@@ -9,7 +9,11 @@
 
 	let { data, children }: { data: LayoutData; children: import('svelte').Snippet } = $props();
 
-	let isLoginRoute = $derived($page.url.pathname === '/login');
+	// Chrome-less routes render with no global nav / update banner / error banner,
+	// centered in a bare shell: /login (the sign-in card) and /blocked (the
+	// rejected-login information page). Both are public (see +layout.server.ts).
+	const CHROMELESS_ROUTES = new Set(['/login', '/blocked']);
+	let isChromeless = $derived(CHROMELESS_ROUTES.has($page.url.pathname));
 
 	// Hydrate the preference store from localStorage (the app.html inline script
 	// already applied the same values before paint, so this does not re-flash),
@@ -25,9 +29,9 @@
 	});
 </script>
 
-<div class="app" class:login={isLoginRoute}>
-	<UpdateBanner />
-	{#if !isLoginRoute}
+<div class="app" class:chromeless={isChromeless}>
+	{#if !isChromeless}
+		<UpdateBanner />
 		<GlobalNav me={data.me} />
 		{#if data.meError}
 			<div class="layout-error" role="alert">
@@ -48,7 +52,7 @@
 		background: var(--space-950);
 	}
 
-	.app.login {
+	.app.chromeless {
 		height: 100vh;
 		overflow: hidden;
 		align-items: center;
