@@ -627,4 +627,20 @@ test.describe('/maps/_proto', () => {
 		await receive.click();
 		await expect(node(page, 'EC-P8R')).toHaveCount(0);
 	});
+
+	test('the Node lab view toggle renders the wireframe gallery', async ({ page }) => {
+		// The disposable Node-lab gallery: a page-level view switch (not a MapCanvas tab).
+		// Default view is the canvas; toggling to Node lab shows the comparison grid.
+		await page.getByRole('button', { name: 'Node lab' }).click();
+		await expect(page.getByRole('heading', { name: /system-node wireframes/i })).toBeVisible();
+		// Variant column headers are present (the five designs).
+		await expect(page.getByText('Baseline (current)')).toBeVisible();
+		await expect(page.getByText('Minimal', { exact: true })).toBeVisible();
+		// A sample custom name renders in the gallery (the blue "custom name" line).
+		await expect(page.getByText('Deep X').first()).toBeVisible();
+
+		// Toggling back shows the canvas again.
+		await page.getByRole('button', { name: 'Canvas' }).click();
+		await expect(node(page, 'Jita')).toBeVisible();
+	});
 });

@@ -220,6 +220,11 @@ export interface System {
 	id: string;
 	/** Display name; for wormholes this is usually the same as `id` (the J-code). */
 	name: string;
+	/** Optional user-supplied label (Wanderer's "custom name") shown alongside the real
+	 *  system name — e.g. a role note like "Deep X" / "High Bear farm". Absent = no custom
+	 *  label. Display-only in the proto; the node-lab variants render it as a secondary
+	 *  line. */
+	custom_name?: string;
 	/** EVE ESI numeric solar-system id (`solar_system_id`). This is the STABLE key
 	 *  the real backend / external tools (eve-scout, Wanderer) join on — `id`/`name`
 	 *  is the display key, this is the universe key. `null` when the system hasn't
