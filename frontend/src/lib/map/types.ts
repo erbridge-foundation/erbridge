@@ -429,6 +429,14 @@ export type Positions = Record<string, XY>;
  *  flow ranks away from the roots in that screen direction. */
 export type LayoutDirection = "LR" | "RL" | "TB" | "BT";
 
+/** Which layout ENGINE seeds the positions (a user preference). Both produce a
+ *  crossing-free ranked forest with the same public contract; they differ in feel:
+ *   - `tidy-tree`: leaf-first tidy tree (the corp's Wanderer look) — a leaf hugs its
+ *     parent and claims no reserved cross-axis band; node-size-aware rank columns.
+ *   - `dagre`: dagre's layered Sugiyama layout — every node centred in a reserved band
+ *     balanced against its siblings; a more even, "org-chart" feel. */
+export type LayoutAlgorithm = "tidy-tree" | "dagre";
+
 /**
  * A live update from the server, modelled as the SSE event the real backend will
  * push (the sandbox replays a scripted list of these — see the fixture). The map

@@ -160,12 +160,14 @@ paraglide i18n. Load functions **forward cookies** to the backend.
   mass → line width/colour [line is always solid]; TTL → the breathing casing/halo
   ALONE [calm/warning/critical], frozen at MAX width under reduced-motion with
   distinct warning vs critical sizes; one config object, palette-swap is CSS-only),
-  `layout` (the ONE-SHOT initial seed — pure `graph → positions`, the swappable engine
-  seam: a leaf-first tidy-tree FOREST [Go-port of the corp's Wanderer layout, no lib].
-  Each connected component is its own tidy tree; the rank step is NODE-SIZE-AWARE
-  [pure `nodeWidth` estimate per rank, no DOM]; a component roots at its `root`-flagged
-  system so it lays the same on every tab; the primary leads and the rest stack down the
-  cross axis, all oriented the same way [no mirror]),
+  `layout` (the ONE-SHOT initial seed — pure `graph → positions`, TWO selectable engines
+  behind one `layoutSeed(…, algorithm)` dispatcher [a `LayoutAlgorithm` map preference,
+  default `dagre`; the radio lives in MapPreferences]: `tidy-tree` = leaf-first forest
+  [Go-port of the corp's Wanderer layout, no lib; node-size-aware rank step via a pure
+  `nodeWidth` estimate; components stack down the cross axis] and `dagre` [@dagrejs/dagre
+  layered Sugiyama; per-component + row/grid pack on the `*` tab]. Both share the forest
+  helpers and root each component at its `root`-flagged system so a chain lays the same on
+  every tab),
   `reconcile` (server ∪ local existence union only), `place-incoming` (where a node
   arriving via an SSE event lands — one flow-step from its anchor),
   `resolve-collisions` (official @xyflow repel, run on drag-stop + after an add).

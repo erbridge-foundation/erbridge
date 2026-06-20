@@ -29,6 +29,7 @@
 	import type {
 		CombinedGraph,
 		Connection,
+		LayoutAlgorithm,
 		LayoutDirection,
 		LocalState,
 		MapEvent,
@@ -95,6 +96,10 @@
 	// deep, wide chains these maps grow into (the root sits top-centre, branches fan
 	// down symmetrically). The user can switch via the tab-bar layout menu.
 	let layoutDir = $state<LayoutDirection>('TB');
+	// Which layout ENGINE seeds positions (a user preference, set in the prefs dialog).
+	// Default 'dagre' (the layered look); 'tidy-tree' is the corp's Wanderer look. Both
+	// honour the same contract; changing it reflows the active tab (the effect below).
+	let layoutAlgo = $state<LayoutAlgorithm>('dagre');
 	// Auto-layout: when ON, every map change re-runs the whole layout in the selected
 	// style (drags discarded — layout is machine-owned). When OFF, a map change keeps
 	// existing positions and only the new node is placed incrementally (today's
@@ -259,7 +264,8 @@
 				activeTab,
 				untrack(() => layoutDir),
 				presentIds,
-				untrack(() => nodeSpacing) / 100
+				untrack(() => nodeSpacing) / 100,
+				untrack(() => layoutAlgo)
 			);
 		}
 	});
@@ -441,7 +447,7 @@
 	// own), so we apply the fresh seed to `nodes` directly AND update the tab's seed
 	// map. Any manual drags for this tab are discarded — a reflow is machine-owned.
 	function reflow(): void {
-		const seed = layoutSeed(union, activeTab, layoutDir, presentIds, nodeSpacing / 100);
+		const seed = layoutSeed(union, activeTab, layoutDir, presentIds, nodeSpacing / 100, layoutAlgo);
 		seedByTab[activeTab.id] = { ...seed };
 		nodes = nodes.map((n) => (seed[n.id] ? { ...n, position: { ...seed[n.id] } } : n));
 		// Drop the remembered arrangement for this tab so leaving and returning shows
@@ -460,6 +466,20 @@
 		const s = nodeSpacing;
 		if (s !== untrack(() => lastSpacing)) {
 			lastSpacing = s;
+			reflow();
+		}
+	});
+
+	// Layout-algorithm picker (prefs dialog): switching engines is a whole-map re-seed,
+	// so reflow the active tab when it changes (same machine-owned reflow as the spacing
+	// slider — discards drags). Skip the initial run; the first view uses its one-shot
+	// seed (already computed with the default algorithm).
+	// svelte-ignore state_referenced_locally
+	let lastAlgo = layoutAlgo;
+	$effect(() => {
+		const a = layoutAlgo;
+		if (a !== untrack(() => lastAlgo)) {
+			lastAlgo = a;
 			reflow();
 		}
 	});
@@ -790,6 +810,7 @@
 	bind:nodeSpacing
 	spacingMin={SPACING_MIN}
 	spacingMax={SPACING_MAX}
+	bind:layoutAlgo
 	bind:showMass={showMassLabels}
 	bind:showWhType={showWhTypeLabels}
 	bind:showSignatures

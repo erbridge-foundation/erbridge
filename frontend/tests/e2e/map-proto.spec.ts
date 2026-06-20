@@ -532,9 +532,10 @@ test.describe('/maps/_proto', () => {
 		page
 	}) => {
 		// A node down a sibling fan on the Home chain, so a cross-axis spacing change
-		// visibly moves it (tidy-tree packs the cross axis, so a deeper fan node shifts
-		// well under a spacing bump — J100004 moves ~225px from default to max).
-		const target = 'J100004';
+		// visibly moves it. Under the default engine (dagre), J100003 shifts ~90px from
+		// default to max spacing (J100004 sits near the spacing-neutral centre and barely
+		// moves, so it's the wrong probe here).
+		const target = 'J100003';
 		await expect(node(page, target)).toBeVisible();
 		const before = await nodePosition(page, target);
 
@@ -546,6 +547,24 @@ test.describe('/maps/_proto', () => {
 		await spacing.focus();
 		// Drive it to the max with End (the slider's keyboard support), then close.
 		await page.keyboard.press('End');
+		await dialog.getByRole('button', { name: 'OK' }).click();
+		await expect(dialog).toBeHidden();
+
+		const after = await nodePosition(page, target);
+		expect(Math.abs(after.x - before.x) + Math.abs(after.y - before.y)).toBeGreaterThan(20);
+	});
+
+	test('the layout-engine preference reseeds the map (dagre ↔ tidy tree)', async ({ page }) => {
+		// A fan node on the Home chain that lands in a different spot under each engine.
+		const target = 'J100004';
+		await expect(node(page, target)).toBeVisible();
+		const before = await nodePosition(page, target);
+
+		// Open prefs and switch the layout engine from the default (dagre) to tidy tree →
+		// the active tab reflows with the other algorithm, so the node takes a new seed.
+		await page.getByRole('button', { name: 'Map preferences' }).click();
+		const dialog = page.getByRole('dialog', { name: 'Map preferences' });
+		await dialog.getByRole('radio', { name: 'Tidy tree' }).click();
 		await dialog.getByRole('button', { name: 'OK' }).click();
 		await expect(dialog).toBeHidden();
 

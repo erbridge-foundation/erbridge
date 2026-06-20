@@ -1,46 +1,45 @@
 /**
- * Graph layout seed — a leaf-first tidy-tree FOREST.
+ * Graph layout seed — TWO selectable engines behind one pure contract.
  *
- * `layoutSeed(graph, tab, dir)` is a PURE function: graph → positions. It is the
- * FLOOR the live positions sit on (a node's first position; drags/ripples then own
- * it). The graph carries no coordinates; this is where they come from.
+ * `layoutSeed(graph, tab, dir, present, spacing, algorithm)` is a PURE function:
+ * graph → positions. It is the FLOOR the live positions sit on (a node's first
+ * position; drags/ripples then own it). The graph carries no coordinates; this is
+ * where they come from. `algorithm` selects the engine (a user preference); both
+ * honour the same contract (a crossing-free ranked forest, `SystemFlag` `root`
+ * anchoring, the `spacing` multiplier, LR/RL/TB/BT) and differ only in feel:
  *
- * WHY a tidy tree (not dagre). We tried dagre (@dagrejs/dagre) and it lays a
- * crossing-free LAYERED graph, but its Brandes–Köpf coordinate pass centres every
- * node in a RESERVED cross-axis band balanced against its heavy siblings — so a
- * childless leaf still claims a wide band and floats in whitespace, and the
- * root-less `*` tab (a forest of many components) collapses into one ranked chain
- * plus a flat gutter line. A wormhole map reads better as a TIDY TREE where a leaf
- * hugs its parent and claims no reserved space, exactly the look the corp's Wanderer
- * layout produces.
+ *   - `tidy-tree` (the corp's Wanderer look) — a leaf-first tidy tree where a leaf
+ *     HUGS its parent and claims no reserved cross-axis band, with node-size-aware
+ *     rank columns. Ports the tested core of the Go layout
+ *     (zz-ref/wanderer-layout/layout.go — `calculateTreePositions`): a leaf takes the
+ *     next free cross slot; a parent starts its children level with itself then
+ *     re-centres on the midpoint of its first & last child (grid-snapped). See
+ *     `tidyTreeSeed`.
+ *   - `dagre` (@dagrejs/dagre) — dagre's layered Sugiyama layout: every node centred
+ *     in a RESERVED band balanced against its siblings (an even "org-chart" feel,
+ *     more whitespace around leaves). See `dagreSeed`.
  *
- * This ports the TESTED core of that Go layout (zz-ref/wanderer-layout/layout.go —
- * `calculateTreePositions` + `centerMapAroundHomeSystem`): a leaf-first DFS where a
- * leaf takes the next free cross slot, a parent starts its children level with
- * itself and is then re-centred on the midpoint of its first and last child (snapped
- * to a small grid). The Go service is single-root; the FOREST packing here (multiple
- * components on one tab) is bespoke — its `handleOrphanChains` was untested draft, so
- * it is NOT ported.
- *
- * FOREST model (one path for every tab). `present` is split into connected
- * components. Each component is laid out as its own tidy tree, rooted at:
- *   - the tab's root, for the component that contains it (a normal tab); else
- *   - the most-connected system (hub), ties by id (a satellite, or any component on
- *     the root-less `*` tab).
- * The PRIMARY component (the one holding `tab.root`, or — on `*` — the LARGEST) is
- * centred at the origin. Every other component is a SATELLITE, stacked in the gutter
- * (the side opposite the rank flow) by running cross-extent so trees never overlap.
- * A lone disconnected system is just a single-node component → a gutter satellite.
- *
- * DIRECTION: trees are computed in (rankAxis, crossAxis) then mapped to (x, y) per
- * `dir` (LR/RL/TB/BT). SPACING: the `spacing` preference scales the cross step so a
- * busy fan spreads apart.
+ * FOREST model (both engines, every tab). `present` is split into connected
+ * components; a component roots at its `root`-flagged system (else the most-connected
+ * hub), so a chain lays out the same on every tab incl. the root-less `*` tab. The
+ * tidy-tree engine stacks components down the cross axis (primary first, all oriented
+ * the same way); the dagre engine row/grid PACKS them by bounding box. A rooted tab's
+ * genuinely-unreached nodes (a ghost) park in a gutter (dagre) / a trailing satellite
+ * (tidy-tree).
  *
  * Incremental single-node placement on an SSE add (`place-incoming.ts`) and session
  * drag persistence are separate — only the whole-map (re)seed lives here.
  */
 
-import type { CombinedGraph, LayoutDirection, Positions, System, Tab } from './types';
+import dagre from '@dagrejs/dagre';
+import type {
+	CombinedGraph,
+	LayoutAlgorithm,
+	LayoutDirection,
+	Positions,
+	System,
+	Tab
+} from './types';
 
 // Rank-axis GAP (empty space between one rank's column and the next) and the BASE
 // cross-axis step (between siblings within a rank). `spacing` scales the cross step.
@@ -68,7 +67,6 @@ const NODE_PAD_X = 19; // 0.6rem padding each side + 1px border ≈ 19px total
 const CHAR_W = 6.2; // ~px per char of the name at 0.75rem 600-weight ui font
 const CLASS_BADGE_W = 26; // the always-present class pill ("C5", "HS"…) + its gap
 const ROOT_BADGE_W = 42; // the "ROOT" badge + gap (uppercase, letter-spaced)
-const GHOST_BADGE_W = 80; // the "unconfirmed" ghost badge + gap
 const STATIC_BADGE_W = 26; // each static dest pill (they wrap, but a long row can widen)
 
 /** Pure estimate of a SystemNode's rendered width in px, from its data alone. Used to
@@ -347,22 +345,18 @@ function emit(
 }
 
 /**
- * Seed positions for the systems of `graph` as viewed through `tab`, in the given
- * direction. The caller decides which systems are *present* (reachable + ghosts) and
- * passes them; every present system gets a position. The present set is split into
- * connected components; the primary component (holding `tab.root` / a flagged root, or
- * the largest on the root-less `*` tab) leads, and the rest stack as satellites along
- * the CROSS axis below it — every component oriented the SAME way (root at rank 0,
+ * TIDY-TREE engine. Seed positions as a leaf-first tidy-tree forest: the present set is
+ * split into connected components; the primary component (holding `tab.root` / a flagged
+ * root, or the largest on the root-less `*` tab) leads, and the rest stack as satellites
+ * along the CROSS axis below it — every component oriented the SAME way (root at rank 0,
  * leaves growing the same direction), so they read as peer trees, not mirror images.
  */
-export function layoutSeed(
+function tidyTreeSeed(
 	graph: CombinedGraph,
 	tab: Tab,
 	dir: LayoutDirection,
 	present: Set<string>,
-	/** Cross-axis spacing multiplier (a user "node spacing" preference). Scales the
-	 *  tree's cross step so siblings/fans spread apart; 1 = the compact default. */
-	spacing = 1
+	spacing: number
 ): Positions {
 	const adj = buildAdjacency(graph, present);
 	const crossStep = CROSS_SEP * spacing;
@@ -417,6 +411,199 @@ export function layoutSeed(
 	});
 
 	return out;
+}
+
+// ── DAGRE engine ─────────────────────────────────────────────────────────────
+// dagre's layered Sugiyama layout. Per-component (so the root-less `*` tab is a forest,
+// not a shredded gutter line); a rooted tab dagre's its root's reachable set with
+// unreached nodes in a gutter. Tuned tight for BOTH directions (measured on DEEP LR+TB).
+const DAGRE_RANK_SEP = 90;
+const DAGRE_NODE_SEP = 40;
+const DAGRE_NODE_W = 130;
+const DAGRE_NODE_H = 48;
+/** Gutter offset (rooted tab) for genuinely-unreached nodes (a ghost). */
+const DAGRE_GUTTER_GAP = 320;
+const DAGRE_GUTTER_STEP = 150;
+/** Forest packing (root-less `*` tab): gap between packed components + the running row
+ *  width before wrapping (soft cap → roughly square grid, not one long strip). */
+const DAGRE_PACK_GAP = 160;
+const DAGRE_ROW_TARGET = 2200;
+
+/** A laid-out component: node positions (dagre centre coords) + their bounding box. */
+type LaidComponent = { pos: Positions; minX: number; minY: number; maxX: number; maxY: number };
+
+/**
+ * Lay out ONE connected component with dagre and return its positions + bbox. The dagre
+ * setup (network-simplex, RANK/NODE sep, edges directed lower-rank→higher-rank away from
+ * the component's root via `compRank`) over a single component's id set.
+ */
+function layoutComponent(
+	graph: CombinedGraph,
+	ids: string[],
+	compRank: Map<string, number>,
+	dir: LayoutDirection,
+	spacing: number
+): LaidComponent {
+	const idSet = new Set(ids);
+	const g = new dagre.graphlib.Graph({ multigraph: false, compound: false });
+	g.setGraph({
+		rankdir: dir,
+		ranksep: DAGRE_RANK_SEP,
+		nodesep: DAGRE_NODE_SEP * spacing,
+		ranker: 'network-simplex',
+		marginx: 0,
+		marginy: 0
+	});
+	g.setDefaultEdgeLabel(() => ({}));
+
+	// Keep graph.systems order for deterministic dagre input.
+	for (const s of graph.systems)
+		if (idSet.has(s.id)) g.setNode(s.id, { width: DAGRE_NODE_W, height: DAGRE_NODE_H });
+
+	for (const c of graph.connections) {
+		const a = c.a.system;
+		const b = c.b.system;
+		if (!idSet.has(a) || !idSet.has(b) || a === b) continue;
+		const ra = compRank.get(a)!;
+		const rb = compRank.get(b)!;
+		const [from, to] = ra < rb || (ra === rb && a < b) ? [a, b] : [b, a];
+		if (!g.hasEdge(from, to) && !g.hasEdge(to, from)) g.setEdge(from, to);
+	}
+
+	dagre.layout(g);
+
+	const pos: Positions = {};
+	let minX = Infinity,
+		minY = Infinity,
+		maxX = -Infinity,
+		maxY = -Infinity;
+	for (const id of g.nodes()) {
+		const n = g.node(id);
+		if (!n) continue;
+		pos[id] = { x: n.x, y: n.y };
+		minX = Math.min(minX, n.x);
+		minY = Math.min(minY, n.y);
+		maxX = Math.max(maxX, n.x);
+		maxY = Math.max(maxY, n.y);
+	}
+	if (minX === Infinity) minX = minY = maxX = maxY = 0;
+	return { pos, minX, minY, maxX, maxY };
+}
+
+/**
+ * Row/grid pack laid components into `out`: placed left→right, wrapping to a new row when
+ * the running width would exceed `DAGRE_ROW_TARGET`; row height = its tallest component;
+ * `DAGRE_PACK_GAP` between components/rows. Caller passes components SORTED largest-first.
+ */
+function packComponents(laid: LaidComponent[], out: Positions): void {
+	let rowX = 0;
+	let rowY = 0;
+	let rowHeight = 0;
+	for (const comp of laid) {
+		const w = comp.maxX - comp.minX + DAGRE_NODE_W;
+		const h = comp.maxY - comp.minY + DAGRE_NODE_H;
+		// Wrap to a new row when this component would push the row past the target width
+		// (but never wrap an empty row — always place at least one component per row).
+		if (rowX > 0 && rowX + w > DAGRE_ROW_TARGET) {
+			rowY += rowHeight + DAGRE_PACK_GAP;
+			rowX = 0;
+			rowHeight = 0;
+		}
+		const dx = rowX - comp.minX;
+		const dy = rowY - comp.minY;
+		for (const [id, p] of Object.entries(comp.pos)) out[id] = { x: p.x + dx, y: p.y + dy };
+		rowX += w + DAGRE_PACK_GAP;
+		rowHeight = Math.max(rowHeight, h);
+	}
+}
+
+/**
+ * Park unreached nodes (a ghost, a detached fragment) in a gutter on the side opposite
+ * the rank flow: a column before the root column (LR), a row above it (TB).
+ */
+function placeGutter(dir: LayoutDirection, gutter: string[], out: Positions): void {
+	gutter.forEach((id, i) => {
+		switch (dir) {
+			case 'LR':
+				out[id] = { x: -DAGRE_GUTTER_GAP, y: i * DAGRE_GUTTER_STEP };
+				break;
+			case 'RL':
+				out[id] = { x: DAGRE_GUTTER_GAP, y: i * DAGRE_GUTTER_STEP };
+				break;
+			case 'TB':
+				out[id] = { x: i * DAGRE_GUTTER_STEP, y: -DAGRE_GUTTER_GAP };
+				break;
+			case 'BT':
+				out[id] = { x: i * DAGRE_GUTTER_STEP, y: DAGRE_GUTTER_GAP };
+				break;
+		}
+	});
+}
+
+/**
+ * DAGRE engine. A rooted tab dagre's the systems reachable from `tab.root` (unreached →
+ * gutter); the root-less `*` tab splits into components, dagre's each, and row/grid packs
+ * them (so no component shreds into a flat gutter line). Components root at their flagged
+ * `root` system, so a chain lays out the same on `*` as on its own tab.
+ */
+function dagreSeed(
+	graph: CombinedGraph,
+	tab: Tab,
+	dir: LayoutDirection,
+	present: Set<string>,
+	spacing: number
+): Positions {
+	const adj = buildAdjacency(graph, present);
+	const order = graph.systems.filter((s) => present.has(s.id)).map((s) => s.id);
+	const out: Positions = {};
+
+	if (tab.isWildcard || !tab.root) {
+		const rootFlagged = new Set(
+			graph.systems.filter((s) => s.flags?.includes('root')).map((s) => s.id)
+		);
+		const comps = components(adj, order);
+		// Largest first so the big chains lead the grid and lone systems trail.
+		comps.sort((a, b) => b.length - a.length || (a[0] < b[0] ? -1 : 1));
+		const laid = comps.map((ids) => {
+			const root = pickComponentRoot(adj, ids, rootFlagged);
+			const compRank = reachableFrom(adj, [root]);
+			return layoutComponent(graph, ids, compRank, dir, spacing);
+		});
+		packComponents(laid, out);
+		return out;
+	}
+
+	const rank = reachableFrom(adj, [tab.root]);
+	const ranked = graph.systems.filter((s) => present.has(s.id) && rank.has(s.id)).map((s) => s.id);
+	const gutter = graph.systems.filter((s) => present.has(s.id) && !rank.has(s.id));
+
+	if (ranked.length > 0) {
+		const comp = layoutComponent(graph, ranked, rank, dir, spacing);
+		Object.assign(out, comp.pos);
+	}
+
+	placeGutter(dir, gutter.map((s) => s.id), out);
+	return out;
+}
+
+// ── Dispatcher ───────────────────────────────────────────────────────────────
+/**
+ * Seed positions for the systems of `graph` as viewed through `tab`, in `dir`, with the
+ * chosen `algorithm` engine. The caller decides which systems are *present* (reachable +
+ * ghosts); every present system gets a position. `spacing` is the cross-axis multiplier
+ * (the node-spacing preference); `algorithm` is the layout-engine preference.
+ */
+export function layoutSeed(
+	graph: CombinedGraph,
+	tab: Tab,
+	dir: LayoutDirection,
+	present: Set<string>,
+	spacing = 1,
+	algorithm: LayoutAlgorithm = 'dagre'
+): Positions {
+	return algorithm === 'tidy-tree'
+		? tidyTreeSeed(graph, tab, dir, present, spacing)
+		: dagreSeed(graph, tab, dir, present, spacing);
 }
 
 /**

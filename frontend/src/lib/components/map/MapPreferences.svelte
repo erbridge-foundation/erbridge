@@ -9,6 +9,7 @@
 	import Modal from '$lib/components/Modal.svelte';
 	import DialogActions from '$lib/components/DialogActions.svelte';
 	import { m } from '$lib/paraglide/messages';
+	import type { LayoutAlgorithm } from '$lib/map/types';
 
 	// Live edits preview on the canvas behind the (blurred) dialog. So Cancel must
 	// REVERT to where things stood when the dialog opened — snapshot the values on
@@ -18,6 +19,7 @@
 	type Snapshot = {
 		thickness: number;
 		nodeSpacing: number;
+		layoutAlgo: LayoutAlgorithm;
 		showMass: boolean;
 		showWhType: boolean;
 		showSignatures: boolean;
@@ -34,6 +36,7 @@
 		nodeSpacing = $bindable(),
 		spacingMin,
 		spacingMax,
+		layoutAlgo = $bindable(),
 		showMass = $bindable(),
 		showWhType = $bindable(),
 		showSignatures = $bindable(),
@@ -50,6 +53,9 @@
 		nodeSpacing: number;
 		spacingMin: number;
 		spacingMax: number;
+		/** Which layout ENGINE seeds positions (tidy-tree vs dagre). Changing it reflows
+		 *  the active tab. */
+		layoutAlgo: LayoutAlgorithm;
 		showMass: boolean;
 		showWhType: boolean;
 		showSignatures: boolean;
@@ -70,6 +76,7 @@
 			snapshot = {
 				thickness,
 				nodeSpacing,
+				layoutAlgo,
 				showMass,
 				showWhType,
 				showSignatures,
@@ -92,6 +99,7 @@
 		if (snapshot) {
 			thickness = snapshot.thickness;
 			nodeSpacing = snapshot.nodeSpacing;
+			layoutAlgo = snapshot.layoutAlgo;
 			showMass = snapshot.showMass;
 			showWhType = snapshot.showWhType;
 			showSignatures = snapshot.showSignatures;
@@ -136,6 +144,33 @@
 				aria-label={m.map_proto_node_spacing()}
 			/>
 		</label>
+
+		<!-- Layout engine: a two-option segmented control. Changing it reflows the active
+		     tab (machine-owned). aria-checked on each option carries the state to AT; the
+		     fieldset/legend names the group. -->
+		<fieldset class="segmented">
+			<legend>{m.map_proto_layout_algo()}</legend>
+			<div class="segments" role="radiogroup" aria-label={m.map_proto_layout_algo()}>
+				<button
+					type="button"
+					class="segment"
+					role="radio"
+					aria-checked={layoutAlgo === 'dagre'}
+					onclick={() => (layoutAlgo = 'dagre')}
+				>
+					{m.map_proto_layout_algo_dagre()}
+				</button>
+				<button
+					type="button"
+					class="segment"
+					role="radio"
+					aria-checked={layoutAlgo === 'tidy-tree'}
+					onclick={() => (layoutAlgo = 'tidy-tree')}
+				>
+					{m.map_proto_layout_algo_tidy()}
+				</button>
+			</div>
+		</fieldset>
 
 		<label class="toggle">
 			<input type="checkbox" bind:checked={showMass} />
@@ -207,6 +242,55 @@
 		width: 100%;
 		accent-color: var(--sky);
 		cursor: pointer;
+	}
+	/* Layout-engine segmented control. The fieldset/legend name the group; the two
+	   buttons are a radiogroup, the active one tinted (aria-checked is the source of
+	   truth, not colour alone). */
+	.segmented {
+		margin: 0;
+		padding: 0;
+		border: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 0.3rem;
+	}
+	.segmented legend {
+		padding: 0;
+		font-size: 0.8rem;
+		color: var(--slate-200);
+	}
+	.segments {
+		display: flex;
+		gap: 0;
+		border: 1px solid var(--space-700);
+		border-radius: 4px;
+		overflow: hidden;
+		width: fit-content;
+	}
+	.segment {
+		padding: 4px 12px;
+		background: none;
+		border: 0;
+		color: var(--slate-300);
+		font: inherit;
+		font-size: 0.75rem;
+		cursor: pointer;
+	}
+	.segment + .segment {
+		border-left: 1px solid var(--space-700);
+	}
+	.segment:hover {
+		background: var(--space-800);
+		color: var(--slate-100);
+	}
+	.segment[aria-checked='true'] {
+		background: var(--space-700);
+		color: var(--slate-100);
+		font-weight: 700;
+	}
+	.segment:focus-visible {
+		outline: 2px solid var(--sky);
+		outline-offset: -2px;
 	}
 	.toggle {
 		display: flex;

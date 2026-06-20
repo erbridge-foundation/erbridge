@@ -15,6 +15,7 @@ function renderPrefs(overrides: Record<string, unknown> = {}) {
 			nodeSpacing: 170,
 			spacingMin: 100,
 			spacingMax: 250,
+			layoutAlgo: 'dagre',
 			showMass: false,
 			showWhType: false,
 			showSignatures: true,
@@ -41,6 +42,14 @@ describe('MapPreferences', () => {
 		// Auto-layout now lives with the other checkboxes, not in a layout sub-control.
 		expect(screen.getByLabelText('Auto-layout on changes')).toBeInTheDocument();
 		expect(screen.getByLabelText('Animate direction')).toBeInTheDocument();
+	});
+
+	it('renders the layout-engine segmented control with the current engine checked', () => {
+		renderPrefs({ layoutAlgo: 'dagre' });
+		const dagre = screen.getByRole('radio', { name: 'Dagre' });
+		const tidy = screen.getByRole('radio', { name: 'Tidy tree' });
+		expect(dagre).toHaveAttribute('aria-checked', 'true');
+		expect(tidy).toHaveAttribute('aria-checked', 'false');
 	});
 
 	it('disables the animate-direction toggle when direction is hidden', () => {
