@@ -18,7 +18,8 @@
 	// only "auto-layout on changes" remains here, alongside the other toggles.)
 	type Snapshot = {
 		thickness: number;
-		nodeSpacing: number;
+		xSpacing: number;
+		ySpacing: number;
 		layoutAlgo: LayoutAlgorithm;
 		showMass: boolean;
 		showWhType: boolean;
@@ -33,7 +34,8 @@
 		thickness = $bindable(),
 		thicknessMin,
 		thicknessMax,
-		nodeSpacing = $bindable(),
+		xSpacing = $bindable(),
+		ySpacing = $bindable(),
 		spacingMin,
 		spacingMax,
 		layoutAlgo = $bindable(),
@@ -48,9 +50,14 @@
 		thickness: number;
 		thicknessMin: number;
 		thicknessMax: number;
-		/** Cross-axis layout spacing, as a percent multiplier (100 = compact base).
-		 *  Changing it reflows the active tab so a busy chain spreads apart. */
-		nodeSpacing: number;
+		/** Horizontal (X) screen-axis spacing, as a percent multiplier (100 = compact base):
+		 *  ALWAYS spreads nodes left↔right whatever the layout direction (MapCanvas maps it
+		 *  to the rank/cross multiplier per direction). Changing it reflows the active tab. */
+		xSpacing: number;
+		/** Vertical (Y) screen-axis spacing, as a percent multiplier (100 = compact base):
+		 *  ALWAYS spreads nodes up↕down whatever the layout direction. Shares the min/max
+		 *  with the X slider. Changing it reflows the active tab. */
+		ySpacing: number;
 		spacingMin: number;
 		spacingMax: number;
 		/** Which layout ENGINE seeds positions (tidy-tree vs dagre). Changing it reflows
@@ -75,7 +82,8 @@
 		if (open && !wasOpen) {
 			snapshot = {
 				thickness,
-				nodeSpacing,
+				xSpacing,
+				ySpacing,
 				layoutAlgo,
 				showMass,
 				showWhType,
@@ -98,7 +106,8 @@
 	function cancel() {
 		if (snapshot) {
 			thickness = snapshot.thickness;
-			nodeSpacing = snapshot.nodeSpacing;
+			xSpacing = snapshot.xSpacing;
+			ySpacing = snapshot.ySpacing;
 			layoutAlgo = snapshot.layoutAlgo;
 			showMass = snapshot.showMass;
 			showWhType = snapshot.showWhType;
@@ -130,18 +139,36 @@
 			/>
 		</label>
 
+		<!-- Two independent SCREEN-axis spacing sliders: X always spreads nodes left↔right,
+		     Y always up↕down, whatever the layout direction (MapCanvas maps each to the
+		     engine's rank/cross multiplier per direction). -->
 		<label class="thickness">
 			<span class="row">
-				<span>{m.map_proto_node_spacing()}</span>
-				<output class="thickness-value">{nodeSpacing}%</output>
+				<span>{m.map_proto_spacing_horizontal()}</span>
+				<output class="thickness-value">{xSpacing}%</output>
 			</span>
 			<input
 				type="range"
 				min={spacingMin}
 				max={spacingMax}
 				step="10"
-				bind:value={nodeSpacing}
-				aria-label={m.map_proto_node_spacing()}
+				bind:value={xSpacing}
+				aria-label={m.map_proto_spacing_horizontal()}
+			/>
+		</label>
+
+		<label class="thickness">
+			<span class="row">
+				<span>{m.map_proto_spacing_vertical()}</span>
+				<output class="thickness-value">{ySpacing}%</output>
+			</span>
+			<input
+				type="range"
+				min={spacingMin}
+				max={spacingMax}
+				step="10"
+				bind:value={ySpacing}
+				aria-label={m.map_proto_spacing_vertical()}
 			/>
 		</label>
 

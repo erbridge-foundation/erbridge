@@ -400,15 +400,17 @@ const j110413Scans: ScanResult[] = [
 ];
 
 const systems: System[] = [
-	{ id: "Jita", name: "Jita", eve_system_id: 30000142, class: "HS", statics: [], scans: [], structures: [] },
+	// Jita carries a `friendly` intel flag (single-flag demo) — a known-friendly
+	// staging system. Intel flags are shared/SSE-propagated and travel across tabs.
+	{ id: "Jita", name: "Jita", eve_system_id: 30000142, class: "HS", statics: [], scans: [], structures: [], flags: ["friendly"] },
 	{
 		id: "J100001",
 		name: "J100001",
 		eve_system_id: 31000001,
 		class: "C1",
-		// Home tab's root. The `root` flag travels with the system so layout anchors
-		// this component's tree here on EVERY tab (incl. `*`), matching the Home tab.
-		flags: ["root"],
+		// Home tab's root — anchoring comes from the `home` tab's `root: "J100001"`
+		// (a client-side, per-tab fact), so layout roots this component's tree here on
+		// EVERY tab (incl. `*`) without a system-side flag.
 		// wh_type is the actual wormhole-type code (not displayed yet); dest is the
 		// destination class the node surfaces.
 		statics: [{ wh_type: "B274", dest: "HS" }],
@@ -420,6 +422,8 @@ const systems: System[] = [
 		name: "J100002",
 		eve_system_id: 31000002,
 		class: "C2",
+		// A single `target` flag (objective / kill target) — single-flag demo.
+		flags: ["target"],
 		statics: [{ wh_type: "O883", dest: "C3" }],
 		scans: [],
 		structures: [],
@@ -438,6 +442,9 @@ const systems: System[] = [
 		name: "J100004",
 		eve_system_id: 31000004,
 		class: "C4",
+		// COMPOSE demo: a wanted system that ALSO has a hostile on the hole —
+		// `['looking-for', 'warning']`. Both chips render, neither overriding the other.
+		flags: ["looking-for", "warning"],
 		statics: [{ wh_type: "M267", dest: "C4" }],
 		scans: [],
 		structures: [],
@@ -511,8 +518,7 @@ const systems: System[] = [
 		name: "J200001",
 		eve_system_id: 31000201,
 		class: "C5",
-		// Outpost tab's root (see the `root` flag note on J100001).
-		flags: ["root"],
+		// Outpost tab's root (anchored by the `outpost` tab's `root`; see J100001).
 		statics: [{ wh_type: "H296", dest: "NS" }],
 		scans: [],
 		structures: [],
@@ -537,8 +543,7 @@ const systems: System[] = [
 		name: "J172840",
 		eve_system_id: 31002274,
 		class: "C5",
-		// DEEP tab's root (see the `root` flag note on J100001).
-		flags: ["root"],
+		// DEEP tab's root (anchored by the `deep` tab's `root`; see J100001).
 		statics: [{ wh_type: "H296", dest: "C5" }],
 		scans: j172840Scans,
 		structures: [],

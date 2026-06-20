@@ -103,12 +103,14 @@ describe.each(['tidy-tree', 'dagre'] as const)('layoutSeed [%s]', (algo) => {
 		}
 	});
 
-	it('roots a component at its `root`-flagged system on the wildcard tab', () => {
-		// Flag a LEAF (D) as root: on the wildcard tab the chain must anchor at D, so
-		// ranks grow AWAY from D (D—C—B—A) rather than from the degree-hub B.
+	it('roots a component at a tab-root system on the wildcard tab', () => {
+		// A (client-side) tab roots the chain at the LEAF D. On the wildcard tab — which
+		// has no root of its own — the chain must still anchor at D (read from the tab
+		// roots, not a system flag), so ranks grow AWAY from D (D—C—B—A) rather than from
+		// the degree-hub B.
 		const g = graph();
 		g.systems = g.systems.filter((s) => s.id !== 'X');
-		g.systems = g.systems.map((s) => (s.id === 'D' ? { ...s, flags: ['root'] as const } : s));
+		g.tabs = [tab('D', { id: 'd-tab', label: 'D' })];
 		const pos = seed(g, tab('', { isWildcard: true }), 'LR', new Set(g.systems.map((s) => s.id)));
 		expect(pos.C.x).toBeGreaterThan(pos.D.x);
 		expect(pos.B.x).toBeGreaterThan(pos.C.x);
@@ -121,6 +123,25 @@ describe.each(['tidy-tree', 'dagre'] as const)('layoutSeed [%s]', (algo) => {
 		const wide = seed(g, tab('A'), 'LR', present(g), 2);
 		const sep = (p: typeof tight) => Math.abs(p.C.y - p.E.y);
 		expect(sep(wide)).toBeGreaterThan(sep(tight));
+	});
+
+	it('the RANK-spacing multiplier widens the rank-axis gap between depth levels', () => {
+		// rankSpacing is the 7th arg of layoutSeed (after algorithm); raising it pushes
+		// consecutive ranks apart. Probe the A(rank0)→B(rank1) gap on the rank axis (x in LR).
+		const g = graph();
+		const tight = layoutSeed(g, tab('A'), 'LR', present(g), 1, algo, 1);
+		const wide = layoutSeed(g, tab('A'), 'LR', present(g), 1, algo, 2);
+		const rankGap = (p: typeof tight) => Math.abs(p.B.x - p.A.x);
+		expect(rankGap(wide)).toBeGreaterThan(rankGap(tight));
+	});
+
+	it('rank- and cross-spacing are independent — rank spacing leaves the sibling gap alone', () => {
+		// Raising ONLY rankSpacing must not change the cross-axis (sibling) separation.
+		const g = graph();
+		const base = layoutSeed(g, tab('A'), 'LR', present(g), 1, algo, 1);
+		const wideRank = layoutSeed(g, tab('A'), 'LR', present(g), 1, algo, 2);
+		const siblingGap = (p: typeof base) => Math.abs(p.C.y - p.E.y);
+		expect(siblingGap(wideRank)).toBeCloseTo(siblingGap(base), 5);
 	});
 
 	it('orders siblings to follow their parents (crossing reduction)', () => {

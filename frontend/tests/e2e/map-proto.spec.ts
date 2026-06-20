@@ -472,6 +472,24 @@ test.describe('/maps/_proto', () => {
 		await expect(page.getByRole('heading', { name: /connection mass/i })).toHaveCount(0);
 	});
 
+	test('intel flags render as composing glyph chips on the node + a legend group', async ({
+		page
+	}) => {
+		// J100004 carries TWO intel flags (looking-for + warning) — both markers render,
+		// neither overriding the other (the compose case).
+		const composed = node(page, 'J100004');
+		await expect(composed.getByLabel('wanted')).toBeVisible();
+		await expect(composed.getByLabel('warning')).toBeVisible();
+		// A single-flag system shows just its one marker.
+		await expect(node(page, 'J100002').getByLabel('target')).toBeVisible();
+
+		// The legend gains a "System flags" group keying the markers (text beside each).
+		await page.getByRole('button', { name: /show legend/i }).click();
+		const legend = page.getByTestId('map-legend');
+		await expect(legend.getByRole('heading', { name: /system flags/i })).toBeVisible();
+		await expect(legend.getByText('wanted', { exact: true })).toBeVisible();
+	});
+
 	test('each tab is its own placement snowflake — a drag stays with its tab', async ({ page }) => {
 		// J100001 renders in both the Home tab (it is Home's root) and the wildcard
 		// `*` tab (which shows every system), so it is the shared node that proves a
@@ -528,30 +546,43 @@ test.describe('/maps/_proto', () => {
 		).toBeVisible();
 	});
 
-	test('the node-spacing preference reflows the layout (spreads siblings apart)', async ({
-		page
-	}) => {
-		// A node down a sibling fan on the Home chain, so a cross-axis spacing change
-		// visibly moves it. Under the default engine (dagre), J100003 shifts ~90px from
-		// default to max spacing (J100004 sits near the spacing-neutral centre and barely
-		// moves, so it's the wrong probe here).
+	// Helper: max out one spacing slider in the prefs dialog, then close keeping the edit.
+	async function maxSpacingSlider(page: Page, name: string) {
+		await page.getByRole('button', { name: 'Map preferences' }).click();
+		const dialog = page.getByRole('dialog', { name: 'Map preferences' });
+		const slider = dialog.getByRole('slider', { name });
+		await slider.focus();
+		await page.keyboard.press('End'); // slider keyboard support → jump to max
+		await dialog.getByRole('button', { name: 'OK' }).click();
+		await expect(dialog).toBeHidden();
+	}
+
+	test('the X (horizontal) spacing preference spreads nodes left↔right', async ({ page }) => {
+		// Screen-axis-stable: the X slider ALWAYS moves nodes on x, whatever the layout
+		// direction. In the default top-to-bottom layout it widens the sibling fan (which
+		// runs left-right), so J100003 — a node on that fan — shifts horizontally.
 		const target = 'J100003';
 		await expect(node(page, target)).toBeVisible();
 		const before = await nodePosition(page, target);
 
-		// Open prefs and push node spacing to the maximum → the active tab reflows with
-		// wider cross-axis gaps, so the node takes a new seed position.
-		await page.getByRole('button', { name: 'Map preferences' }).click();
-		const dialog = page.getByRole('dialog', { name: 'Map preferences' });
-		const spacing = dialog.getByRole('slider', { name: 'Node spacing' });
-		await spacing.focus();
-		// Drive it to the max with End (the slider's keyboard support), then close.
-		await page.keyboard.press('End');
-		await dialog.getByRole('button', { name: 'OK' }).click();
-		await expect(dialog).toBeHidden();
+		await maxSpacingSlider(page, 'Horizontal spacing (X)');
 
 		const after = await nodePosition(page, target);
-		expect(Math.abs(after.x - before.x) + Math.abs(after.y - before.y)).toBeGreaterThan(20);
+		expect(Math.abs(after.x - before.x)).toBeGreaterThan(20);
+	});
+
+	test('the Y (vertical) spacing preference spreads nodes up↕down', async ({ page }) => {
+		// The Y slider ALWAYS moves nodes on y. In the default top-to-bottom layout it
+		// widens the depth-to-depth (rank) gap, which runs vertically, so a node two ranks
+		// down from Home's root shifts on y.
+		const target = 'J100003';
+		await expect(node(page, target)).toBeVisible();
+		const before = await nodePosition(page, target);
+
+		await maxSpacingSlider(page, 'Vertical spacing (Y)');
+
+		const after = await nodePosition(page, target);
+		expect(Math.abs(after.y - before.y)).toBeGreaterThan(20);
 	});
 
 	test('the layout-engine preference reseeds the map (dagre ↔ tidy tree)', async ({ page }) => {

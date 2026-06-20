@@ -7,9 +7,31 @@
 	// from the canvas. Meaning is carried by TEXT beside each swatch, never colour
 	// alone (the StatusIcon / edge-encoding a11y rule).
 	import { m } from '$lib/paraglide/messages';
+	import { INTEL_FLAGS, type SystemFlag } from '$lib/map/types';
 
 	let { open = $bindable(false), locked = false }: { open?: boolean; locked?: boolean } =
 		$props();
+
+	// Mirror SystemNode's intel-flag glyph + colour + label so the legend swatches read
+	// the SAME tokens/glyphs the nodes draw and can't drift from the canvas.
+	const flagGlyph: Record<SystemFlag, string> = {
+		target: '◎',
+		warning: '⚠',
+		friendly: '✚',
+		'looking-for': '⌕'
+	};
+	const flagColour: Record<SystemFlag, string> = {
+		target: 'var(--violet)',
+		warning: 'var(--alert-warning)',
+		friendly: 'var(--emerald)',
+		'looking-for': 'var(--sky)'
+	};
+	const flagLabel: Record<SystemFlag, string> = {
+		target: m.map_proto_flag_target(),
+		warning: m.map_proto_flag_warning(),
+		friendly: m.map_proto_flag_friendly(),
+		'looking-for': m.map_proto_flag_looking_for()
+	};
 </script>
 
 <section class="legend" class:open data-testid="map-legend">
@@ -89,6 +111,20 @@
 					<span class="node-swatch dangling" aria-hidden="true">?</span>
 					<span class="label">{m.map_proto_dangling()}</span>
 				</li>
+			</ul>
+
+			<!-- SYSTEM FLAGS: the intel markers a system can carry (composable). Each row's
+			     swatch is the SAME glyph chip the node draws, reading the same colour token. -->
+			<h3 class="group">{m.map_proto_legend_group_flags()}</h3>
+			<ul class="rows">
+				{#each INTEL_FLAGS as f (f)}
+					<li>
+						<span class="badge flag" style:--badge-colour={flagColour[f]} aria-hidden="true"
+							>{flagGlyph[f]}</span
+						>
+						<span class="label">{flagLabel[f]}</span>
+					</li>
+				{/each}
 			</ul>
 
 			<!-- OTHER: the direction glyph. -->
@@ -279,6 +315,24 @@
 		.glow-red {
 			animation: none;
 		}
+	}
+
+	/* Intel-flag swatch: the same bordered glyph chip SystemNode draws. The colour
+	   decorates the border + glyph; the glyph shape + the label text carry the meaning
+	   (so it survives greyscale / forced-colors, matching the node). */
+	.badge.flag {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 18px;
+		height: 16px;
+		flex: none;
+		border-radius: 3px;
+		border: 1px solid var(--badge-colour);
+		color: var(--badge-colour);
+		font-size: 11px;
+		font-weight: 700;
+		line-height: 1;
 	}
 
 	/* Node swatches mirror SystemNode's root ring + ghost dashed border. */

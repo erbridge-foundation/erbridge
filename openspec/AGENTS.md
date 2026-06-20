@@ -139,12 +139,15 @@ paraglide i18n. Load functions **forward cookies** to the backend.
   `AuditDetailsDialog`,
   `StatusIcon` (shape-distinct severity glyph: `ok`/`warning`/`error`),
   `MapCanvas` (reusable Svelte-Flow map canvas; consumes a position-less graph) +
-  `components/map/` custom nodes/edges (`SystemNode`, `ConnectionEdge`,
+  `components/map/` custom nodes/edges (`SystemNode` [class/name/ROOT/ghost badges +
+  an intel-flag glyph-chip marker row + statics], `ConnectionEdge`,
   `ConnectionEdgeLabel`, `floating-edge` perimeter-anchored bezier geometry) plus
   the docked `MapSidebar` (intel sections — Signatures/Structures bind to the selected
   system's `scans`/`structures`, read-only — + a Tweaks ACTIONS section: receive-update,
   apply-layout, throwaway colour-blind toggle), `MapPreferences` (cog → display-prefs
-  dialog: thickness, label toggles, auto-layout; session-only, blurred backdrop so
+  dialog: thickness, X + Y spacing sliders [screen-axis-stable: X always spreads nodes
+  left↔right, Y up↕down; MapCanvas maps them to the engine's cross/rank multipliers per
+  layout direction], label toggles, auto-layout; session-only, blurred backdrop so
   edits preview live), `LayoutMenu` (tab-bar split-button: apply-now [icon = current
   style] + caret dropdown of the four oriented org-chart layout styles), and `MapLegend`
   (the show/hide encoding key pinned to the sidebar bottom) — the theme seam; edges
@@ -153,21 +156,27 @@ paraglide i18n. Load functions **forward cookies** to the backend.
   `MapEvent` SSE union; mass + four-state/three-tier TTL + `SystemClass` incl.
   Pochven `P` + Drifter `D`; `ScanResult`/`Structure` both `extends TrackingMeta`
   [created/updated _at/_by, ISO-UTC] hung off `System` as `scans`/`structures`;
-  `SystemFlag[]` on `System` — open-ended per-system markers that travel across tabs
-  [`root` consumed by layout; `target`/`warning`/`friendly`/`looking-for` defined, not
-  yet rendered]; `STRUCTURE_HULL_ALLOWLIST` for d-scan import), `relative-time` (sidebar "Updated"
+  `SystemFlag[]` on `System` — open-ended SHARED-INTEL markers that travel across tabs
+  + (real backend) propagate over SSE: `target`/`warning`/`friendly`/`looking-for`
+  [composable; rendered as glyph chips on the node + a legend group, `INTEL_FLAGS` =
+  canonical order]. Chain-root is NOT a flag — it's a client-side per-tab choice
+  (`Tab.root`), so layout reads its anchors from the tabs; `STRUCTURE_HULL_ALLOWLIST`
+  for d-scan import), `relative-time` (sidebar "Updated"
   column + a local+EVE/UTC absolute formatter), `edge-encoding` (pure resolver:
   mass → line width/colour [line is always solid]; TTL → the breathing casing/halo
   ALONE [calm/warning/critical], frozen at MAX width under reduced-motion with
   distinct warning vs critical sizes; one config object, palette-swap is CSS-only),
   `layout` (the ONE-SHOT initial seed — pure `graph → positions`, TWO selectable engines
-  behind one `layoutSeed(…, algorithm)` dispatcher [a `LayoutAlgorithm` map preference,
-  default `dagre`; the radio lives in MapPreferences]: `tidy-tree` = leaf-first forest
+  behind one `layoutSeed(…, crossSpacing, algorithm, rankSpacing)` dispatcher [a
+  `LayoutAlgorithm` map preference, default `dagre`; the radio lives in MapPreferences;
+  TWO independent spacing multipliers — cross-axis (siblings) + rank-axis (depth), each
+  scaling its engine gap, fed from the X/Y screen-axis sliders]: `tidy-tree` = leaf-first forest
   [Go-port of the corp's Wanderer layout, no lib; node-size-aware rank step via a pure
   `nodeWidth` estimate; components stack down the cross axis] and `dagre` [@dagrejs/dagre
   layered Sugiyama; per-component + row/grid pack on the `*` tab]. Both share the forest
-  helpers and root each component at its `root`-flagged system so a chain lays the same on
-  every tab),
+  helpers and root each component at a tab-root system it contains (anchors from the
+  client-side `Tab.root`s, via `tabRootSet`, not a system flag) so a chain lays the same
+  on every tab incl. the root-less `*`),
   `reconcile` (server ∪ local existence union only), `place-incoming` (where a node
   arriving via an SSE event lands — one flow-step from its anchor),
   `resolve-collisions` (official @xyflow repel, run on drag-stop + after an add).

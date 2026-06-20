@@ -12,7 +12,8 @@ function renderPrefs(overrides: Record<string, unknown> = {}) {
 			thickness: 2,
 			thicknessMin: 1,
 			thicknessMax: 8,
-			nodeSpacing: 170,
+			xSpacing: 170,
+			ySpacing: 100,
 			spacingMin: 100,
 			spacingMax: 250,
 			layoutAlgo: 'dagre',
@@ -38,7 +39,9 @@ describe('MapPreferences', () => {
 		expect(screen.getByLabelText('Signature labels')).toBeInTheDocument();
 		expect(screen.getByLabelText('Show direction')).toBeInTheDocument();
 		expect(screen.getByRole('slider', { name: 'Edge thickness' })).toBeInTheDocument();
-		expect(screen.getByRole('slider', { name: 'Node spacing' })).toBeInTheDocument();
+		// Two independent SCREEN-axis spacing sliders: X (horizontal) + Y (vertical).
+		expect(screen.getByRole('slider', { name: 'Horizontal spacing (X)' })).toBeInTheDocument();
+		expect(screen.getByRole('slider', { name: 'Vertical spacing (Y)' })).toBeInTheDocument();
 		// Auto-layout now lives with the other checkboxes, not in a layout sub-control.
 		expect(screen.getByLabelText('Auto-layout on changes')).toBeInTheDocument();
 		expect(screen.getByLabelText('Animate direction')).toBeInTheDocument();

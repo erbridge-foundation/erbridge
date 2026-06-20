@@ -114,14 +114,31 @@
 	const THICKNESS_MIN = 1;
 	const THICKNESS_MAX = 8;
 	let edgeThickness = $state(2);
-	// Node spacing: a cross-axis layout multiplier (percent) the user can tune so a
-	// busy chain — e.g. a system fanning out several dangling stubs — spreads apart
-	// instead of overlapping. Applied at (re)layout time; 100% = the compact dagre base
-	// spacing, which is the default — dagre already lays the chain out tightly and
-	// crossing-free, so we start compact and let the user spread up to 250% on demand.
+	// Node spacing: TWO independent multipliers (percent) the user tunes so a busy chain —
+	// e.g. a system fanning out several dangling stubs — spreads apart instead of
+	// overlapping. These are SCREEN axes, not layout axes: `xSpacing` ALWAYS spreads nodes
+	// left↔right and `ySpacing` ALWAYS spreads them up↕down, whatever the layout direction.
+	// The layout engine knows only its own rank/cross axes, so we map (x, y) → (cross, rank)
+	// per direction below (the two swap between vertical-flow TB/BT and horizontal-flow
+	// LR/RL). Applied at (re)layout time; 100% = the compact dagre base spacing (the
+	// default — dagre already lays the chain out tightly), spread up to 250% on demand.
 	const SPACING_MIN = 100;
 	const SPACING_MAX = 250;
-	let nodeSpacing = $state(100);
+	let xSpacing = $state(100);
+	let ySpacing = $state(100);
+
+	// Map the screen-axis sliders to the layout's (crossSpacing, rankSpacing) for a given
+	// direction. The RANK axis is the flow/depth axis: vertical for TB/BT (so the Y slider
+	// drives rank), horizontal for LR/RL (so the X slider drives rank). The other slider
+	// drives the cross axis. Keeps a slider's visible effect glued to its screen axis.
+	function axisSpacing(dir: LayoutDirection): { cross: number; rank: number } {
+		const vertical = dir === 'TB' || dir === 'BT';
+		// vertical flow → rank is up/down (Y drives rank, X drives cross siblings)
+		// horizontal flow → rank is left/right (X drives rank, Y drives cross siblings)
+		return vertical
+			? { cross: xSpacing / 100, rank: ySpacing / 100 }
+			: { cross: ySpacing / 100, rank: xSpacing / 100 };
+	}
 	// Mass + wh-type label text default OFF — the canvas reads less cluttered out of
 	// the box (the mass colour/thickness + the legend already carry the encoding), and
 	// people who want the text turn it on in the prefs dialog.
@@ -259,13 +276,16 @@
 	$effect(() => {
 		const id = activeTab.id;
 		if (id && !(id in untrack(() => seedByTab))) {
+			const dir = untrack(() => layoutDir);
+			const { cross, rank } = untrack(() => axisSpacing(dir));
 			seedByTab[id] = layoutSeed(
 				union,
 				activeTab,
-				untrack(() => layoutDir),
+				dir,
 				presentIds,
-				untrack(() => nodeSpacing) / 100,
-				untrack(() => layoutAlgo)
+				cross,
+				untrack(() => layoutAlgo),
+				rank
 			);
 		}
 	});
@@ -447,7 +467,8 @@
 	// own), so we apply the fresh seed to `nodes` directly AND update the tab's seed
 	// map. Any manual drags for this tab are discarded — a reflow is machine-owned.
 	function reflow(): void {
-		const seed = layoutSeed(union, activeTab, layoutDir, presentIds, nodeSpacing / 100, layoutAlgo);
+		const { cross, rank } = axisSpacing(layoutDir);
+		const seed = layoutSeed(union, activeTab, layoutDir, presentIds, cross, layoutAlgo, rank);
 		seedByTab[activeTab.id] = { ...seed };
 		nodes = nodes.map((n) => (seed[n.id] ? { ...n, position: { ...seed[n.id] } } : n));
 		// Drop the remembered arrangement for this tab so leaving and returning shows
@@ -455,17 +476,21 @@
 		delete posByTab[activeTab.id];
 	}
 
-	// Node-spacing slider: a spacing change only matters once it is APPLIED to the
-	// layout, so reflow the active tab when the value changes (mirrors the layout-
-	// style picker, which also reflows on change). Skip the initial run so the first
-	// view still uses its one-shot seed. A reflow is machine-owned, so it discards any
-	// manual drags on the active tab — the same trade-off the style picker makes.
+	// Node-spacing sliders (X + Y screen axes): a spacing change only matters once it is
+	// APPLIED to the layout, so reflow the active tab when EITHER value changes (mirrors
+	// the layout-style picker, which also reflows on change). Skip the initial run so the
+	// first view still uses its one-shot seed. A reflow is machine-owned, so it discards
+	// any manual drags on the active tab — the same trade-off the style picker makes.
 	// svelte-ignore state_referenced_locally
-	let lastSpacing = nodeSpacing;
+	let lastXSpacing = xSpacing;
+	// svelte-ignore state_referenced_locally
+	let lastYSpacing = ySpacing;
 	$effect(() => {
-		const s = nodeSpacing;
-		if (s !== untrack(() => lastSpacing)) {
-			lastSpacing = s;
+		const x = xSpacing;
+		const y = ySpacing;
+		if (x !== untrack(() => lastXSpacing) || y !== untrack(() => lastYSpacing)) {
+			lastXSpacing = x;
+			lastYSpacing = y;
 			reflow();
 		}
 	});
@@ -807,7 +832,8 @@
 	bind:thickness={edgeThickness}
 	thicknessMin={THICKNESS_MIN}
 	thicknessMax={THICKNESS_MAX}
-	bind:nodeSpacing
+	bind:xSpacing
+	bind:ySpacing
 	spacingMin={SPACING_MIN}
 	spacingMax={SPACING_MAX}
 	bind:layoutAlgo

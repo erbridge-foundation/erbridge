@@ -42,25 +42,39 @@ export interface SystemStatic {
 }
 
 /**
- * A per-system flag that TRAVELS WITH THE SYSTEM across tabs (view-independent): a
- * system flagged here is flagged everywhere it renders, including the root-less `*`
- * tab. This is the open-ended set of operational markers a system can carry — the
- * union grows as we add markers; consumers read `flags` rather than a pile of parallel
+ * A per-system operational marker — shared INTEL that travels with the system across
+ * tabs (view-independent) and, in the real backend, is stored server-side and pushed
+ * over SSE to every viewer: a system flagged here is flagged everywhere it renders,
+ * for everyone, including the root-less `*` tab. This is the open-ended set; the union
+ * grows as we add markers and consumers read `flags` rather than a pile of parallel
  * booleans.
  *
- *   - `root`     — a chain anchor (a tab's home). Layout roots a component's tree at a
- *                  flagged-root system so the SAME tree shape is produced on every tab
- *                  (a tab's `root` field is the per-tab label→anchor; this is the
- *                  system-side fact the `*` tab uses, where no single tab root exists).
- *
- * The rest are DEFINED as the extension point but NOT consumed/rendered yet (wiring
- * their visuals — badges/halos, legend, i18n — is its own piece of work):
  *   - `target`      — a system of interest (a kill target / objective).
  *   - `warning`     — flagged hostile / dangerous.
  *   - `friendly`    — known-friendly presence.
  *   - `looking-for` — actively being searched for / wanted.
+ *
+ * Flags COMPOSE: a system can carry several at once (e.g. a wanted system with a
+ * hostile on the hole = `['looking-for', 'warning']`), and their node markers stack
+ * without overriding one another.
+ *
+ * NOTE: a chain ROOT is deliberately NOT a flag. "Which system anchors a tab" is a
+ * purely client-side, per-tab presentation choice (each user curates their own tabs
+ * and picks each root locally — see {@link Tab.root}); it is not shared intel, so it
+ * has no place on the shared System. Layout derives its root anchors from the tab
+ * roots, not from `flags`.
  */
-export type SystemFlag = "root" | "target" | "warning" | "friendly" | "looking-for";
+export type SystemFlag = "target" | "warning" | "friendly" | "looking-for";
+
+/** The intel flags in a stable render/legend order. SystemNode draws active markers in
+ *  this order so a node's marker row is deterministic regardless of `flags` ordering,
+ *  and the legend lists them the same way. */
+export const INTEL_FLAGS: readonly SystemFlag[] = [
+	"target",
+	"warning",
+	"friendly",
+	"looking-for",
+];
 
 /**
  * Provenance / tracking metadata carried by every map record we author (scanned
@@ -215,9 +229,11 @@ export interface System {
 	eve_system_id: number | null;
 	class: SystemClass;
 	statics: SystemStatic[];
-	/** Operational markers that travel with the system across tabs (see
-	 *  {@link SystemFlag}). Optional/absent = no flags; today only `root` is consumed
-	 *  (by layout, to root a component's tree consistently on every tab incl. `*`). */
+	/** Shared intel markers that travel with the system across tabs and (in the real
+	 *  backend) propagate over SSE to every viewer (see {@link SystemFlag}).
+	 *  Optional/absent = no flags. Flags COMPOSE — a system may carry several at once.
+	 *  Chain-root anchoring is NOT here: it's a client-side per-tab choice ({@link
+	 *  Tab.root}), so layout derives its anchors from the tabs, not from `flags`. */
 	flags?: SystemFlag[];
 	/** In-system scanned signatures + anomalies (incl. scanned structures, which
 	 *  also appear as first-class {@link Structure}s). A wormhole scan

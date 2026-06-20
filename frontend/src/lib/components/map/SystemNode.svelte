@@ -5,7 +5,7 @@
 	// user (Fork 3).
 	import { Handle, Position } from '@xyflow/svelte';
 	import { m } from '$lib/paraglide/messages';
-	import type { System, SystemClass } from '$lib/map/types';
+	import { INTEL_FLAGS, type System, type SystemClass, type SystemFlag } from '$lib/map/types';
 
 	// `selected` is supplied by Svelte Flow (NodeProps) — it tracks selection for
 	// us, so a "selected system" is just this node in its selected state, not a
@@ -47,6 +47,34 @@
 		P: 'var(--pochven)',
 		D: 'var(--drifter)'
 	};
+
+	// Intel flags (target/warning/friendly/looking-for) render as glyph-only chips on a
+	// dedicated marker row. Meaning is carried by the DISTINCT GLYPH SHAPE + the chip's
+	// accessible name / tooltip text (Fork 3) — the colour only decorates, so the markers
+	// stay legible in greyscale and forced-colors. Flags COMPOSE: each active flag adds a
+	// chip and they wrap, none overriding the others.
+	const flagGlyph: Record<SystemFlag, string> = {
+		target: '◎',
+		warning: '⚠',
+		friendly: '✚',
+		'looking-for': '⌕'
+	};
+	const flagColour: Record<SystemFlag, string> = {
+		target: 'var(--violet)',
+		warning: 'var(--alert-warning)',
+		friendly: 'var(--emerald)',
+		'looking-for': 'var(--sky)'
+	};
+	const flagLabel: Record<SystemFlag, string> = {
+		target: m.map_proto_flag_target(),
+		warning: m.map_proto_flag_warning(),
+		friendly: m.map_proto_flag_friendly(),
+		'looking-for': m.map_proto_flag_looking_for()
+	};
+
+	// Active flags in the canonical INTEL_FLAGS order, so the marker row is deterministic
+	// regardless of how `flags` happens to be ordered on the system.
+	const activeFlags = $derived(INTEL_FLAGS.filter((f) => system.flags?.includes(f) ?? false));
 </script>
 
 <div
@@ -90,6 +118,25 @@
 				<span class="badge ghost-badge">{m.map_proto_ghost()}</span>
 			{/if}
 		</header>
+	{/if}
+
+	{#if !data.isDangling && activeFlags.length > 0}
+		<!-- Intel marker row: one glyph chip per active flag (target/warning/friendly/
+		     looking-for), in canonical order. The glyph SHAPE + the chip's accessible name
+		     carry the meaning; colour only decorates (Fork 3). Chips compose — a system can
+		     carry several at once and they wrap here without fighting. -->
+		<ul class="markers" aria-label={m.map_proto_legend_group_flags()}>
+			{#each activeFlags as f (f)}
+				<li
+					class="badge flag"
+					style:--badge-colour={flagColour[f]}
+					aria-label={flagLabel[f]}
+					title={flagLabel[f]}
+				>
+					<span aria-hidden="true">{flagGlyph[f]}</span>
+				</li>
+			{/each}
+		</ul>
 	{/if}
 
 	{#if !data.isDangling && system.statics.length > 0}
@@ -211,6 +258,27 @@
 	.badge.ghost-badge {
 		color: var(--slate-400);
 		border: 1px dashed var(--slate-400);
+	}
+	/* Intel flag chip: a glyph in a bordered box. The colour DECORATES the border +
+	   glyph; the glyph shape + the chip's accessible name are the real signal, so it
+	   survives greyscale / forced-colors. Slightly wider padding than a text badge so the
+	   single glyph sits centred. */
+	.badge.flag {
+		color: var(--badge-colour);
+		border: 1px solid var(--badge-colour);
+		padding: 0 0.28rem;
+		line-height: 1.35;
+	}
+
+	/* Intel marker row: chips wrap, mirroring the statics row spacing so the node's
+	   stacked content reads consistently. Sits between the header and the statics. */
+	.markers {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.25rem;
+		margin: 0.35rem 0 0;
+		padding: 0;
+		list-style: none;
 	}
 
 	.statics {
