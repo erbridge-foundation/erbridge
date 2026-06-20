@@ -113,6 +113,60 @@ describe('layoutSeed', () => {
 		);
 	});
 
+	it('wildcard tab packs each component as its own tree (no flat gutter line)', () => {
+		// Two disconnected components: the A—B—C—D / B—E chain and a separate F—G pair,
+		// plus the lone island X. On a ROOT-LESS wildcard tab every component is laid out
+		// (none shredded into a 1-D gutter): each gets real 2-D positions and the
+		// components occupy distinct regions.
+		const g = graph();
+		g.systems.push(
+			...['F', 'G'].map((id) => ({
+				id,
+				name: id,
+				eve_system_id: null,
+				class: 'C2' as const,
+				statics: [],
+				scans: [],
+				structures: []
+			}))
+		);
+		g.connections.push(conn('fg', 'F', 'G'));
+		const pos = layoutSeed(g, tab('', { isWildcard: true }), 'LR', present(g));
+
+		// Every present system gets a position.
+		for (const id of ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'X']) expect(pos[id]).toBeDefined();
+		// The F—G component is laid as a ranked pair (F and G at different x), NOT stacked
+		// on a single gutter column — proof a second component is dagre-laid, not shredded.
+		expect(pos.F.x).not.toBe(pos.G.x);
+		// The two chain components don't overlap: the first component's nodes and the
+		// second's occupy separate bounding boxes (the packer translates them apart).
+		const box = (ids: string[]) => ({
+			minX: Math.min(...ids.map((i) => pos[i].x)),
+			maxX: Math.max(...ids.map((i) => pos[i].x)),
+			minY: Math.min(...ids.map((i) => pos[i].y)),
+			maxY: Math.max(...ids.map((i) => pos[i].y))
+		});
+		const c1 = box(['A', 'B', 'C', 'D', 'E']);
+		const c2 = box(['F', 'G']);
+		const disjoint = c1.maxX < c2.minX || c2.maxX < c1.minX || c1.maxY < c2.minY || c2.maxY < c1.minY;
+		expect(disjoint).toBe(true);
+	});
+
+	it('roots a component at its `root`-flagged system on the wildcard tab', () => {
+		// Same A—B—C—D / B—E chain, but flag a LEAF (D) as root. On the wildcard tab the
+		// component must anchor its tree at D (the flagged root sits at rank 0), so ranks
+		// grow AWAY from D — D—C—B—A — instead of from the degree-hub B.
+		const g = graph();
+		// Drop the island X so the chain is the only multi-node component.
+		g.systems = g.systems.filter((s) => s.id !== 'X');
+		g.systems = g.systems.map((s) => (s.id === 'D' ? { ...s, flags: ['root'] as const } : s));
+		const pos = layoutSeed(g, tab('', { isWildcard: true }), 'LR', new Set(g.systems.map((s) => s.id)));
+		// Rooted at D: D is the leftmost (rank 0) and A the deepest — D.x < C.x < B.x < A.x.
+		expect(pos.C.x).toBeGreaterThan(pos.D.x);
+		expect(pos.B.x).toBeGreaterThan(pos.C.x);
+		expect(pos.A.x).toBeGreaterThan(pos.B.x);
+	});
+
 	it('orders siblings to follow their parents (crossing reduction)', () => {
 		// A single root R with two rank-1 children P1 and P2; P1's rank-2 child is Lo,
 		// P2's is Hi — LISTED in the wrong order (Hi before Lo). A crossing-free layout

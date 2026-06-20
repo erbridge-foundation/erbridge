@@ -42,6 +42,27 @@ export interface SystemStatic {
 }
 
 /**
+ * A per-system flag that TRAVELS WITH THE SYSTEM across tabs (view-independent): a
+ * system flagged here is flagged everywhere it renders, including the root-less `*`
+ * tab. This is the open-ended set of operational markers a system can carry — the
+ * union grows as we add markers; consumers read `flags` rather than a pile of parallel
+ * booleans.
+ *
+ *   - `root`     — a chain anchor (a tab's home). Layout roots a component's tree at a
+ *                  flagged-root system so the SAME tree shape is produced on every tab
+ *                  (a tab's `root` field is the per-tab label→anchor; this is the
+ *                  system-side fact the `*` tab uses, where no single tab root exists).
+ *
+ * The rest are DEFINED as the extension point but NOT consumed/rendered yet (wiring
+ * their visuals — badges/halos, legend, i18n — is its own piece of work):
+ *   - `target`      — a system of interest (a kill target / objective).
+ *   - `warning`     — flagged hostile / dangerous.
+ *   - `friendly`    — known-friendly presence.
+ *   - `looking-for` — actively being searched for / wanted.
+ */
+export type SystemFlag = "root" | "target" | "warning" | "friendly" | "looking-for";
+
+/**
  * Provenance / tracking metadata carried by every map record we author (scanned
  * signatures, structures). Records the who/when of creation and last update so the
  * sidebar can show recency and the paste-ingest pipeline (a later phase) can stamp
@@ -194,6 +215,10 @@ export interface System {
 	eve_system_id: number | null;
 	class: SystemClass;
 	statics: SystemStatic[];
+	/** Operational markers that travel with the system across tabs (see
+	 *  {@link SystemFlag}). Optional/absent = no flags; today only `root` is consumed
+	 *  (by layout, to root a component's tree consistently on every tab incl. `*`). */
+	flags?: SystemFlag[];
 	/** In-system scanned signatures + anomalies (incl. scanned structures, which
 	 *  also appear as first-class {@link Structure}s). A wormhole scan
 	 *  (`site_type: 'Wormhole'`) is what a {@link Connection} references by system +

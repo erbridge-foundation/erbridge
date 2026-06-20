@@ -406,6 +406,9 @@ const systems: System[] = [
 		name: "J100001",
 		eve_system_id: 31000001,
 		class: "C1",
+		// Home tab's root. The `root` flag travels with the system so layout anchors
+		// this component's tree here on EVERY tab (incl. `*`), matching the Home tab.
+		flags: ["root"],
 		// wh_type is the actual wormhole-type code (not displayed yet); dest is the
 		// destination class the node surfaces.
 		statics: [{ wh_type: "B274", dest: "HS" }],
@@ -508,6 +511,8 @@ const systems: System[] = [
 		name: "J200001",
 		eve_system_id: 31000201,
 		class: "C5",
+		// Outpost tab's root (see the `root` flag note on J100001).
+		flags: ["root"],
 		statics: [{ wh_type: "H296", dest: "NS" }],
 		scans: [],
 		structures: [],
@@ -532,6 +537,8 @@ const systems: System[] = [
 		name: "J172840",
 		eve_system_id: 31002274,
 		class: "C5",
+		// DEEP tab's root (see the `root` flag note on J100001).
+		flags: ["root"],
 		statics: [{ wh_type: "H296", dest: "C5" }],
 		scans: j172840Scans,
 		structures: [],
