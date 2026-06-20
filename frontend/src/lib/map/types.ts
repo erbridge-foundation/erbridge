@@ -185,6 +185,13 @@ export interface System {
 	id: string;
 	/** Display name; for wormholes this is usually the same as `id` (the J-code). */
 	name: string;
+	/** EVE ESI numeric solar-system id (`solar_system_id`). This is the STABLE key
+	 *  the real backend / external tools (eve-scout, Wanderer) join on — `id`/`name`
+	 *  is the display key, this is the universe key. `null` when the system hasn't
+	 *  been resolved to a real id yet (e.g. a hand-placed ghost). Carried so a later
+	 *  phase can reconcile pasted signature data (keyed on `solar_system_id`) onto
+	 *  the right node. */
+	eve_system_id: number | null;
 	class: SystemClass;
 	statics: SystemStatic[];
 	/** In-system scanned signatures + anomalies (incl. scanned structures, which

@@ -5,6 +5,7 @@ import type { CombinedGraph, Connection, LocalState, System } from './types';
 const sys = (id: string): System => ({
 	id,
 	name: id,
+	eve_system_id: null,
 	class: 'C2',
 	statics: [],
 	scans: [],

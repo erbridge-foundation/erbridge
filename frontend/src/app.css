@@ -65,9 +65,12 @@
 	/* The breathing CASING gets a richer, more saturated red than the glyph/line
 	   tint (--alert-danger is the colour-blind-safe vermillion, which desaturates
 	   to a dim ember at the halo's low opacity). The line + glyph + badge keep the
-	   vermillion; only the pulsing glow uses this hotter red so it actually reads
-	   as an alarm against the near-black canvas. */
-	--alert-danger-halo: #ff3b30;
+	   vermillion; only the pulsing glow uses this deep red so it actually reads
+	   as an alarm against the near-black canvas. A pure, deep red (no orange cast)
+	   reads unmistakably as "critical" and stays well clear of the amber warning
+	   halo (--alert-warning) in hue; the size separation (warning peak 16px vs
+	   critical 26px) is the additional non-colour cue for the colour-blind path. */
+	--alert-danger-halo: #e60000;
 	/* Neutral glyph tint (the <4h clock) — secondary text colour. */
 	--text-secondary: var(--slate-400);
 

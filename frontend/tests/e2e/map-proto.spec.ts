@@ -48,6 +48,13 @@ test.describe('/maps/_proto', () => {
 		await expect(page.locator('.svelte-flow__edge').first()).toBeVisible();
 		// Mass cue is text, not colour alone (the visible .mass label pill — scoped so
 		// it doesn't match the hover-tooltip <title> which also contains "critical").
+		// Mass labels default OFF now, so enable them via the prefs dialog first, then
+		// the pill renders.
+		await page.getByRole('button', { name: 'Map preferences' }).click();
+		const prefs = page.getByRole('dialog', { name: 'Map preferences' });
+		await prefs.getByLabel('Mass labels').check();
+		await prefs.getByRole('button', { name: 'OK' }).click();
+		await expect(prefs).toBeHidden();
 		await expect(page.locator('.mass', { hasText: 'critical' }).first()).toBeVisible();
 		// The imminent-closure connection surfaces its TTL state as sr-only text on the
 		// centre label — meaning never relies on colour or motion alone (the mid-edge
@@ -89,6 +96,60 @@ test.describe('/maps/_proto', () => {
 		await expect(page.getByText('reinforced')).toBeVisible();
 		// The old hardcoded sample is gone.
 		await expect(page.getByText('Fort Nightfall')).toHaveCount(0);
+	});
+
+	test('signatures can be added, renamed, and the add is uniqueness-checked', async ({ page }) => {
+		await node(page, 'J100003').click();
+		// The Signatures "+" opens an Add dialog; add a sig with a fresh id.
+		await page.getByRole('button', { name: 'Add signature' }).click();
+		const addDialog = page.getByRole('dialog', { name: 'Add signature' });
+		await expect(addDialog).toBeVisible();
+		await addDialog.getByLabel('Signature ID').fill('NEW-777');
+		await addDialog.getByLabel('Name').fill('A Freshly Bookmarked Site');
+		await addDialog.getByRole('button', { name: 'OK' }).click();
+		await expect(page.getByText('A Freshly Bookmarked Site')).toBeVisible();
+
+		// A duplicate id is rejected with an inline error (the existing ORE-330 row).
+		await page.getByRole('button', { name: 'Add signature' }).click();
+		await addDialog.getByLabel('Signature ID').fill('ORE-330');
+		await addDialog.getByRole('button', { name: 'OK' }).click();
+		await expect(addDialog.getByRole('alert')).toContainText('already exists');
+		await addDialog.getByRole('button', { name: 'cancel' }).click();
+
+		// Double-clicking a cosmic-site row opens Edit seeded with its values; rename it.
+		await page.getByRole('row', { name: /Average Frontier Deposit/ }).dblclick();
+		const editDialog = page.getByRole('dialog', { name: 'Edit signature' });
+		await expect(editDialog.getByLabel('Signature ID')).toHaveValue('ORE-330');
+		await editDialog.getByLabel('Name').fill('Rich Frontier Deposit');
+		await editDialog.getByRole('button', { name: 'OK' }).click();
+		await expect(page.getByText('Rich Frontier Deposit')).toBeVisible();
+	});
+
+	test('right-click offers Edit/Delete; delete is a stub; wormhole edit is gated', async ({
+		page
+	}) => {
+		await node(page, 'J100003').click();
+
+		// Right-clicking a sig row opens the Edit / Delete menu.
+		const oreRow = page.getByRole('row', { name: /Average Frontier Deposit/ });
+		await oreRow.click({ button: 'right' });
+		const menu = page.getByRole('menu');
+		await expect(menu.getByRole('menuitem', { name: 'Edit' })).toBeVisible();
+		// Delete is a stub (real removal ties into the event/history model later): it
+		// surfaces a "not implemented" notice; the menu closes and the row stays.
+		await menu.getByRole('menuitem', { name: 'Delete' }).click();
+		await expect(menu).toBeHidden();
+		const notice = page.getByRole('dialog', { name: 'Not implemented' });
+		await expect(notice).toBeVisible();
+		await expect(notice).toContainText("isn't implemented yet");
+		await notice.getByRole('button', { name: 'Close' }).click();
+		await expect(notice).toBeHidden();
+		await expect(oreRow).toBeVisible();
+
+		// The wormhole row's edit is gated — a notice, not the fields.
+		await page.getByRole('row', { name: /Unstable Wormhole/ }).dblclick();
+		await expect(page.getByText(/Editing wormhole signatures isn't available yet/)).toBeVisible();
+		await expect(page.getByLabel('Signature ID')).toHaveCount(0);
 	});
 
 	test('collapse-all / expand-all drive the sections; legend honours collapse-all only', async ({
@@ -207,17 +268,18 @@ test.describe('/maps/_proto', () => {
 		await expect(dialog).toBeVisible();
 
 		// A pref toggled in the dialog applies live to the canvas behind it (the blurred
-		// backdrop keeps the canvas visible). Type labels off → the wh-type spans vanish.
-		await expect(page.locator('.edge-label .wh-type').first()).toBeVisible();
-		await dialog.getByLabel('Type labels').uncheck();
+		// backdrop keeps the canvas visible). Type labels default OFF → no wh-type spans;
+		// checking it makes them appear.
 		await expect(page.locator('.edge-label .wh-type')).toHaveCount(0);
+		await dialog.getByLabel('Type labels').check();
+		await expect(page.locator('.edge-label .wh-type').first()).toBeVisible();
 
 		// Escape closes it and restores focus to the cog. Escape == Cancel, so the
-		// Type-labels edit above is REVERTED — the wh-type spans come back.
+		// Type-labels edit above is REVERTED — the wh-type spans vanish again.
 		await page.keyboard.press('Escape');
 		await expect(dialog).toBeHidden();
 		await expect(page.getByRole('button', { name: 'Map preferences' })).toBeFocused();
-		await expect(page.locator('.edge-label .wh-type').first()).toBeVisible();
+		await expect(page.locator('.edge-label .wh-type')).toHaveCount(0);
 	});
 
 	test('the animate-direction preference toggles the drift class on direction arrows', async ({
@@ -241,22 +303,25 @@ test.describe('/maps/_proto', () => {
 		const dialog = page.getByRole('dialog', { name: 'Map preferences' });
 		const whType = page.locator('.edge-label .wh-type');
 
-		// OK KEEPS: turn Type labels off, click OK → the change persists after close.
-		await page.getByRole('button', { name: 'Map preferences' }).click();
-		await dialog.getByLabel('Type labels').uncheck();
+		// Type labels default OFF, so the canvas starts with no wh-type spans.
 		await expect(whType).toHaveCount(0);
-		await dialog.getByRole('button', { name: 'OK' }).click();
-		await expect(dialog).toBeHidden();
-		await expect(whType).toHaveCount(0); // kept
 
-		// CANCEL REVERTS: reopen, turn Type labels back on, then Cancel → reverts to the
-		// on-open state (still off), not the mid-dialog edit.
+		// OK KEEPS: turn Type labels on, click OK → the change persists after close.
 		await page.getByRole('button', { name: 'Map preferences' }).click();
 		await dialog.getByLabel('Type labels').check();
 		await expect(whType.first()).toBeVisible();
+		await dialog.getByRole('button', { name: 'OK' }).click();
+		await expect(dialog).toBeHidden();
+		await expect(whType.first()).toBeVisible(); // kept
+
+		// CANCEL REVERTS: reopen (now on), turn Type labels back off, then Cancel →
+		// reverts to the on-open state (still on), not the mid-dialog edit.
+		await page.getByRole('button', { name: 'Map preferences' }).click();
+		await dialog.getByLabel('Type labels').uncheck();
+		await expect(whType).toHaveCount(0);
 		await dialog.getByRole('button', { name: 'cancel' }).click();
 		await expect(dialog).toBeHidden();
-		await expect(whType).toHaveCount(0); // reverted to the on-open (off) snapshot
+		await expect(whType.first()).toBeVisible(); // reverted to the on-open (on) snapshot
 	});
 
 	test('the sidebar is resizable — dragging the gripper widens it', async ({ page }) => {
@@ -441,6 +506,51 @@ test.describe('/maps/_proto', () => {
 		const homeReturn = await nodePosition(page, 'J100001');
 		expect(Math.abs(homeReturn.x - homeDragged.x)).toBeLessThan(30);
 		expect(Math.abs(homeReturn.y - homeDragged.y)).toBeLessThan(30);
+	});
+
+	test('a scanned-but-unjumped wormhole sig renders a faint dangling stub node', async ({
+		page
+	}) => {
+		// The Home tab has no dangling holes; the wildcard `*` tab renders every system
+		// (incl. the DEEP systems whose wormhole scans no connection reaches yet), so a
+		// dangling stub appears there.
+		await page.getByRole('button', { name: '*', exact: true }).click();
+
+		// The stub renders with the minimal dangling style + a `?` glyph. Its node id is
+		// namespaced (`dangling:<system>:<sig>`), so select by the stub class.
+		const stub = page.locator('.svelte-flow__node .system-node.dangling').first();
+		await expect(stub).toBeVisible();
+		await expect(stub.locator('.unknown', { hasText: '?' })).toBeVisible();
+		// A known wormhole type infers a destination class (e.g. R474 → C6); at least one
+		// stub on the map should carry an inferred dest badge.
+		await expect(
+			page.locator('.system-node.dangling .badge.class').first()
+		).toBeVisible();
+	});
+
+	test('the node-spacing preference reflows the layout (spreads siblings apart)', async ({
+		page
+	}) => {
+		// A node that sits in a sibling fan on the Home chain, so a cross-axis spacing
+		// change visibly moves it. J100003 shifts well under a spacing bump (a leaf like
+		// J100004 barely moves under dagre — its cross position is near-fixed).
+		const target = 'J100003';
+		await expect(node(page, target)).toBeVisible();
+		const before = await nodePosition(page, target);
+
+		// Open prefs and push node spacing to the maximum → the active tab reflows with
+		// wider cross-axis gaps, so the node takes a new seed position.
+		await page.getByRole('button', { name: 'Map preferences' }).click();
+		const dialog = page.getByRole('dialog', { name: 'Map preferences' });
+		const spacing = dialog.getByRole('slider', { name: 'Node spacing' });
+		await spacing.focus();
+		// Drive it to the max with End (the slider's keyboard support), then close.
+		await page.keyboard.press('End');
+		await dialog.getByRole('button', { name: 'OK' }).click();
+		await expect(dialog).toBeHidden();
+
+		const after = await nodePosition(page, target);
+		expect(Math.abs(after.x - before.x) + Math.abs(after.y - before.y)).toBeGreaterThan(20);
 	});
 
 	test('receive update replays scripted SSE events incrementally', async ({ page }) => {

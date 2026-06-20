@@ -14,7 +14,18 @@
 		data,
 		selected = false
 	}: {
-		data: { system: System; isRoot: boolean; isGhost: boolean };
+		data: {
+			system: System;
+			isRoot: boolean;
+			isGhost: boolean;
+			/** A faint stub on the far end of a scanned-but-unjumped wormhole (see
+			 *  dangling.ts). Renders a minimal `? → <dest>` placeholder, not a real
+			 *  system: no class badge, no name, no statics. */
+			isDangling?: boolean;
+			/** The inferred destination class of a dangling stub's hole, or `null` when
+			 *  the wormhole type is unknown (K162 / unidentified) → shows a bare `?`. */
+			danglingDest?: SystemClass | null;
+		};
 		selected?: boolean;
 	} = $props();
 
@@ -42,6 +53,7 @@
 	class="system-node"
 	class:root={data.isRoot}
 	class:ghost={data.isGhost}
+	class:dangling={data.isDangling}
 	class:selected
 	data-class={system.class}
 >
@@ -54,18 +66,33 @@
 	<Handle type="target" position={Position.Top} id="t-top" />
 	<Handle type="target" position={Position.Left} id="t-left" />
 
-	<header>
-		<span class="badge class" style:--badge-colour={classColour[system.class]}>{system.class}</span>
-		<span class="name">{system.name}</span>
-		{#if data.isRoot}
-			<span class="badge root-badge">{m.map_proto_root()}</span>
-		{/if}
-		{#if data.isGhost}
-			<span class="badge ghost-badge">{m.map_proto_ghost()}</span>
-		{/if}
-	</header>
+	{#if data.isDangling}
+		<!-- A dangling stub: a scanned-but-unjumped hole's far end. Minimal `? → dest`
+		     placeholder — the `?` says "unknown system", the arrow + dest class (when the
+		     wormhole type tells us) hint where it leads. No real-system chrome. -->
+		<header class="stub" title={m.map_proto_dangling_tooltip()}>
+			<span class="unknown" aria-label={m.map_proto_dangling()}>?</span>
+			{#if data.danglingDest}
+				<span class="lead">→</span>
+				<span class="badge class" style:--badge-colour={classColour[data.danglingDest]}>
+					{data.danglingDest}
+				</span>
+			{/if}
+		</header>
+	{:else}
+		<header>
+			<span class="badge class" style:--badge-colour={classColour[system.class]}>{system.class}</span>
+			<span class="name">{system.name}</span>
+			{#if data.isRoot}
+				<span class="badge root-badge">{m.map_proto_root()}</span>
+			{/if}
+			{#if data.isGhost}
+				<span class="badge ghost-badge">{m.map_proto_ghost()}</span>
+			{/if}
+		</header>
+	{/if}
 
-	{#if system.statics.length > 0}
+	{#if !data.isDangling && system.statics.length > 0}
 		<ul class="statics" aria-label="statics">
 			<!-- Show the static's DESTINATION class (HS/LS/C5…), not the wormhole-type
 			     code — the type isn't user-facing yet (it's kept for the later
@@ -112,6 +139,31 @@
 	.system-node.ghost {
 		border-style: dashed;
 		opacity: 0.8;
+	}
+	/* A dangling stub (far end of a scanned-but-unjumped wormhole) reads as the
+	   FAINTEST, most provisional node — even more so than a user ghost: a dotted
+	   border + lower opacity. It is the SAME SIZE as a real node (same min-width +
+	   padding) so it reads as a peer system-to-be, not a tiny afterthought; the
+	   meaning is carried by the `?` glyph + the arrow → dest, never by colour. */
+	.system-node.dangling {
+		border-style: dotted;
+		border-color: var(--slate-600);
+		background: var(--space-900);
+		opacity: 0.7;
+	}
+	header.stub {
+		gap: 0.4rem;
+		/* Centre the minimal `? → dest` content in the full-size box. */
+		justify-content: center;
+		min-height: 1.05rem;
+	}
+	header.stub .unknown {
+		font-weight: 700;
+		font-size: 1rem;
+		color: var(--slate-300);
+	}
+	header.stub .lead {
+		color: var(--slate-500);
 	}
 	/* The selected system — a violet highlight ring drawn with box-shadow so it
 	   composes with the root border (a node can be both root AND selected). The

@@ -7,6 +7,10 @@
 	import { m } from '$lib/paraglide/messages';
 	import type { ScanResult, Structure, System } from '$lib/map/types';
 	import { relativeTime, localAndEveTime } from '$lib/map/relative-time';
+	import SigRowMenu from './SigRowMenu.svelte';
+	import SigEditDialog from './SigEditDialog.svelte';
+	import Modal from '$lib/components/Modal.svelte';
+	import DialogActions from '$lib/components/DialogActions.svelte';
 
 	let {
 		selected,
@@ -72,9 +76,85 @@
 		}
 	});
 
-	// Signatures + Structures bind to the SELECTED system (read-only this phase).
+	// Signatures + Structures bind to the SELECTED system. Signatures are now
+	// editable (add / rename / delete); Structures stay read-only this phase.
 	const scans = $derived<ScanResult[]>(selected?.scans ?? []);
 	const structures = $derived<Structure[]>(selected?.structures ?? []);
+
+	// --- Signature add / edit / delete (prototype, session-only) ---------------
+	// The proto has no auth/character context, so authored records are stamped with a
+	// placeholder character id. This is the seam the real "who edited this" plumbing
+	// replaces at promotion.
+	const PROTO_CHAR_ID = 0;
+
+	// Right-click context menu state (anchored at the click position).
+	let sigMenu = $state<{ scan: ScanResult; x: number; y: number } | null>(null);
+	// The add/edit dialog. `dialogScan` is the row being edited (null in add mode).
+	let dialogOpen = $state(false);
+	let dialogMode = $state<'add' | 'edit'>('add');
+	let dialogScan = $state<ScanResult | null>(null);
+	// Delete isn't wired to real removal yet (it ties into the event/history model,
+	// built later) — for now it surfaces a "not implemented" notice.
+	let deleteNoticeOpen = $state(false);
+
+	/** Sig ids already in the selected system — the uniqueness set passed to the
+	 *  dialog. In edit mode the edited row's own id is excluded so a no-op rename
+	 *  (and changing only the name/type) passes. */
+	const existingSigIds = $derived(
+		scans
+			.filter((s) => s.sig_id !== dialogScan?.sig_id)
+			.map((s) => s.sig_id)
+	);
+
+	function openAddSig() {
+		if (locked) return;
+		dialogMode = 'add';
+		dialogScan = null;
+		dialogOpen = true;
+	}
+	function openEditSig(scan: ScanResult) {
+		dialogMode = 'edit';
+		dialogScan = scan;
+		dialogOpen = true;
+	}
+	function openSigMenu(scan: ScanResult, e: MouseEvent) {
+		e.preventDefault();
+		sigMenu = { scan, x: e.clientX, y: e.clientY };
+	}
+
+	function saveSig(fields: { sig_id: string; site_type: string | null; name: string | null }) {
+		if (!selected) return;
+		const now = new Date().toISOString();
+		if (dialogMode === 'edit' && dialogScan) {
+			// Mutate the existing record in place (session-only proto state), then
+			// reassign the array so the table re-renders.
+			dialogScan.sig_id = fields.sig_id;
+			dialogScan.site_type = fields.site_type;
+			dialogScan.name = fields.name;
+			dialogScan.updated_at = now;
+			dialogScan.updated_by = PROTO_CHAR_ID;
+		} else {
+			selected.scans.push({
+				sig_id: fields.sig_id,
+				group: 'Cosmic Signature',
+				site_type: fields.site_type,
+				name: fields.name,
+				wh_type: null,
+				created_at: now,
+				created_by: PROTO_CHAR_ID,
+				updated_at: now,
+				updated_by: PROTO_CHAR_ID
+			});
+		}
+		selected.scans = [...selected.scans];
+	}
+
+	function deleteSig() {
+		sigMenu = null;
+		// STUB: no real removal yet — delete ties into the event/history model later.
+		// Surface a "not implemented" notice so the action gives visible feedback.
+		deleteNoticeOpen = true;
+	}
 
 	/** The Type cell: the site classification when known, else the scanner category
 	 *  ("Cosmic Signature" etc.). */
@@ -124,20 +204,23 @@
 	];
 </script>
 
-{#snippet header(key: SectionKey, title: string, count?: number)}
-	<button
-		type="button"
-		class="section-header"
-		aria-expanded={open[key]}
-		onclick={() => toggle(key)}
-		disabled={locked}
-	>
-		<svg class="chevron" class:open={open[key]} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
-			<path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
-		</svg>
-		<span class="section-title">{title}</span>
-		{#if count !== undefined}<span class="section-count">{count}</span>{/if}
-	</button>
+{#snippet header(key: SectionKey, title: string, count?: number, action?: import('svelte').Snippet)}
+	<div class="section-header-row">
+		<button
+			type="button"
+			class="section-header"
+			aria-expanded={open[key]}
+			onclick={() => toggle(key)}
+			disabled={locked}
+		>
+			<svg class="chevron" class:open={open[key]} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+				<path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+			</svg>
+			<span class="section-title">{title}</span>
+			{#if count !== undefined}<span class="section-count">{count}</span>{/if}
+		</button>
+		{#if action}{@render action()}{/if}
+	</div>
 {/snippet}
 
 <div class="sections">
@@ -173,9 +256,25 @@
 		{/if}
 	</section>
 
-	<!-- Signatures (bound to the selected system) -->
+	<!-- Signatures (bound to the selected system; add / edit / delete). -->
 	<section class="sidebar-section">
-		{@render header('signatures', m.map_proto_section_signatures(), scans.length)}
+		{#snippet addSig()}
+			{#if selected}
+				<button
+					type="button"
+					class="add-btn"
+					title={m.map_proto_sig_add()}
+					aria-label={m.map_proto_sig_add()}
+					disabled={locked}
+					onclick={openAddSig}
+				>
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+						<path stroke-linecap="round" d="M12 5v14M5 12h14" />
+					</svg>
+				</button>
+			{/if}
+		{/snippet}
+		{@render header('signatures', m.map_proto_section_signatures(), scans.length, addSig)}
 		{#if open.signatures}
 			<div class="section-body">
 				{#if scans.length}
@@ -188,7 +287,14 @@
 						</tr></thead>
 						<tbody>
 							{#each scans as s (s.sig_id)}
-								<tr title={provenance(s)} class:wormhole={isWormhole(s)}>
+								<!-- Double-click → straight to Edit (the common action); right-click
+								     → the Edit / Delete menu. -->
+								<tr
+									title={provenance(s)}
+									class:wormhole={isWormhole(s)}
+									ondblclick={() => openEditSig(s)}
+									oncontextmenu={(e) => openSigMenu(s, e)}
+								>
 									<td class="sig-id">{s.sig_id}</td>
 									<td><span class="sig-group">{scanType(s)}</span></td>
 									<td class="sig-info">{scanInfo(s)}</td>
@@ -275,6 +381,41 @@
 	<p class="placeholder-note">{m.map_proto_placeholder_note()}</p>
 </div>
 
+<!-- Signature context menu (right-click) + the add/edit dialog. Rendered once,
+     driven by the per-row handlers above. -->
+{#if sigMenu}
+	<SigRowMenu
+		x={sigMenu.x}
+		y={sigMenu.y}
+		onEdit={() => {
+			const s = sigMenu!.scan;
+			sigMenu = null;
+			openEditSig(s);
+		}}
+		onDelete={deleteSig}
+		onClose={() => (sigMenu = null)}
+	/>
+{/if}
+
+<SigEditDialog
+	bind:open={dialogOpen}
+	mode={dialogMode}
+	scan={dialogScan}
+	existingIds={existingSigIds}
+	onSave={saveSig}
+/>
+
+<!-- Delete is not wired to real removal yet — a small "not implemented" notice. -->
+<Modal open={deleteNoticeOpen} onClose={() => (deleteNoticeOpen = false)} size="small">
+	{#snippet title()}{m.map_proto_sig_delete_title()}{/snippet}
+	<p class="notice">{m.map_proto_sig_delete_not_impl()}</p>
+	<DialogActions>
+		<button type="button" class="btn primary" onclick={() => (deleteNoticeOpen = false)}>
+			{m.map_proto_dialog_close()}
+		</button>
+	</DialogActions>
+</Modal>
+
 <style>
 	.sections {
 		display: flex;
@@ -283,11 +424,15 @@
 	.sidebar-section {
 		border-bottom: 1px solid var(--space-700);
 	}
+	.section-header-row {
+		display: flex;
+		align-items: center;
+	}
 	.section-header {
 		display: flex;
 		align-items: center;
 		gap: 8px;
-		width: 100%;
+		flex: 1;
 		padding: 8px 12px;
 		background: none;
 		border: none;
@@ -298,6 +443,38 @@
 		letter-spacing: 0.08em;
 		color: var(--slate-400);
 		cursor: pointer;
+	}
+	/* The Signatures "+" add control, sitting at the right of the header row. */
+	.add-btn {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 22px;
+		height: 22px;
+		margin-right: 8px;
+		padding: 0;
+		flex: none;
+		background: none;
+		border: 1px solid var(--space-700);
+		border-radius: 4px;
+		color: var(--slate-400);
+		cursor: pointer;
+	}
+	.add-btn svg {
+		width: 12px;
+		height: 12px;
+	}
+	.add-btn:hover:not(:disabled) {
+		color: var(--sky);
+		border-color: var(--sky);
+	}
+	.add-btn:disabled {
+		opacity: 0.4;
+		cursor: not-allowed;
+	}
+	.add-btn:focus-visible {
+		outline: 2px solid var(--sky);
+		outline-offset: 1px;
 	}
 	.section-header:hover {
 		color: var(--slate-300);
@@ -408,6 +585,14 @@
 	.sig-table td {
 		padding: 5px 8px;
 		border-bottom: 1px solid var(--space-800);
+	}
+	/* Rows are interactive (double-click → edit, right-click → menu); highlight the
+	   row under the pointer so that affordance reads. */
+	.sig-table tbody tr {
+		cursor: pointer;
+	}
+	.sig-table tbody tr:hover {
+		background: var(--space-800);
 	}
 	.sig-id {
 		color: var(--slate-400);
@@ -543,5 +728,13 @@
 		font-size: 10px;
 		font-style: italic;
 		color: var(--slate-600);
+	}
+
+	/* The delete "not implemented" notice body (in the Modal). */
+	.notice {
+		margin: 0;
+		font-size: 0.8rem;
+		line-height: 1.5;
+		color: var(--slate-300);
 	}
 </style>

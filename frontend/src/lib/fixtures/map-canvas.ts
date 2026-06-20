@@ -9,6 +9,8 @@
  *   - every mass state: fresh / half / critical
  *   - an end-of-life (EoL) connection
  *   - a second, disconnected chain anchoring its own single-root tab
+ *   - a wide, deeply-branched "DEEP" chain (modelled on a Wanderer screenshot)
+ *     anchoring its own single-root tab — exercises a big multi-rank fan-out
  *   - the wildcard `*` tab (shows everything, ignores the root — e.g. eve-scout)
  *   - a seeded ghost living in local state (no server connection reaches it yet)
  *
@@ -36,6 +38,16 @@ import type {
 // values. Kept tiny so each record below stays a one-liner.
 const PILOT_A = 91000001;
 const PILOT_B = 91000002;
+// Real scanner char ids carried by the ingested DEEP signatures (from the live
+// Wanderer JSON's `character_eve_id`). The model stores char ids (numeric); name
+// resolution for display is a render-time concern, so we keep the ids verbatim.
+const WANDERER_PILOTS = {
+	a: 1377935050,
+	b: 96302482,
+	c: 95969364,
+	d: 860150027,
+	e: 2115168357,
+} as const;
 const minsAgo = (n: number): string =>
 	new Date(Date.now() - n * 60_000).toISOString();
 /** created `c` mins ago by `cb`, last updated `u` mins ago by `ub`. */
@@ -186,11 +198,213 @@ const j100006Structures: Structure[] = [
 	},
 ];
 
+// ── DEEP-chain scans: ingested from the live Wanderer JSON ────────────────────
+// These lists are the REAL signatures the JSON reports per `solar_system_id`
+// (see the eve_system_id backfill on each DEEP system below). The ingest maps each
+// JSON row → ScanResult: `eve_id`→sig_id, `kind`→group, `group`→site_type,
+// `type`→wh_type, `name`→name (null when the JSON name is "Unknown"/null),
+// `character_eve_id`→created_by/updated_by. Farm dumps (30+ Core Garrison rows)
+// are trimmed to a representative handful — the WORMHOLE sigs are kept in full
+// because their real `wh_type` codes (K162 vs named H296/C140/E175/…) are what
+// `k162End()` reads to orient the direction arrows.
+const P = WANDERER_PILOTS;
+/** Compact ScanResult builder for ingested rows. `wh` defaults null (non-wormhole). */
+const scan = (
+	sig_id: string,
+	site_type: string | null,
+	name: string | null,
+	by: number,
+	mins: number,
+	wh: string | null = null,
+): ScanResult => ({
+	sig_id,
+	group:
+		site_type === null && name === null
+			? "Cosmic Signature"
+			: site_type === "Ore Site"
+				? "Cosmic Anomaly"
+				: "Cosmic Signature",
+	site_type,
+	name,
+	wh_type: wh,
+	...track(mins + 60, by, mins, by),
+});
+
+// Root 31002274 (J172840). Five data/relic cosmic sites plus the wormhole sigs that
+// ARE this system's branch endpoints — their sig_ids match the root-side endpoint
+// sigs on the c-deep-root-* connections (the scan ↔ connection reference link).
+const j172840Scans: ScanResult[] = [
+	scan("DDS-065", "Data Site", "Unsecured Frontier Enclave Relay", P.d, 51),
+	scan("GLV-240", "Data Site", "Unsecured Frontier Enclave Relay", P.b, 51),
+	scan("HHP-171", "Data Site", "Unsecured Frontier Server Bank", P.e, 51),
+	scan("MLY-760", "Data Site", "Unsecured Frontier Enclave Relay", P.d, 51),
+	scan("RFS-836", "Data Site", "Unsecured Frontier Server Bank", P.e, 51),
+	scan("YBB-406", "Relic Site", "Forgotten Core Data Field", P.e, 51),
+	// → J140717 (RMZ branch); ageing fast in the screenshot (~6 min) — TTL on the edge.
+	scan("RMZ-780", "Wormhole", "Unstable Wormhole", P.a, 4, "K162"),
+	// → J100858 (SWE branch).
+	scan("SWE-200", "Wormhole", "Unstable Wormhole", P.a, 51, "K162"),
+	// → Sarline (TAR branch); C140 names this side.
+	scan("TAR-387", "Wormhole", "Unstable Wormhole", P.a, 51, "C140"),
+	// → J120922 (WAT branch); H296 names this side, K162 on J120922.
+	scan("WAT-512", "Wormhole", "Unstable Wormhole", P.b, 51, "H296"),
+];
+
+// 31002322 (J120922, WAT branch head). Real data sites + its three wormholes.
+const j120922Scans: ScanResult[] = [
+	scan("WHV-000", "Data Site", "Unsecured Frontier Enclave Relay", P.b, 60),
+	scan("DTT-755", "Data Site", null, P.b, 60),
+	scan("TSN-764", "Data Site", "Unsecured Frontier Enclave Relay", P.b, 60),
+	scan("XTZ-325", "Data Site", "Unsecured Frontier Server Bank", P.b, 60),
+	scan("VHS-446", "Ore Site", "Average Frontier Deposit", P.a, 90),
+	scan("OGJ-470", "Wormhole", "Unstable Wormhole", P.b, 60, "E175"),
+	scan("SOH-872", "Wormhole", "Unstable Wormhole", P.b, 60, "K162"),
+	scan("ZVD-547", "Wormhole", "Unstable Wormhole", P.b, 60, "X877"),
+	scan("ROG-553", "Wormhole", "Unstable Wormhole", P.b, 60, null),
+	scan("DWM-464", "Wormhole", null, P.c, 30, "M267"),
+];
+
+// 31001677 (J113551, DWM branch). Data/gas sites + its wormholes.
+const j113551Scans: ScanResult[] = [
+	scan("NHL-392", "Data Site", "Unsecured Frontier Trinary Hub", P.c, 40),
+	scan("ZZT-325", "Data Site", "Unsecured Frontier Digital Nexus", P.c, 40),
+	scan("WED-040", "Data Site", "Unsecured Frontier Digital Nexus", P.c, 40),
+	scan("SHO-320", "Data Site", "Unsecured Frontier Trinary Hub", P.c, 40),
+	scan("XJD-996", "Gas Site", null, P.c, 40),
+	scan("NCU-781", "Gas Site", null, P.c, 40),
+	scan("RVJ-220", "Gas Site", null, P.c, 40),
+	scan("RTU-152", "Wormhole", "Unstable Wormhole", P.c, 40, "K162"),
+	scan("KLR-720", "Wormhole", "Unstable Wormhole", P.c, 40, "X877"),
+	scan("TJE-744", "Wormhole", "Unstable Wormhole", P.c, 40, "M267"),
+	scan("XUP-973", "Wormhole", null, P.c, 40, null),
+];
+
+// 31001130 (J105409). Relic/data sites + its wormhole.
+const j105409Scans: ScanResult[] = [
+	scan("GAD-600", "Relic Site", null, P.c, 45),
+	scan("QZT-536", "Relic Site", null, P.c, 45),
+	scan("MMP-520", "Data Site", "Unsecured Frontier Receiver", P.c, 45),
+	scan("WCF-732", null, null, P.c, 45),
+	// Two wormholes: MMY-968 is the inbound (from J113551), HGO-317 the outbound static
+	// (D845 → Charmerout). Both correspond to c-deep-* edge endpoints below.
+	scan("MMY-968", "Wormhole", "Unstable Wormhole", P.c, 45, "K162"),
+	scan("HGO-317", "Wormhole", "Unstable Wormhole", P.c, 45, "D845"),
+];
+
+// 31002024 (J100858, SWE branch). Ore/combat farm (trimmed) + its two wormholes.
+const j100858Scans: ScanResult[] = [
+	scan("JEK-168", "Ore Site", "Common Perimeter Deposit", P.a, 80),
+	scan("CLL-452", "Combat Site", "Core Stronghold", P.a, 80),
+	scan("QWQ-060", "Wormhole", "Unstable Wormhole", P.a, 50, "H296"),
+	scan("NBK-200", "Wormhole", null, P.a, 50, "H296"),
+];
+
+// 31000416 (J150606). A rich mix — data/relic/combat + several wormholes (good
+// direction-arrow coverage: O477, K162×2, B274, Q003).
+const j150606Scans: ScanResult[] = [
+	scan("BZH-958", "Data Site", null, P.a, 30),
+	scan("OVR-924", "Data Site", null, P.a, 30),
+	scan("AFJ-660", "Relic Site", null, P.a, 30),
+	scan("ILN-810", "Combat Site", "The Ruins of Enclave Cohort 27", P.a, 30),
+	scan("TIK-783", "Wormhole", "Unstable Wormhole", P.a, 30, "O477"),
+	scan("DLD-385", "Wormhole", "Unstable Wormhole", P.a, 30, "K162"),
+	scan("QSY-488", "Wormhole", "Unstable Wormhole", P.a, 30, "K162"),
+	scan("EYD-752", "Wormhole", "Unstable Wormhole", P.a, 30, "B274"),
+	scan("BOP-899", "Wormhole", "Unstable Wormhole", P.a, 30, "Q003"),
+];
+
+// Lighter ingested sets for the remaining DEEP "farm" systems so their sidebars +
+// node sig cues aren't empty. 31002579 (J010951) and 31002517 (J211517) are huge
+// Core-* farms in the JSON — trimmed to a handful each.
+const j010951Scans: ScanResult[] = [
+	scan("EUC-080", "Data Site", null, P.a, 70),
+	scan("QRB-786", "Gas Site", null, P.a, 70),
+	scan("VRX-242", "Ore Site", "Shattered Ice Field", P.a, 70),
+	// Five wormholes: one inbound (ZZX-559, from J100858) and four outbound branches
+	// (RJP-460/VOP-803/XEC-225/AWF-387) — each is a c-deep-qwg-* edge endpoint below.
+	scan("ZZX-559", "Wormhole", "Unstable Wormhole", P.a, 55, "K162"),
+	scan("RJP-460", "Wormhole", "Unstable Wormhole", P.a, 55, "H296"),
+	scan("VOP-803", "Wormhole", "Unstable Wormhole", P.a, 55, "H296"),
+	scan("XEC-225", "Wormhole", "Unstable Wormhole", P.a, 55, "H296"),
+	scan("AWF-387", "Wormhole", "Unstable Wormhole", P.a, 55, "V911"),
+];
+const j211517Scans: ScanResult[] = [
+	scan("UGE-824", "Relic Site", null, P.a, 65),
+	scan("KVT-656", "Ore Site", "Rarified Core Deposit", P.a, 65),
+	scan("ODC-412", "Wormhole", "Unstable Wormhole", P.a, 55, "K162"),
+	scan("RWN-930", "Wormhole", "Unstable Wormhole", P.a, 55, "R474"),
+];
+
+// Wormhole-only scan sets for the remaining DEEP systems that had EMPTY scans but
+// sit on a c-deep-* edge. Every endpoint sig on a DEEP connection must correspond to
+// a Wormhole-type scan in that endpoint's system (the scan ↔ connection link — so an
+// edge pill always matches a sidebar row). Each sig id here is reused verbatim as the
+// endpoint sig id on the matching connection below. Types are kept real-plausible
+// (named code on the upstream side, K162 on the downstream) so `k162End()` resolves.
+const j140717Scans: ScanResult[] = [
+	scan("JVK-855", "Wormhole", "Unstable Wormhole", P.a, 4, "X877"),
+];
+const sarlineScans: ScanResult[] = [
+	scan("XVK-111", "Wormhole", "Unstable Wormhole", P.a, 51, "K162"),
+	scan("VYR-775", "Wormhole", "Unstable Wormhole", P.a, 60, "N062"),
+];
+const j153054Scans: ScanResult[] = [
+	scan("RWR-551", "Wormhole", "Unstable Wormhole", P.a, 60, "K162"),
+	scan("GAS-700", "Gas Site", "Vital Core Reservoir", P.a, 70),
+];
+const j162332Scans: ScanResult[] = [
+	scan("LBI-075", "Wormhole", "Unstable Wormhole", P.a, 60, "K162"),
+	scan("RKP-689", "Wormhole", "Unstable Wormhole", P.a, 60, "D845"),
+];
+const j150921Scans: ScanResult[] = [
+	scan("RXD-181", "Wormhole", "Unstable Wormhole", P.a, 60, "K162"),
+	scan("WVM-085", "Wormhole", "Unstable Wormhole", P.a, 60, "O883"),
+	scan("LCZ-027", "Wormhole", "Unstable Wormhole", P.a, 60, "D845"),
+];
+const charmeroutScans: ScanResult[] = [
+	scan("JDX-488", "Wormhole", "Unstable Wormhole", P.a, 60, "K162"),
+];
+const j134301Scans: ScanResult[] = [
+	scan("GUS-961", "Wormhole", "Unstable Wormhole", P.a, 60, "K162"),
+];
+const hatakaniScans: ScanResult[] = [
+	scan("OCL-374", "Wormhole", "Unstable Wormhole", P.a, 60, "K162"),
+];
+const hurjafrenScans: ScanResult[] = [
+	scan("IGS-363", "Wormhole", "Unstable Wormhole", P.a, 60, "K162"),
+	scan("SWE-233", "Wormhole", "Unstable Wormhole", P.a, 60, "Z647"),
+];
+const j143517Scans: ScanResult[] = [
+	scan("RTI-914", "Wormhole", "Unstable Wormhole", P.a, 51, "K162"),
+];
+const j145512Scans: ScanResult[] = [
+	scan("GBZ-653", "Wormhole", "Unstable Wormhole", P.a, 60, "K162"),
+];
+const j152912Scans: ScanResult[] = [
+	scan("WLF-919", "Wormhole", "Unstable Wormhole", P.a, 60, "K162"),
+];
+const rzuolScans: ScanResult[] = [
+	scan("RVS-284", "Wormhole", "Unstable Wormhole", P.a, 51, "K162"),
+];
+const j013070Scans: ScanResult[] = [
+	scan("CIT-497", "Wormhole", "Unstable Wormhole", P.a, 60, "K162"),
+	scan("SRB-511", "Wormhole", "Unstable Wormhole", P.a, 60, "V911"),
+	scan("ORX-926", "Wormhole", "Unstable Wormhole", P.a, 60, "V911"),
+	scan("ENV-256", "Wormhole", "Unstable Wormhole", P.a, 60, "N062"),
+];
+const j152722Scans: ScanResult[] = [
+	scan("HFZ-857", "Wormhole", "Unstable Wormhole", P.a, 60, "K162"),
+];
+const j110413Scans: ScanResult[] = [
+	scan("KFP-798", "Wormhole", "Unstable Wormhole", P.a, 60, "K162"),
+];
+
 const systems: System[] = [
-	{ id: "Jita", name: "Jita", class: "HS", statics: [], scans: [], structures: [] },
+	{ id: "Jita", name: "Jita", eve_system_id: 30000142, class: "HS", statics: [], scans: [], structures: [] },
 	{
 		id: "J100001",
 		name: "J100001",
+		eve_system_id: 31000001,
 		class: "C1",
 		// wh_type is the actual wormhole-type code (not displayed yet); dest is the
 		// destination class the node surfaces.
@@ -201,6 +415,7 @@ const systems: System[] = [
 	{
 		id: "J100002",
 		name: "J100002",
+		eve_system_id: 31000002,
 		class: "C2",
 		statics: [{ wh_type: "O883", dest: "C3" }],
 		scans: [],
@@ -209,6 +424,7 @@ const systems: System[] = [
 	{
 		id: "J100003",
 		name: "J100003",
+		eve_system_id: 31000003,
 		class: "C3",
 		statics: [{ wh_type: "N062", dest: "LS" }],
 		scans: j100003Scans,
@@ -217,6 +433,7 @@ const systems: System[] = [
 	{
 		id: "J100004",
 		name: "J100004",
+		eve_system_id: 31000004,
 		class: "C4",
 		statics: [{ wh_type: "M267", dest: "C4" }],
 		scans: [],
@@ -225,6 +442,7 @@ const systems: System[] = [
 	{
 		id: "J100005",
 		name: "J100005",
+		eve_system_id: 31000005,
 		class: "C5",
 		statics: [
 			{ wh_type: "H900", dest: "C5" },
@@ -236,6 +454,7 @@ const systems: System[] = [
 	{
 		id: "J100006",
 		name: "J100006",
+		eve_system_id: 31000006,
 		class: "C6",
 		statics: [{ wh_type: "V911", dest: "C6" }],
 		scans: [],
@@ -244,6 +463,7 @@ const systems: System[] = [
 	{
 		id: "J100007",
 		name: "J100007",
+		eve_system_id: 31000007,
 		class: "C4",
 		statics: [{ wh_type: "Y683", dest: "C4" }],
 		scans: [],
@@ -251,11 +471,11 @@ const systems: System[] = [
 	},
 	// A low-sec exit (reached via J100003's LS static) and a null-sec exit
 	// (reached via J100005's NS static) so HS/LS/NS all render.
-	{ id: "Amamake", name: "Amamake", class: "LS", statics: [], scans: [], structures: [] },
-	{ id: "EC-P8R", name: "EC-P8R", class: "NS", statics: [], scans: [], structures: [] },
+	{ id: "Amamake", name: "Amamake", eve_system_id: 30002537, class: "LS", statics: [], scans: [], structures: [] },
+	{ id: "EC-P8R", name: "EC-P8R", eve_system_id: 30001984, class: "NS", statics: [], scans: [], structures: [] },
 	// A Pochven (Triglavian space) exit so the P tier renders too — its own
 	// distinct space type, not NS/LS.
-	{ id: "Krirald", name: "Krirald", class: "P", statics: [], scans: [], structures: [] },
+	{ id: "Krirald", name: "Krirald", eve_system_id: 30002079, class: "P", statics: [], scans: [], structures: [] },
 	// Two more systems hung down-chain off J100007 to demo CRITICAL MASS combined
 	// with the two pulsing TTL tiers (the dash texture is gone — only the halo carries
 	// TTL now, so a thin red crit-mass line needs a warning/critical pulse beside it):
@@ -264,6 +484,7 @@ const systems: System[] = [
 	{
 		id: "J100009",
 		name: "J100009",
+		eve_system_id: 31000009,
 		class: "C5",
 		statics: [{ wh_type: "N062", dest: "LS" }],
 		scans: [],
@@ -272,6 +493,7 @@ const systems: System[] = [
 	{
 		id: "J100010",
 		name: "J100010",
+		eve_system_id: 31000010,
 		class: "C3",
 		statics: [{ wh_type: "O883", dest: "C3" }],
 		scans: [],
@@ -284,6 +506,7 @@ const systems: System[] = [
 	{
 		id: "J200001",
 		name: "J200001",
+		eve_system_id: 31000201,
 		class: "C5",
 		statics: [{ wh_type: "H296", dest: "NS" }],
 		scans: [],
@@ -292,9 +515,207 @@ const systems: System[] = [
 	{
 		id: "J200002",
 		name: "J200002",
+		eve_system_id: 31000202,
 		class: "C2",
 		statics: [{ wh_type: "D845", dest: "HS" }],
 		scans: [],
+		structures: [],
+	},
+	// ── DEEP chain ───────────────────────────────────────────────────────────
+	// A wide, deeply-branched chain modelled on a Wanderer map screenshot. It
+	// anchors its own single-root "DEEP" tab at J172840 and fans out three+ ranks
+	// deep so the LR layout shows the full tree (the screenshot is left-to-right).
+	// Classes / statics / a few names mirror the screenshot; pilot counts, jump-to-
+	// Jita labels and eve-scout merge badges aren't in our model, so they're dropped.
+	{
+		id: "J172840",
+		name: "J172840",
+		eve_system_id: 31002274,
+		class: "C5",
+		statics: [{ wh_type: "H296", dest: "C5" }],
+		scans: j172840Scans,
+		structures: [],
+	},
+	{
+		id: "J120922",
+		name: "J120922",
+		eve_system_id: 31002322,
+		class: "C5",
+		statics: [{ wh_type: "M267", dest: "C4" }],
+		scans: j120922Scans,
+		structures: [],
+	},
+	{
+		id: "J153054",
+		name: "J153054",
+		eve_system_id: 31000873,
+		class: "C5",
+		statics: [{ wh_type: "H296", dest: "NS" }],
+		scans: j153054Scans,
+		structures: [],
+	},
+	{
+		id: "J113551",
+		name: "J113551",
+		eve_system_id: 31001677,
+		class: "C4",
+		statics: [
+			{ wh_type: "X877", dest: "C2" },
+			{ wh_type: "M267", dest: "C3" },
+		],
+		scans: j113551Scans,
+		structures: [],
+	},
+	{
+		id: "J105409",
+		name: "J105409",
+		eve_system_id: 31001130,
+		class: "C3",
+		statics: [{ wh_type: "D845", dest: "HS" }],
+		scans: j105409Scans,
+		structures: [],
+	},
+	{ id: "Charmerout", name: "Charmerout", eve_system_id: 30004976, class: "HS", statics: [], scans: charmeroutScans, structures: [] },
+	{
+		id: "J150921",
+		name: "J150921",
+		eve_system_id: 31000453,
+		class: "C2",
+		statics: [
+			{ wh_type: "O883", dest: "C3" },
+			{ wh_type: "D845", dest: "HS" },
+		],
+		scans: j150921Scans,
+		structures: [],
+	},
+	{
+		id: "J134301",
+		name: "J134301",
+		eve_system_id: 31000722,
+		class: "C3",
+		statics: [{ wh_type: "N062", dest: "LS" }],
+		scans: j134301Scans,
+		structures: [],
+	},
+	{ id: "Hatakani", name: "Hatakani", eve_system_id: 30002764, class: "HS", statics: [], scans: hatakaniScans, structures: [] },
+	{
+		id: "J162332",
+		name: "J162332",
+		eve_system_id: 31001984,
+		class: "C2",
+		statics: [
+			{ wh_type: "Z647", dest: "C1" },
+			{ wh_type: "D845", dest: "HS" },
+		],
+		scans: j162332Scans,
+		structures: [],
+	},
+	{ id: "Hurjafren", name: "Hurjafren", eve_system_id: 30002572, class: "HS", statics: [], scans: hurjafrenScans, structures: [] },
+	{
+		id: "J143517",
+		name: "J143517",
+		eve_system_id: 31000562,
+		class: "C1",
+		statics: [{ wh_type: "D845", dest: "HS" }],
+		scans: j143517Scans,
+		structures: [],
+	},
+	{
+		id: "J100858",
+		name: "J100858",
+		eve_system_id: 31002024,
+		class: "C5",
+		statics: [{ wh_type: "H296", dest: "C5" }],
+		scans: j100858Scans,
+		structures: [],
+	},
+	{
+		id: "J010951",
+		name: "J010951",
+		eve_system_id: 31002579,
+		class: "C6",
+		statics: [
+			{ wh_type: "H296", dest: "C5" },
+			{ wh_type: "V911", dest: "NS" },
+		],
+		scans: j010951Scans,
+		structures: [],
+	},
+	{
+		id: "J211517",
+		name: "J211517",
+		eve_system_id: 31002517,
+		class: "C5",
+		statics: [{ wh_type: "H296", dest: "C6" }],
+		scans: j211517Scans,
+		structures: [],
+	},
+	{
+		id: "J145512",
+		name: "J145512",
+		eve_system_id: 31001904,
+		class: "C6",
+		statics: [{ wh_type: "V911", dest: "C6" }],
+		scans: j145512Scans,
+		structures: [],
+	},
+	{
+		id: "J152912",
+		name: "J152912",
+		eve_system_id: 31002070,
+		class: "C6",
+		statics: [{ wh_type: "V911", dest: "C6" }],
+		scans: j152912Scans,
+		structures: [],
+	},
+	{ id: "R-ZUOL", name: "R-ZUOL", eve_system_id: 30002135, class: "NS", statics: [], scans: rzuolScans, structures: [] },
+	{
+		id: "J140717",
+		name: "J140717",
+		eve_system_id: 31001922,
+		class: "C5",
+		statics: [{ wh_type: "X877", dest: "C2" }],
+		scans: j140717Scans,
+		structures: [],
+	},
+	{ id: "Sarline", name: "Sarline", eve_system_id: 30003584, class: "LS", statics: [], scans: sarlineScans, structures: [] },
+	{
+		id: "J013070",
+		name: "J013070",
+		eve_system_id: 31002427,
+		class: "C2",
+		statics: [
+			{ wh_type: "V911", dest: "C6" },
+			{ wh_type: "N062", dest: "LS" },
+		],
+		scans: j013070Scans,
+		structures: [],
+	},
+	{
+		id: "J150606",
+		name: "J150606",
+		eve_system_id: 31000416,
+		class: "C5",
+		statics: [{ wh_type: "H296", dest: "C2" }],
+		scans: j150606Scans,
+		structures: [],
+	},
+	{
+		id: "J152722",
+		name: "J152722",
+		eve_system_id: 31002103,
+		class: "C6",
+		statics: [{ wh_type: "V911", dest: "C4" }],
+		scans: j152722Scans,
+		structures: [],
+	},
+	{
+		id: "J110413",
+		name: "J110413",
+		eve_system_id: 31000687,
+		class: "C2",
+		statics: [{ wh_type: "N062", dest: "LS" }],
+		scans: j110413Scans,
 		structures: [],
 	},
 ];
@@ -473,6 +894,207 @@ const connections: Connection[] = [
 		ttl_remaining_min: 1300,
 		eol: false,
 	},
+	// ── DEEP chain connections ───────────────────────────────────────────────
+	// Edges fan outward from the root J172840. Named hole on the upstream side,
+	// K162 on the downstream side (so arrows point back up-chain), with a couple of
+	// mass / TTL states sprinkled in for variety. One k-space pair (Hurjafren ↔
+	// J143517) reads as a magenta-ish EoL hole in the screenshot — modelled here as
+	// a half-mass, < 4 h warning edge.
+	{
+		// Root WAT-512 (H296) on J172840, K162 on J120922 — sig_id matches the root
+		// scan WAT-512.
+		id: "c-deep-root-wat",
+		a: { system: "J172840", sig: { id: "WAT-512", type: "H296" } },
+		b: { system: "J120922", sig: { id: "SOH-872", type: "K162" } },
+		mass: "fresh",
+		ttl_remaining_min: 1400,
+		eol: false,
+	},
+	{
+		// Root SWE-200 (K162) on J172840, named H296 on J100858.
+		id: "c-deep-root-swe",
+		a: { system: "J172840", sig: { id: "SWE-200", type: "K162" } },
+		b: { system: "J100858", sig: { id: "NBK-200", type: "H296" } },
+		mass: "fresh",
+		ttl_remaining_min: 1300,
+		eol: false,
+	},
+	{
+		// Root RMZ-780 (K162) on J172840, named X877 on J140717. Ageing out fast in the
+		// screenshot (~6 min) → IMMINENT TTL, so this edge wears the loud red pulse.
+		id: "c-deep-root-rmz",
+		a: { system: "J172840", sig: { id: "RMZ-780", type: "K162" } },
+		b: { system: "J140717", sig: { id: "JVK-855", type: "X877" } },
+		mass: "half",
+		ttl_remaining_min: 6,
+		eol: true,
+	},
+	{
+		// Root TAR-387 (C140) on J172840, K162 on Sarline (a low-sec exit).
+		id: "c-deep-root-tar",
+		a: { system: "J172840", sig: { id: "TAR-387", type: "C140" } },
+		b: { system: "Sarline", sig: { id: "XVK-111", type: "K162" } },
+		mass: "fresh",
+		ttl_remaining_min: 1500,
+		eol: false,
+	},
+	// WAT branch
+	{
+		id: "c-deep-wat-gsg",
+		a: { system: "J120922", sig: { id: "OGJ-470", type: "E175" } },
+		b: { system: "J153054", sig: { id: "RWR-551", type: "K162" } },
+		mass: "fresh",
+		ttl_remaining_min: 1200,
+		eol: false,
+	},
+	{
+		id: "c-deep-wat-dwm",
+		a: { system: "J120922", sig: { id: "DWM-464", type: "M267" } },
+		b: { system: "J113551", sig: { id: "RTU-152", type: "K162" } },
+		mass: "fresh",
+		ttl_remaining_min: 1100,
+		eol: false,
+	},
+	{
+		id: "c-deep-wat-zvd",
+		a: { system: "J120922", sig: { id: "ZVD-547", type: "X877" } },
+		b: { system: "J162332", sig: { id: "LBI-075", type: "K162" } },
+		mass: "half",
+		ttl_remaining_min: 900,
+		eol: false,
+	},
+	// DWM branch
+	{
+		id: "c-deep-dwm-tje",
+		a: { system: "J113551", sig: { id: "TJE-744", type: "M267" } },
+		b: { system: "J105409", sig: { id: "MMY-968", type: "K162" } },
+		mass: "fresh",
+		ttl_remaining_min: 1000,
+		eol: false,
+	},
+	{
+		id: "c-deep-dwm-rtu",
+		a: { system: "J113551", sig: { id: "KLR-720", type: "X877" } },
+		b: { system: "J150921", sig: { id: "RXD-181", type: "K162" } },
+		mass: "fresh",
+		ttl_remaining_min: 1050,
+		eol: false,
+	},
+	{
+		id: "c-deep-tje-mmy",
+		a: { system: "J105409", sig: { id: "HGO-317", type: "D845" } },
+		b: { system: "Charmerout", sig: { id: "JDX-488", type: "K162" } },
+		mass: "fresh",
+		ttl_remaining_min: 1440,
+		eol: false,
+	},
+	{
+		id: "c-deep-rtu-hfn",
+		a: { system: "J150921", sig: { id: "WVM-085", type: "O883" } },
+		b: { system: "J134301", sig: { id: "GUS-961", type: "K162" } },
+		mass: "fresh",
+		ttl_remaining_min: 1200,
+		eol: false,
+	},
+	{
+		id: "c-deep-rtu-vxq",
+		a: { system: "J150921", sig: { id: "LCZ-027", type: "D845" } },
+		b: { system: "Hatakani", sig: { id: "OCL-374", type: "K162" } },
+		mass: "fresh",
+		ttl_remaining_min: 1380,
+		eol: false,
+	},
+	// ZVD branch (the k-space pair with the magenta link in the screenshot)
+	{
+		id: "c-deep-zvd-lwp",
+		a: { system: "J162332", sig: { id: "RKP-689", type: "D845" } },
+		b: { system: "Hurjafren", sig: { id: "IGS-363", type: "K162" } },
+		mass: "fresh",
+		ttl_remaining_min: 1300,
+		eol: false,
+	},
+	{
+		id: "c-deep-lwp-ydo",
+		a: { system: "Hurjafren", sig: { id: "SWE-233", type: "Z647" } },
+		b: { system: "J143517", sig: { id: "RTI-914", type: "K162" } },
+		mass: "half",
+		ttl_remaining_min: 180,
+		eol: false,
+	},
+	// SWE branch
+	{
+		id: "c-deep-swe-qwg",
+		a: { system: "J100858", sig: { id: "QWQ-060", type: "H296" } },
+		b: { system: "J010951", sig: { id: "ZZX-559", type: "K162" } },
+		mass: "fresh",
+		ttl_remaining_min: 1100,
+		eol: false,
+	},
+	{
+		id: "c-deep-qwg-vog",
+		a: { system: "J010951", sig: { id: "RJP-460", type: "H296" } },
+		b: { system: "J211517", sig: { id: "ODC-412", type: "K162" } },
+		mass: "fresh",
+		ttl_remaining_min: 1000,
+		eol: false,
+	},
+	{
+		id: "c-deep-qwg-qps",
+		a: { system: "J010951", sig: { id: "VOP-803", type: "H296" } },
+		b: { system: "J145512", sig: { id: "GBZ-653", type: "K162" } },
+		mass: "half",
+		ttl_remaining_min: 950,
+		eol: false,
+	},
+	{
+		id: "c-deep-qwg-rjp",
+		a: { system: "J010951", sig: { id: "XEC-225", type: "H296" } },
+		b: { system: "J152912", sig: { id: "WLF-919", type: "K162" } },
+		mass: "fresh",
+		ttl_remaining_min: 1150,
+		eol: false,
+	},
+	{
+		id: "c-deep-qwg-xxj",
+		a: { system: "J010951", sig: { id: "AWF-387", type: "V911" } },
+		b: { system: "R-ZUOL", sig: { id: "RVS-284", type: "K162" } },
+		mass: "half",
+		ttl_remaining_min: 160,
+		eol: false,
+	},
+	// TAR branch
+	{
+		id: "c-deep-tar-zwz",
+		a: { system: "Sarline", sig: { id: "VYR-775", type: "N062" } },
+		b: { system: "J013070", sig: { id: "CIT-497", type: "K162" } },
+		mass: "fresh",
+		ttl_remaining_min: 1250,
+		eol: false,
+	},
+	{
+		id: "c-deep-zwz-odc",
+		a: { system: "J013070", sig: { id: "SRB-511", type: "V911" } },
+		b: { system: "J150606", sig: { id: "DLD-385", type: "K162" } },
+		mass: "fresh",
+		ttl_remaining_min: 1080,
+		eol: false,
+	},
+	{
+		id: "c-deep-zwz-rwn",
+		a: { system: "J013070", sig: { id: "ORX-926", type: "V911" } },
+		b: { system: "J152722", sig: { id: "HFZ-857", type: "K162" } },
+		mass: "fresh",
+		ttl_remaining_min: 1170,
+		eol: false,
+	},
+	{
+		id: "c-deep-zwz-rop",
+		a: { system: "J013070", sig: { id: "ENV-256", type: "N062" } },
+		b: { system: "J110413", sig: { id: "KFP-798", type: "K162" } },
+		mass: "half",
+		ttl_remaining_min: 800,
+		eol: false,
+	},
 ];
 
 /**
@@ -489,6 +1111,9 @@ export const initialGraph: CombinedGraph = {
 	tabs: [
 		{ id: "home", label: "Home", root: "J100001" },
 		{ id: "outpost", label: "Outpost", root: "J200001" },
+		// A wide, deeply-branched chain modelled on a Wanderer screenshot, rooted
+		// at J172840. Reads best under the LR layout (the screenshot is left-to-right).
+		{ id: "deep", label: "DEEP", root: "J172840" },
 		{ id: "all", label: "*", root: "", isWildcard: true },
 	],
 };
@@ -501,7 +1126,7 @@ export const initialGraph: CombinedGraph = {
  */
 export const initialLocalState: LocalState = {
 	ghostSystems: [
-		{ id: "J199999", name: "J199999", class: "C2", statics: [], scans: [], structures: [] },
+		{ id: "J199999", name: "J199999", eve_system_id: null, class: "C2", statics: [], scans: [], structures: [] },
 	],
 	ghostConnections: [],
 };
@@ -526,6 +1151,7 @@ export const updateEvents: MapEvent[] = [
 		system: {
 			id: "J100008",
 			name: "J100008",
+			eve_system_id: 31000008,
 			class: "C4",
 			statics: [],
 			scans: [],
@@ -549,6 +1175,7 @@ export const updateEvents: MapEvent[] = [
 		system: {
 			id: "J199999",
 			name: "J199999",
+			eve_system_id: 31009999,
 			class: "C2",
 			statics: [{ wh_type: "H121", dest: "C1" }],
 			scans: [],

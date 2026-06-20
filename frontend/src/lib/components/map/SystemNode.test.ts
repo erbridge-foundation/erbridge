@@ -7,6 +7,7 @@ import type { System } from '$lib/map/types';
 const sys = (over: Partial<System> = {}): System => ({
 	id: 'J100005',
 	name: 'J100005',
+	eve_system_id: 31000005,
 	class: 'C5',
 	statics: [{ wh_type: 'H900', dest: 'C5' }],
 	scans: [],

@@ -17,6 +17,7 @@
 	// only "auto-layout on changes" remains here, alongside the other toggles.)
 	type Snapshot = {
 		thickness: number;
+		nodeSpacing: number;
 		showMass: boolean;
 		showWhType: boolean;
 		showSignatures: boolean;
@@ -30,6 +31,9 @@
 		thickness = $bindable(),
 		thicknessMin,
 		thicknessMax,
+		nodeSpacing = $bindable(),
+		spacingMin,
+		spacingMax,
 		showMass = $bindable(),
 		showWhType = $bindable(),
 		showSignatures = $bindable(),
@@ -41,6 +45,11 @@
 		thickness: number;
 		thicknessMin: number;
 		thicknessMax: number;
+		/** Cross-axis layout spacing, as a percent multiplier (100 = compact base).
+		 *  Changing it reflows the active tab so a busy chain spreads apart. */
+		nodeSpacing: number;
+		spacingMin: number;
+		spacingMax: number;
 		showMass: boolean;
 		showWhType: boolean;
 		showSignatures: boolean;
@@ -60,6 +69,7 @@
 		if (open && !wasOpen) {
 			snapshot = {
 				thickness,
+				nodeSpacing,
 				showMass,
 				showWhType,
 				showSignatures,
@@ -81,6 +91,7 @@
 	function cancel() {
 		if (snapshot) {
 			thickness = snapshot.thickness;
+			nodeSpacing = snapshot.nodeSpacing;
 			showMass = snapshot.showMass;
 			showWhType = snapshot.showWhType;
 			showSignatures = snapshot.showSignatures;
@@ -108,6 +119,21 @@
 				step="1"
 				bind:value={thickness}
 				aria-label={m.map_proto_edge_thickness()}
+			/>
+		</label>
+
+		<label class="thickness">
+			<span class="row">
+				<span>{m.map_proto_node_spacing()}</span>
+				<output class="thickness-value">{nodeSpacing}%</output>
+			</span>
+			<input
+				type="range"
+				min={spacingMin}
+				max={spacingMax}
+				step="10"
+				bind:value={nodeSpacing}
+				aria-label={m.map_proto_node_spacing()}
 			/>
 		</label>
 

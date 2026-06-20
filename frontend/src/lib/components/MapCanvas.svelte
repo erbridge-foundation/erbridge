@@ -22,6 +22,7 @@
 	import MapLegend from '$lib/components/map/MapLegend.svelte';
 	import { layoutSeed, renderableSystems } from '$lib/map/layout';
 	import { combine, dropConfirmedGhosts } from '$lib/map/reconcile';
+	import { danglingStubs, isDanglingId } from '$lib/map/dangling';
 	import { resolveCollisions } from '$lib/map/resolve-collisions';
 	import { placeIncoming } from '$lib/map/place-incoming';
 	import { k162End } from '$lib/map/types';
@@ -68,15 +69,32 @@
 		tabs.find((t) => t.id === activeTabId) ?? tabs[0] ?? { id: '', label: '', root: '' }
 	);
 
-	/** The union graph (server ∪ local). Existence truth for the active tab. */
-	const union = $derived(combine(graph, localState));
+	/** The union graph (server ∪ local), with dangling stubs folded in. Existence
+	 *  truth for the active tab. A scanned-but-unjumped wormhole sig (a wormhole scan
+	 *  no connection references) gets a faint stub node on the far end (see
+	 *  dangling.ts); deriving it here lets the stubs flow through reachability +
+	 *  layout + edge rendering exactly like real neighbours, with no special-casing. */
+	const baseUnion = $derived(combine(graph, localState));
+	const stubs = $derived(danglingStubs(baseUnion));
+	const union = $derived<CombinedGraph>(
+		stubs.systems.length === 0
+			? baseUnion
+			: {
+					systems: [...baseUnion.systems, ...stubs.systems],
+					connections: [...baseUnion.connections, ...stubs.connections],
+					tabs: baseUnion.tabs
+				}
+	);
 
 	// The map's flow direction. Set by the one-shot initial layout and by a
 	// "redo layout" action; it tells `placeIncoming` which way a new node steps.
 	// The selected layout style (persists; the segmented control sets it). Feeds the
 	// initial seed, the manual "Redo layout" button, incremental new-node placement
 	// (`placeIncoming` steps in this direction), and the auto-layout reflow.
-	let layoutDir = $state<LayoutDirection>('LR');
+	// Default TB (top-to-bottom): the tidy-tree layout reads best vertically for the
+	// deep, wide chains these maps grow into (the root sits top-centre, branches fan
+	// down symmetrically). The user can switch via the tab-bar layout menu.
+	let layoutDir = $state<LayoutDirection>('TB');
 	// Auto-layout: when ON, every map change re-runs the whole layout in the selected
 	// style (drags discarded — layout is machine-owned). When OFF, a map change keeps
 	// existing positions and only the new node is placed incrementally (today's
@@ -91,8 +109,19 @@
 	const THICKNESS_MIN = 1;
 	const THICKNESS_MAX = 8;
 	let edgeThickness = $state(2);
-	let showMassLabels = $state(true);
-	let showWhTypeLabels = $state(true);
+	// Node spacing: a cross-axis layout multiplier (percent) the user can tune so a
+	// busy chain — e.g. a system fanning out several dangling stubs — spreads apart
+	// instead of overlapping. Applied at (re)layout time; 100% = the compact dagre base
+	// spacing, which is the default — dagre already lays the chain out tightly and
+	// crossing-free, so we start compact and let the user spread up to 250% on demand.
+	const SPACING_MIN = 100;
+	const SPACING_MAX = 250;
+	let nodeSpacing = $state(100);
+	// Mass + wh-type label text default OFF — the canvas reads less cluttered out of
+	// the box (the mass colour/thickness + the legend already carry the encoding), and
+	// people who want the text turn it on in the prefs dialog.
+	let showMassLabels = $state(false);
+	let showWhTypeLabels = $state(false);
 	// "Show signatures": the per-end sig-id pills on each connection (which signature
 	// in each system leads to the hole). On by default.
 	let showSignatures = $state(true);
@@ -225,7 +254,13 @@
 	$effect(() => {
 		const id = activeTab.id;
 		if (id && !(id in untrack(() => seedByTab))) {
-			seedByTab[id] = layoutSeed(union, activeTab, untrack(() => layoutDir), presentIds);
+			seedByTab[id] = layoutSeed(
+				union,
+				activeTab,
+				untrack(() => layoutDir),
+				presentIds,
+				untrack(() => nodeSpacing) / 100
+			);
 		}
 	});
 
@@ -241,7 +276,13 @@
 				id: s.id,
 				type: 'system',
 				position: seedPos[s.id] ?? { x: 0, y: 0 },
-				data: { system: s, isRoot: s.id === activeTab.root, isGhost: ghostIds.has(s.id) }
+				data: {
+					system: s,
+					isRoot: s.id === activeTab.root,
+					isGhost: ghostIds.has(s.id),
+					isDangling: isDanglingId(s.id),
+					danglingDest: stubs.dest.get(s.id) ?? null
+				}
 			}))
 	);
 	const desiredEdges = $derived.by<Edge[]>(() => {
@@ -400,13 +441,28 @@
 	// own), so we apply the fresh seed to `nodes` directly AND update the tab's seed
 	// map. Any manual drags for this tab are discarded — a reflow is machine-owned.
 	function reflow(): void {
-		const seed = layoutSeed(union, activeTab, layoutDir, presentIds);
+		const seed = layoutSeed(union, activeTab, layoutDir, presentIds, nodeSpacing / 100);
 		seedByTab[activeTab.id] = { ...seed };
 		nodes = nodes.map((n) => (seed[n.id] ? { ...n, position: { ...seed[n.id] } } : n));
 		// Drop the remembered arrangement for this tab so leaving and returning shows
 		// the reflowed layout, not the pre-reflow one. The next switch away re-snapshots.
 		delete posByTab[activeTab.id];
 	}
+
+	// Node-spacing slider: a spacing change only matters once it is APPLIED to the
+	// layout, so reflow the active tab when the value changes (mirrors the layout-
+	// style picker, which also reflows on change). Skip the initial run so the first
+	// view still uses its one-shot seed. A reflow is machine-owned, so it discards any
+	// manual drags on the active tab — the same trade-off the style picker makes.
+	// svelte-ignore state_referenced_locally
+	let lastSpacing = nodeSpacing;
+	$effect(() => {
+		const s = nodeSpacing;
+		if (s !== untrack(() => lastSpacing)) {
+			lastSpacing = s;
+			reflow();
+		}
+	});
 
 	// The segmented control sets the selected style. With auto-layout ON, changing the
 	// style immediately reflows; OFF, it just records the choice (the manual Redo
@@ -731,6 +787,9 @@
 	bind:thickness={edgeThickness}
 	thicknessMin={THICKNESS_MIN}
 	thicknessMax={THICKNESS_MAX}
+	bind:nodeSpacing
+	spacingMin={SPACING_MIN}
+	spacingMax={SPACING_MAX}
 	bind:showMass={showMassLabels}
 	bind:showWhType={showWhTypeLabels}
 	bind:showSignatures

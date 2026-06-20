@@ -85,6 +85,10 @@
 					<span class="node-swatch ghost" aria-hidden="true"></span>
 					<span class="label">{m.map_proto_ghost()}</span>
 				</li>
+				<li>
+					<span class="node-swatch dangling" aria-hidden="true">?</span>
+					<span class="label">{m.map_proto_dangling()}</span>
+				</li>
 			</ul>
 
 			<!-- OTHER: the direction glyph. -->
@@ -294,5 +298,18 @@
 		border-style: dashed;
 		border-color: var(--slate-500);
 		background: transparent;
+	}
+	/* Dangling stub: dotted + a faint `?` glyph, matching the SystemNode stub. */
+	.node-swatch.dangling {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		border-style: dotted;
+		border-color: var(--slate-600);
+		background: transparent;
+		font-size: 9px;
+		font-weight: 700;
+		line-height: 1;
+		color: var(--slate-400);
 	}
 </style>

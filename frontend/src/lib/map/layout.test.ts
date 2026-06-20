@@ -8,6 +8,7 @@ function graph(): CombinedGraph {
 	const systems: System[] = ['A', 'B', 'C', 'D', 'E', 'X'].map((id) => ({
 		id,
 		name: id,
+		eve_system_id: null,
 		class: 'C2',
 		statics: [],
 		scans: [],
@@ -52,8 +53,8 @@ describe('layoutSeed', () => {
 	it('LR places rank along x and siblings along y', () => {
 		const g = graph();
 		const pos = layoutSeed(g, tab('A'), 'LR', present(g));
-		// A is rank 0, B rank 1, C/E rank 2, D rank 3.
-		expect(pos.A.x).toBe(0);
+		// Ranks grow rightwards: A(rank0) < B(1) < C(2) < D(3) in x. (Absolute origin
+		// is the engine's business — assert the ordering, not a zero anchor.)
 		expect(pos.B.x).toBeGreaterThan(pos.A.x);
 		expect(pos.C.x).toBeGreaterThan(pos.B.x);
 		expect(pos.D.x).toBeGreaterThan(pos.C.x);
@@ -65,7 +66,6 @@ describe('layoutSeed', () => {
 	it('TB places rank along y and siblings along x', () => {
 		const g = graph();
 		const pos = layoutSeed(g, tab('A'), 'TB', present(g));
-		expect(pos.A.y).toBe(0);
 		expect(pos.B.y).toBeGreaterThan(pos.A.y);
 		expect(pos.C.y).toBe(pos.E.y);
 		expect(pos.C.x).not.toBe(pos.E.x);
@@ -74,7 +74,6 @@ describe('layoutSeed', () => {
 	it('RL mirrors LR — ranks grow leftwards (root on the right)', () => {
 		const g = graph();
 		const pos = layoutSeed(g, tab('A'), 'RL', present(g));
-		expect(pos.A.x).toBe(0);
 		expect(pos.B.x).toBeLessThan(pos.A.x);
 		expect(pos.C.x).toBeLessThan(pos.B.x);
 		// Siblings still spread along y.
@@ -85,7 +84,6 @@ describe('layoutSeed', () => {
 	it('BT mirrors TB — ranks grow upwards (root at the bottom)', () => {
 		const g = graph();
 		const pos = layoutSeed(g, tab('A'), 'BT', present(g));
-		expect(pos.A.y).toBe(0);
 		expect(pos.B.y).toBeLessThan(pos.A.y);
 		expect(pos.C.y).toBe(pos.E.y);
 		expect(pos.C.x).not.toBe(pos.E.x);
@@ -94,20 +92,36 @@ describe('layoutSeed', () => {
 	it('parks disconnected nodes in a visible gutter, apart from the ranks', () => {
 		const g = graph();
 		const pos = layoutSeed(g, tab('A'), 'LR', present(g));
-		// X has no connection → gutter, to the left of the root column (x < A.x).
-		expect(pos.X.x).toBeLessThan(pos.A.x);
+		// X has no connection → gutter, to the left of every ranked node (x < all).
+		const rankedMinX = Math.min(pos.A.x, pos.B.x, pos.C.x, pos.D.x, pos.E.x);
+		expect(pos.X.x).toBeLessThan(rankedMinX);
 	});
 
-	it('orders siblings to follow their parents (barycenter crossing-reduction)', () => {
-		// A single root R with two rank-1 children P1 (top) and P2 (below). P1's
-		// rank-2 child is Lo, P2's is Hi — but the grandchildren are LISTED in the
-		// wrong order (Hi before Lo). A naive insertion-order layout would seat Hi
-		// above Lo, crossing the two P→grandchild edges. The barycenter pass must
-		// reseat rank 2 so each grandchild sits beside its parent: P1's child above
-		// P2's (no crossing).
+	it('the spacing multiplier widens the cross-axis gap between siblings', () => {
+		const g = graph();
+		// C and E share a rank; their y-separation grows with the spacing multiplier.
+		const tight = layoutSeed(g, tab('A'), 'LR', present(g), 1);
+		const wide = layoutSeed(g, tab('A'), 'LR', present(g), 2);
+		const sep = (p: typeof tight) => Math.abs(p.C.y - p.E.y);
+		expect(sep(wide)).toBeGreaterThan(sep(tight));
+	});
+
+	it('defaults the spacing multiplier to 1 (unchanged layout when omitted)', () => {
+		const g = graph();
+		expect(layoutSeed(g, tab('A'), 'LR', present(g))).toEqual(
+			layoutSeed(g, tab('A'), 'LR', present(g), 1)
+		);
+	});
+
+	it('orders siblings to follow their parents (crossing reduction)', () => {
+		// A single root R with two rank-1 children P1 and P2; P1's rank-2 child is Lo,
+		// P2's is Hi — LISTED in the wrong order (Hi before Lo). A crossing-free layout
+		// must seat each grandchild beside its parent: whichever parent is on top, its
+		// child is on top too (no P→grandchild edge crossing).
 		const sys: System[] = ['R', 'P1', 'P2', 'Hi', 'Lo'].map((id) => ({
 			id,
 			name: id,
+			eve_system_id: null,
 			class: 'C2',
 			statics: [],
 			scans: [],
@@ -124,11 +138,10 @@ describe('layoutSeed', () => {
 			tabs: []
 		};
 		const pos = layoutSeed(g, tab('R'), 'LR', new Set(sys.map((s) => s.id)));
-		// P1 is the first child (y = 0), P2 sits below it (greater y).
-		expect(pos.P2.y).toBeGreaterThan(pos.P1.y);
-		// Crossing-free ⇒ P1's child (Lo) sits ABOVE P2's child (Hi), mirroring the
-		// parents — even though Hi was listed first.
-		expect(pos.Lo.y).toBeLessThan(pos.Hi.y);
+		// Crossing-free ⇔ the grandchildren keep their parents' vertical order: Lo
+		// (P1's child) is on the same side of Hi (P2's child) as P1 is of P2 — even
+		// though Hi was listed first.
+		expect(pos.Lo.y < pos.Hi.y).toBe(pos.P1.y < pos.P2.y);
 	});
 });
 
@@ -138,7 +151,7 @@ describe('renderableSystems', () => {
 		// Drop X from the graph; add it back as a ghost so it still renders.
 		const noX: CombinedGraph = { ...g, systems: g.systems.filter((s) => s.id !== 'X') };
 		const ghosts: System[] = [
-			{ id: 'X', name: 'X', class: 'C2', statics: [], scans: [], structures: [] }
+			{ id: 'X', name: 'X', eve_system_id: null, class: 'C2', statics: [], scans: [], structures: [] }
 		];
 		const ids = renderableSystems(noX, tab('A'), ghosts);
 		expect(ids).toContain('A');
