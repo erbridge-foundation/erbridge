@@ -89,12 +89,54 @@ describe('layoutSeed', () => {
 		expect(pos.C.x).not.toBe(pos.E.x);
 	});
 
-	it('parks disconnected nodes in a visible gutter, apart from the ranks', () => {
+	it('stacks a disconnected component as a satellite, clear of the primary tree', () => {
 		const g = graph();
 		const pos = layoutSeed(g, tab('A'), 'LR', present(g));
-		// X has no connection → gutter, to the left of every ranked node (x < all).
-		const rankedMinX = Math.min(pos.A.x, pos.B.x, pos.C.x, pos.D.x, pos.E.x);
-		expect(pos.X.x).toBeLessThan(rankedMinX);
+		// X has no connection → its own single-node component, stacked DOWN the cross
+		// axis (y in LR) below the primary tree, not overlapping it. (The old layout
+		// parked it in a negative-rank gutter; the forest now stacks all components on
+		// the cross axis, every one oriented the same way.) Its y sits beyond the
+		// primary's cross extent, and it shares no (x,y) with any primary node.
+		const primaryMaxY = Math.max(pos.A.y, pos.B.y, pos.C.y, pos.D.y, pos.E.y);
+		expect(pos.X.y).toBeGreaterThan(primaryMaxY);
+		for (const id of ['A', 'B', 'C', 'D', 'E']) {
+			expect(pos.X.x === pos[id].x && pos.X.y === pos[id].y).toBe(false);
+		}
+	});
+
+	it('node-size-aware rank step: a wide node widens its rank column gap', () => {
+		// Two A—B—C chains, identical except the SECOND gives B a long name (a wide node).
+		// The wider B pushes the B→C rank gap out, so the second chain's rank-1→rank-2 gap
+		// is larger than the first's (the rank step is sized from node width, not constant).
+		const mk = (bName: string): CombinedGraph => {
+			const ids = ['A', 'B', 'C'];
+			const systems: System[] = ids.map((id) => ({
+				id,
+				name: id === 'B' ? bName : id,
+				eve_system_id: null,
+				class: 'C2',
+				statics: [],
+				scans: [],
+				structures: []
+			}));
+			return { systems, connections: [conn('ab', 'A', 'B'), conn('bc', 'B', 'C')], tabs: [] };
+		};
+		const narrow = layoutSeed(mk('B'), tab('A'), 'LR', new Set(['A', 'B', 'C']));
+		const wide = layoutSeed(mk('A-very-long-system-name'), tab('A'), 'LR', new Set(['A', 'B', 'C']));
+		// The rank-1 (B) → rank-2 (C) centre gap grows when B is wider.
+		expect(wide.C.x - wide.B.x).toBeGreaterThan(narrow.C.x - narrow.B.x);
+	});
+
+	it('roots a component at its `root`-flagged system on the wildcard tab', () => {
+		// Flag a LEAF (D) as root: on the wildcard tab the chain must anchor at D, so
+		// ranks grow AWAY from D (D—C—B—A) rather than from the degree-hub B.
+		const g = graph();
+		g.systems = g.systems.filter((s) => s.id !== 'X');
+		g.systems = g.systems.map((s) => (s.id === 'D' ? { ...s, flags: ['root'] as const } : s));
+		const pos = layoutSeed(g, tab('', { isWildcard: true }), 'LR', new Set(g.systems.map((s) => s.id)));
+		expect(pos.C.x).toBeGreaterThan(pos.D.x);
+		expect(pos.B.x).toBeGreaterThan(pos.C.x);
+		expect(pos.A.x).toBeGreaterThan(pos.B.x);
 	});
 
 	it('the spacing multiplier widens the cross-axis gap between siblings', () => {

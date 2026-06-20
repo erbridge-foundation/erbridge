@@ -531,10 +531,10 @@ test.describe('/maps/_proto', () => {
 	test('the node-spacing preference reflows the layout (spreads siblings apart)', async ({
 		page
 	}) => {
-		// A node that sits in a sibling fan on the Home chain, so a cross-axis spacing
-		// change visibly moves it. J100003 shifts well under a spacing bump (a leaf like
-		// J100004 barely moves under dagre — its cross position is near-fixed).
-		const target = 'J100003';
+		// A node down a sibling fan on the Home chain, so a cross-axis spacing change
+		// visibly moves it (tidy-tree packs the cross axis, so a deeper fan node shifts
+		// well under a spacing bump — J100004 moves ~225px from default to max).
+		const target = 'J100004';
 		await expect(node(page, target)).toBeVisible();
 		const before = await nodePosition(page, target);
 

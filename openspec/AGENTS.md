@@ -153,12 +153,19 @@ paraglide i18n. Load functions **forward cookies** to the backend.
   `MapEvent` SSE union; mass + four-state/three-tier TTL + `SystemClass` incl.
   Pochven `P` + Drifter `D`; `ScanResult`/`Structure` both `extends TrackingMeta`
   [created/updated _at/_by, ISO-UTC] hung off `System` as `scans`/`structures`;
-  `STRUCTURE_HULL_ALLOWLIST` for d-scan import), `relative-time` (sidebar "Updated"
+  `SystemFlag[]` on `System` — open-ended per-system markers that travel across tabs
+  [`root` consumed by layout; `target`/`warning`/`friendly`/`looking-for` defined, not
+  yet rendered]; `STRUCTURE_HULL_ALLOWLIST` for d-scan import), `relative-time` (sidebar "Updated"
   column + a local+EVE/UTC absolute formatter), `edge-encoding` (pure resolver:
   mass → line width/colour [line is always solid]; TTL → the breathing casing/halo
   ALONE [calm/warning/critical], frozen at MAX width under reduced-motion with
   distinct warning vs critical sizes; one config object, palette-swap is CSS-only),
-  `layout` (hand-rolled BFS seed, no lib — the ONE-SHOT initial layout),
+  `layout` (the ONE-SHOT initial seed — pure `graph → positions`, the swappable engine
+  seam: a leaf-first tidy-tree FOREST [Go-port of the corp's Wanderer layout, no lib].
+  Each connected component is its own tidy tree; the rank step is NODE-SIZE-AWARE
+  [pure `nodeWidth` estimate per rank, no DOM]; a component roots at its `root`-flagged
+  system so it lays the same on every tab; the primary leads and the rest stack down the
+  cross axis, all oriented the same way [no mirror]),
   `reconcile` (server ∪ local existence union only), `place-incoming` (where a node
   arriving via an SSE event lands — one flow-step from its anchor),
   `resolve-collisions` (official @xyflow repel, run on drag-stop + after an add).

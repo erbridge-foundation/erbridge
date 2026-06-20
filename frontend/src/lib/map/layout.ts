@@ -1,48 +1,89 @@
 /**
- * Graph layout seed — ranked tree layout via dagre (@dagrejs/dagre).
+ * Graph layout seed — a leaf-first tidy-tree FOREST.
  *
  * `layoutSeed(graph, tab, dir)` is a PURE function: graph → positions. It is the
  * FLOOR the live positions sit on (a node's first position; drags/ripples then own
  * it). The graph carries no coordinates; this is where they come from.
  *
- * Dagre does the heavy lifting — rank assignment (BFS-equivalent longest/shortest
- * path), crossing reduction, and proper node coordinate assignment (the
- * Brandes–Köpf style pass that centres parents over their children and keeps
- * sibling subtrees from overlapping ACROSS depths). We previously hand-rolled a
- * tidy-tree for this and kept hitting its limits (parents decoupling from children,
- * shallow and deep branches collapsing onto the same cross-line); dagre solves that
- * class of problem properly, so the canvas reads as a clean layered chain.
+ * WHY a tidy tree (not dagre). We tried dagre (@dagrejs/dagre) and it lays a
+ * crossing-free LAYERED graph, but its Brandes–Köpf coordinate pass centres every
+ * node in a RESERVED cross-axis band balanced against its heavy siblings — so a
+ * childless leaf still claims a wide band and floats in whitespace, and the
+ * root-less `*` tab (a forest of many components) collapses into one ranked chain
+ * plus a flat gutter line. A wormhole map reads better as a TIDY TREE where a leaf
+ * hugs its parent and claims no reserved space, exactly the look the corp's Wanderer
+ * layout produces.
  *
- * What stays bespoke around dagre:
- *   - REACHABILITY + the gutter: only systems reachable from the tab root are fed to
- *     dagre; unreached nodes (a hand-added ghost, a disconnected fragment) are parked
- *     in a visible gutter beside the ranked chain (see `placeGutter`). Existence is a
- *     pure function of the graph, never of placement.
- *   - DIRECTION: dagre's `rankdir` handles LR/RL/TB/BT directly.
- *   - the `spacing` preference: scales dagre's cross-axis `nodesep` so a busy fan
- *     (e.g. a system with several dangling stubs) spreads apart.
+ * This ports the TESTED core of that Go layout (zz-ref/wanderer-layout/layout.go —
+ * `calculateTreePositions` + `centerMapAroundHomeSystem`): a leaf-first DFS where a
+ * leaf takes the next free cross slot, a parent starts its children level with
+ * itself and is then re-centred on the midpoint of its first and last child (snapped
+ * to a small grid). The Go service is single-root; the FOREST packing here (multiple
+ * components on one tab) is bespoke — its `handleOrphanChains` was untested draft, so
+ * it is NOT ported.
+ *
+ * FOREST model (one path for every tab). `present` is split into connected
+ * components. Each component is laid out as its own tidy tree, rooted at:
+ *   - the tab's root, for the component that contains it (a normal tab); else
+ *   - the most-connected system (hub), ties by id (a satellite, or any component on
+ *     the root-less `*` tab).
+ * The PRIMARY component (the one holding `tab.root`, or — on `*` — the LARGEST) is
+ * centred at the origin. Every other component is a SATELLITE, stacked in the gutter
+ * (the side opposite the rank flow) by running cross-extent so trees never overlap.
+ * A lone disconnected system is just a single-node component → a gutter satellite.
+ *
+ * DIRECTION: trees are computed in (rankAxis, crossAxis) then mapped to (x, y) per
+ * `dir` (LR/RL/TB/BT). SPACING: the `spacing` preference scales the cross step so a
+ * busy fan spreads apart.
  *
  * Incremental single-node placement on an SSE add (`place-incoming.ts`) and session
  * drag persistence are separate — only the whole-map (re)seed lives here.
  */
 
-import dagre from '@dagrejs/dagre';
 import type { CombinedGraph, LayoutDirection, Positions, System, Tab } from './types';
 
-// Rank-axis spacing (between depth columns/rows) and the BASE cross-axis spacing
-// (between siblings within a rank). `spacing` scales the cross axis. Node size is
-// fed to dagre so it never overlaps boxes. These are tuned tight so the chain reads
-// dense (closer to the EVE/Wanderer reference look) while staying crossing-free in
-// BOTH directions — measured on the DEEP tab in LR and TB, since the map is used both
-// ways. Looser values (the old 120/70) left dagre's output spread out with low fill.
-const RANK_SEP = 90;
-const NODE_SEP = 40;
-const NODE_W = 130;
-const NODE_H = 48;
-/** Gutter sits to the left of (LR) / above (TB) the root column, far enough that
- *  unreached nodes don't collide with the ranked chain. */
-const GUTTER_GAP = 320;
-const GUTTER_STEP = 150;
+// Rank-axis GAP (empty space between one rank's column and the next) and the BASE
+// cross-axis step (between siblings within a rank). `spacing` scales the cross step.
+// Unlike dagre (which we fed per-node widths), this tidy tree historically treated the
+// rank step as a raw centre-to-centre constant that ignored node extent — so wide nodes
+// crowded their neighbours. The rank axis is now NODE-SIZE-AWARE: each rank's column
+// sits a half-width + RANK_GAP + half-width from the previous (see `rankOffsets`), so
+// RANK_GAP is true empty space, tuned tight for BOTH directions.
+const RANK_GAP = 70;
+const CROSS_SEP = 70;
+// Parent re-centre snaps to this grid (mirrors the Go layout's gridSize) so equal
+// inputs give stable, non-jittery parent positions.
+const GRID = 15;
+/** Gap between a satellite component and the primary tree / the previous satellite. */
+const GUTTER_GAP = 160;
+
+// ── Node-width estimate (item a) ─────────────────────────────────────────────
+// SystemNodes are NOT fixed-width: min-width 110px + padding, content-driven. The
+// layout has no DOM, so it ESTIMATES width from the system's data — a pure, deterministic
+// pre-render seed. Each rank's column step uses the MAX estimated width in that rank, so
+// the layout is tight where nodes are narrow and roomy where they're wide (the root
+// J172840, the named k-space systems Charmerout/Hurjafren).
+const NODE_MIN_W = 110; // CSS min-width
+const NODE_PAD_X = 19; // 0.6rem padding each side + 1px border ≈ 19px total
+const CHAR_W = 6.2; // ~px per char of the name at 0.75rem 600-weight ui font
+const CLASS_BADGE_W = 26; // the always-present class pill ("C5", "HS"…) + its gap
+const ROOT_BADGE_W = 42; // the "ROOT" badge + gap (uppercase, letter-spaced)
+const GHOST_BADGE_W = 80; // the "unconfirmed" ghost badge + gap
+const STATIC_BADGE_W = 26; // each static dest pill (they wrap, but a long row can widen)
+
+/** Pure estimate of a SystemNode's rendered width in px, from its data alone. Used to
+ *  size each rank's column step. No DOM; deterministic. A dangling stub renders a
+ *  minimal `? → dest`, narrower than a real node, so it floors at NODE_MIN_W. */
+function nodeWidth(s: System): number {
+	const isRoot = s.flags?.includes('root') ?? false;
+	// Header content: class badge + name + optional root badge. (Ghost badge only on a
+	// hand-added local node; statics wrap below the header but a wide static row can
+	// still push the box out, so count the row width and take the max with the header.)
+	const header =
+		CLASS_BADGE_W + s.name.length * CHAR_W + (isRoot ? ROOT_BADGE_W : 0) + NODE_PAD_X;
+	const statics = s.statics.length > 0 ? s.statics.length * STATIC_BADGE_W + NODE_PAD_X : 0;
+	return Math.max(NODE_MIN_W, header, statics);
+}
 
 /** Adjacency over the rendered systems only (a connection to a system that isn't
  *  in `present` is ignored). Undirected: reachability and layout both walk a
@@ -62,11 +103,8 @@ function buildAdjacency(graph: CombinedGraph, present: Set<string>): Map<string,
 
 /**
  * Reachability BFS: `id → rank` (min hop distance from the seed(s)) for every node
- * reachable from the seeds. The key set is the reachable set (used for the gutter
- * split and `renderableSystems`); the rank values let the dagre feed direct every
- * edge from the LOWER-rank endpoint to the higher one, so edges all flow outward
- * from the root and dagre lays a clean layered tree instead of routing back-edges
- * (authored a→b in the wrong order) as long sweeping curves. Deterministic.
+ * reachable from the seeds. Used by `renderableSystems` (the reachable set for a
+ * normal tab). Deterministic.
  */
 function reachableFrom(adj: Map<string, string[]>, roots: string[]): Map<string, number> {
 	const rank = new Map<string, number>();
@@ -91,124 +129,301 @@ function reachableFrom(adj: Map<string, string[]>, roots: string[]): Map<string,
 	return rank;
 }
 
+/** Connected components over `adj`, each a list of ids in BFS-discovery order. The
+ *  outer order follows `order` (stable input order) so the result is deterministic. */
+function components(adj: Map<string, string[]>, order: string[]): string[][] {
+	const seen = new Set<string>();
+	const out: string[][] = [];
+	for (const start of order) {
+		if (!adj.has(start) || seen.has(start)) continue;
+		const comp: string[] = [];
+		const queue = [start];
+		seen.add(start);
+		let head = 0;
+		while (head < queue.length) {
+			const node = queue[head++];
+			comp.push(node);
+			for (const next of adj.get(node)!) {
+				if (!seen.has(next)) {
+					seen.add(next);
+					queue.push(next);
+				}
+			}
+		}
+		out.push(comp);
+	}
+	return out;
+}
+
+/** Root for a component: a `root`-flagged system if the component contains one (the
+ *  curated anchor — keeps the tree shape identical to that system's own rooted tab),
+ *  else the most-connected hub via {@link pickRoot}. Among multiple flagged roots in
+ *  one component, the lowest id wins (deterministic). */
+function pickComponentRoot(
+	adj: Map<string, string[]>,
+	ids: string[],
+	rootFlagged: Set<string>
+): string {
+	let flagged: string | undefined;
+	for (const id of ids) {
+		if (rootFlagged.has(id) && (flagged === undefined || id < flagged)) flagged = id;
+	}
+	return flagged ?? pickRoot(adj, ids);
+}
+
+/** Root for a component without a designated root: the most-connected system (hub),
+ *  ties broken by id for determinism. */
+function pickRoot(adj: Map<string, string[]>, ids: string[]): string {
+	let best = ids[0];
+	let bestDeg = adj.get(best)?.length ?? 0;
+	for (const id of ids) {
+		const deg = adj.get(id)?.length ?? 0;
+		if (deg > bestDeg || (deg === bestDeg && id < best)) {
+			best = id;
+			bestDeg = deg;
+		}
+	}
+	return best;
+}
+
+/** A BFS spanning tree of a component, rooted at `root`: `parent → ordered children`.
+ *  Non-tree links (a same-rank cross-link, an extra edge into a node) are simply not
+ *  tree edges; they still render from the connection list, they just don't shape the
+ *  tree. Children follow adjacency (insertion) order for a deterministic layout. */
+function buildChildren(adj: Map<string, string[]>, root: string): Map<string, string[]> {
+	const children = new Map<string, string[]>();
+	const seen = new Set<string>([root]);
+	const queue = [root];
+	let head = 0;
+	while (head < queue.length) {
+		const node = queue[head++];
+		for (const next of adj.get(node)!) {
+			if (!seen.has(next)) {
+				seen.add(next);
+				if (!children.has(node)) children.set(node, []);
+				children.get(node)!.push(next);
+				queue.push(next);
+			}
+		}
+	}
+	return children;
+}
+
+/** Per-axis coordinate of one tidy tree: `id → { rank, cross }`. */
+type TreePos = Map<string, { rank: number; cross: number }>;
+
+/**
+ * Leaf-first tidy-tree layout (ported from the Go `calculateTreePositions`). DFS from
+ * `root`: a leaf takes the next free cross slot at its depth; a parent starts its
+ * children level with itself (`nextCross[childLevel] = parentCross`), then is
+ * re-centred on the midpoint of its first and last child, grid-snapped. `rank` is the
+ * depth; `cross` is the packed cross-axis position. `root` ends up centred over its
+ * subtree (the caller then translates it to the origin).
+ */
+function tidyTree(root: string, children: Map<string, string[]>, crossStep: number): TreePos {
+	const pos: TreePos = new Map();
+	const nextCross = new Map<number, number>();
+
+	function calc(id: string, depth: number): number {
+		const cross = nextCross.get(depth) ?? 0;
+		pos.set(id, { rank: depth, cross });
+
+		const kids = children.get(id) ?? [];
+		if (kids.length === 0) {
+			nextCross.set(depth, cross + crossStep);
+			return crossStep;
+		}
+
+		// Children start at this parent's own cross, not after a prior sibling subtree.
+		nextCross.set(depth + 1, cross);
+
+		let totalHeight = 0;
+		let firstCross = 0;
+		let lastCross = 0;
+		kids.forEach((kid, i) => {
+			totalHeight += calc(kid, depth + 1);
+			const kc = pos.get(kid)!.cross;
+			if (i === 0) firstCross = kc;
+			lastCross = kc;
+		});
+
+		// Re-centre the parent on the midpoint of its first & last child (grid-snapped).
+		const centred = Math.round((firstCross + lastCross) / 2 / GRID) * GRID;
+		pos.set(id, { rank: depth, cross: centred });
+
+		nextCross.set(depth, cross + totalHeight);
+		return totalHeight;
+	}
+
+	calc(root, 0);
+	return pos;
+}
+
+/** Cross-axis span [min, max] of a tree's nodes (for satellite stacking). */
+function crossSpan(pos: TreePos): { min: number; max: number } {
+	let min = Infinity;
+	let max = -Infinity;
+	for (const { cross } of pos.values()) {
+		if (cross < min) min = cross;
+		if (cross > max) max = cross;
+	}
+	if (min === Infinity) return { min: 0, max: 0 };
+	return { min, max };
+}
+
+/** Deepest rank in a tree (its rank-axis extent, in rank units not pixels). */
+function maxRank(pos: TreePos): number {
+	let m = 0;
+	for (const { rank } of pos.values()) if (rank > m) m = rank;
+	return m;
+}
+
+/**
+ * Node-size-aware rank-axis offsets (item a): `rank → centre offset in px`. The widest
+ * node in each rank sets that rank's column width; consecutive columns sit a half-width
+ * + RANK_GAP + half-width apart, so a wide rank (the root, a long k-space name) pushes
+ * its neighbours out exactly as far as it needs and no further. `widthOf(id)` is the
+ * pure {@link nodeWidth} estimate. Rank 0's centre is at its own half-width so the tree
+ * starts flush at offset 0 on the rank axis. The deepest rank's far edge is the tree's
+ * rank-axis EXTENT (returned as `extent` for satellite stacking). */
+function rankOffsets(pos: TreePos, widthOf: (id: string) => number): {
+	offset: Map<number, number>;
+	extent: number;
+} {
+	const maxW = new Map<number, number>();
+	for (const [id, { rank }] of pos) {
+		const w = widthOf(id);
+		if (w > (maxW.get(rank) ?? 0)) maxW.set(rank, w);
+	}
+	const deepest = maxRank(pos);
+	const offset = new Map<number, number>();
+	let edge = 0; // running far edge of the columns placed so far
+	for (let r = 0; r <= deepest; r++) {
+		const w = maxW.get(r) ?? NODE_MIN_W;
+		offset.set(r, edge + w / 2); // centre of this column
+		edge += w + RANK_GAP; // advance past this column + the gap
+	}
+	// `edge` overshot by one RANK_GAP after the last column; the true extent is up to the
+	// last column's far edge.
+	return { offset, extent: Math.max(0, edge - RANK_GAP) };
+}
+
+/** Map a tree's (rank, cross) to absolute (x, y) for `dir`, shifting cross by
+ *  `crossShift` (sibling/satellite stacking) and offsetting the rank axis by
+ *  `rankBase + rankOff[rank]` (rankBase = 0 for the primary, the satellite offset
+ *  otherwise; `rankOff` is the node-size-aware per-rank centre). `flip` mirrors the
+ *  rank axis within the component (satellites grow the SAME visual direction as the
+ *  primary — see the satellite stacking). Writes into `out`. */
+function emit(
+	pos: TreePos,
+	dir: LayoutDirection,
+	rankBase: number,
+	rankOff: Map<number, number>,
+	extent: number,
+	flip: boolean,
+	crossShift: number,
+	out: Positions
+): void {
+	for (const [id, { rank, cross }] of pos) {
+		// Rank-axis position: the column centre, optionally mirrored within [0, extent].
+		const local = rankOff.get(rank) ?? 0;
+		const r = rankBase + (flip ? extent - local : local);
+		const c = cross + crossShift;
+		switch (dir) {
+			case 'LR':
+				out[id] = { x: r, y: c };
+				break;
+			case 'RL':
+				out[id] = { x: -r, y: c };
+				break;
+			case 'TB':
+				out[id] = { y: r, x: c };
+				break;
+			case 'BT':
+				out[id] = { y: -r, x: c };
+				break;
+		}
+	}
+}
+
 /**
  * Seed positions for the systems of `graph` as viewed through `tab`, in the given
  * direction. The caller decides which systems are *present* (reachable + ghosts) and
- * passes them; everything in `present` gets a position — ranked via dagre if
- * reachable from the root, parked in the gutter otherwise.
+ * passes them; every present system gets a position. The present set is split into
+ * connected components; the primary component (holding `tab.root` / a flagged root, or
+ * the largest on the root-less `*` tab) leads, and the rest stack as satellites along
+ * the CROSS axis below it — every component oriented the SAME way (root at rank 0,
+ * leaves growing the same direction), so they read as peer trees, not mirror images.
  */
 export function layoutSeed(
 	graph: CombinedGraph,
 	tab: Tab,
 	dir: LayoutDirection,
 	present: Set<string>,
-	/** Cross-axis spacing multiplier (a user "node spacing" preference). Scales
-	 *  dagre's `nodesep` so siblings/fans spread apart; 1 = the compact default. */
+	/** Cross-axis spacing multiplier (a user "node spacing" preference). Scales the
+	 *  tree's cross step so siblings/fans spread apart; 1 = the compact default. */
 	spacing = 1
 ): Positions {
 	const adj = buildAdjacency(graph, present);
-
-	// A normal tab seeds from its single root; the wildcard / root-less tab has no
-	// anchor, so seed from the first present system (stable by `graph.systems` order)
-	// to keep the layout connected-looking and deterministic.
-	const roots =
-		!tab.isWildcard && tab.root
-			? [tab.root]
-			: graph.systems
-					.filter((s) => present.has(s.id))
-					.slice(0, 1)
-					.map((s) => s.id);
-
-	const rank = reachableFrom(adj, roots);
-	// Keep `graph.systems` order so dagre's input (and thus output) is deterministic.
-	const ranked = graph.systems.filter((s) => present.has(s.id) && rank.has(s.id));
-	const gutter = graph.systems.filter((s) => present.has(s.id) && !rank.has(s.id));
+	const crossStep = CROSS_SEP * spacing;
+	const order = graph.systems.filter((s) => present.has(s.id)).map((s) => s.id);
+	const comps = components(adj, order);
 
 	const out: Positions = {};
+	if (comps.length === 0) return out;
 
-	if (ranked.length > 0) {
-		const g = new dagre.graphlib.Graph({ multigraph: false, compound: false });
-		g.setGraph({
-			rankdir: dir,
-			ranksep: RANK_SEP,
-			nodesep: NODE_SEP * spacing,
-			// `network-simplex` gives dagre's best rank assignment + crossing reduction.
-			// The DEEP chain is a pure tree (no same-rank cross-links), so this produces a
-			// crossing-free ordering where `tight-tree` left wide fan-out hubs tangled.
-			ranker: 'network-simplex',
-			marginx: 0,
-			marginy: 0
-		});
-		g.setDefaultEdgeLabel(() => ({}));
+	// Per-id width estimate for the node-size-aware rank step (item a).
+	const byId = new Map(graph.systems.map((s) => [s.id, s] as const));
+	const widthOf = (id: string): number => {
+		const s = byId.get(id);
+		return s ? nodeWidth(s) : NODE_MIN_W;
+	};
+	// Systems flagged `root` anchor their component's tree, so a chain lays out the SAME
+	// on every tab (incl. `*`) as on its own rooted tab.
+	const rootFlagged = new Set(graph.systems.filter((s) => s.flags?.includes('root')).map((s) => s.id));
 
-		for (const s of ranked) g.setNode(s.id, { width: NODE_W, height: NODE_H });
-		// Edges among reachable nodes only, DIRECTED from the lower-rank endpoint to the
-		// higher one (i.e. away from the root) — regardless of the fixture's a/b order.
-		// Feeding back-edges (a authored farther from the root than b) made dagre reverse
-		// + route them as long sweeping curves that crossed the whole layout (the DEEP
-		// hub tangle); ranking them outward keeps the chain a clean layered tree. A
-		// same-rank cross-link is ordered by id for determinism. Added once (non-multigraph
-		// dedupes by endpoints).
-		for (const c of graph.connections) {
-			const a = c.a.system;
-			const b = c.b.system;
-			if (!rank.has(a) || !rank.has(b) || a === b) continue;
-			const ra = rank.get(a)!;
-			const rb = rank.get(b)!;
-			// Lower rank → higher rank; ties broken by id so it's deterministic.
-			const [from, to] = ra < rb || (ra === rb && a < b) ? [a, b] : [b, a];
-			if (!g.hasEdge(from, to) && !g.hasEdge(to, from)) {
-				g.setEdge(from, to);
+	// PRIMARY = the component holding tab.root (normal tab), else the largest (the
+	// root-less `*` tab). Ties on size fall to the first in stable order.
+	const rootId = !tab.isWildcard && tab.root ? tab.root : undefined;
+	let primaryIdx = 0;
+	if (rootId) {
+		const idx = comps.findIndex((c) => c.includes(rootId));
+		if (idx >= 0) primaryIdx = idx;
+	} else {
+		let bestSize = -1;
+		comps.forEach((c, i) => {
+			if (c.length > bestSize) {
+				bestSize = c.length;
+				primaryIdx = i;
 			}
-		}
-
-		dagre.layout(g);
-
-		// Dagre returns each node's CENTRE; svelte-flow positions are top-left, but the
-		// proto consistently treats these seeds as a coordinate space the whole map
-		// shares, so centre coords are fine (every node uses the same convention). Keep
-		// them as-is for parity with the previous output's relative geometry.
-		for (const id of g.nodes()) {
-			const n = g.node(id);
-			if (n) out[id] = { x: n.x, y: n.y };
-		}
+		});
 	}
 
-	placeGutter(dir, gutter.map((s) => s.id), out);
+	// Order components: primary first, the rest in stable order. Each is laid as its own
+	// tidy tree and stacked down the cross axis, all oriented identically (flip=false).
+	const ordered = [comps[primaryIdx], ...comps.filter((_, i) => i !== primaryIdx)];
+	let cursor = 0; // running cross-axis offset for the next component
+	ordered.forEach((comp, i) => {
+		// The primary honours the tab/flagged root; a satellite uses its flagged root or
+		// its hub. (The primary already preferred the tab root above.)
+		const root =
+			i === 0 && rootId && comp.includes(rootId) ? rootId : pickComponentRoot(adj, comp, rootFlagged);
+		const pos = tidyTree(root, buildChildren(adj, root), crossStep);
+		const { offset, extent } = rankOffsets(pos, widthOf);
+		const span = crossSpan(pos);
+		// Stack along the cross axis: shift this component so its top edge sits at `cursor`.
+		emit(pos, dir, 0, offset, extent, false, cursor - span.min, out);
+		cursor += span.max - span.min + crossStep + GUTTER_GAP;
+	});
+
 	return out;
 }
 
 /**
- * Park unreached nodes in a visible gutter: a column before the root column (LR),
- * a row above it (TB). They render normally but sit apart so an unreached ghost
- * reads as unreached.
- */
-function placeGutter(dir: LayoutDirection, gutter: string[], out: Positions): void {
-	gutter.forEach((id, i) => {
-		switch (dir) {
-			// Park the gutter on the side OPPOSITE the rank flow so unreached nodes sit
-			// clear of the ranked chain.
-			case 'LR':
-				out[id] = { x: -GUTTER_GAP, y: i * GUTTER_STEP };
-				break;
-			case 'RL':
-				out[id] = { x: GUTTER_GAP, y: i * GUTTER_STEP };
-				break;
-			case 'TB':
-				out[id] = { x: i * GUTTER_STEP, y: -GUTTER_GAP };
-				break;
-			case 'BT':
-				out[id] = { x: i * GUTTER_STEP, y: GUTTER_GAP };
-				break;
-		}
-	});
-}
-
-/**
  * The systems that RENDER for a tab: those reachable from `tab.root` over live
- * connections, plus any ghosts (which park in the gutter). The wildcard tab renders
- * every system. Existence is a pure function of the graph — NEVER of placement.
- * Returned as a Set of ids for layout/reconcile to consume.
+ * connections, plus any ghosts (which become their own gutter satellite). The
+ * wildcard tab renders every system. Existence is a pure function of the graph —
+ * NEVER of placement. Returned as a Set of ids for layout/reconcile to consume.
  */
 export function renderableSystems(graph: CombinedGraph, tab: Tab, ghosts: System[]): Set<string> {
 	const ids = new Set<string>();
